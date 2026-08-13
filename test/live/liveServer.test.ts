@@ -22,7 +22,7 @@ import { openConfigDocument } from '../../src/document/openConfigDocument';
 import type { NacosApiError } from '../../src/nacos/NacosApiError';
 import type { NacosClient } from '../../src/nacos/NacosClient';
 import { configLanguageId } from '../../src/nacos/driver/configLanguage';
-import type { NacosConfigSummary } from '../../src/nacos/driver/normalize';
+import type { NacosConfigSummary, NacosServiceSummary, Paged } from '../../src/nacos/driver/normalize';
 import { testNacosConnection } from '../../src/nacos/testNacosConnection';
 import { ConfigTreeProvider } from '../../src/tree/ConfigTreeProvider';
 import {
@@ -39,6 +39,13 @@ const username = process.env.AT_NACOS_LIVE_USERNAME;
 const password = process.env.AT_NACOS_LIVE_PASSWORD;
 
 const describeLive = liveUrl ? describe : describe.skip;
+
+/**
+ * A generous timeout for anything that walks the whole server: a fresh client
+ * probes the version every time, deliberately, and expanding eleven
+ * namespaces pays for eleven listings on top of it.
+ */
+const LIVE_BROWSE_TIMEOUT_MS = 60_000;
 
 function liveInstance(): NacosInstanceConfig {
   return {
@@ -233,6 +240,211 @@ describeLive('a real Nacos server, browsing configurations', () => {
 });
 
 /**
+ * The naming and cluster capabilities.
+ *
+ * This suite was written expecting an empty registry -- the reconnaissance
+ * for this milestone concluded the server had no services at all, because
+ * `/v1/ns/service/list` answered zero for every namespace it was asked about.
+ * It answered zero because its `groupName` defaults to `DEFAULT_GROUP` and
+ * every service on this server is registered under `cl-intimfy`. The
+ * registry has thirteen services in it, and the endpoint that was used to
+ * look for them is the one this milestone treats as the fallback precisely
+ * because it cannot see across groups.
+ *
+ * So the group default did not merely risk hiding a registry; it hid this
+ * one, from the people planning for it.
+ */
+describeLive('a real Nacos server, its cluster and its registry', () => {
+  it('lists the cluster nodes, with the raft metadata flattened out of extendInfo', async () => {
+    const client = await connectLive();
+    const nodes = await client.listClusterNodes();
+
+    expect(nodes.length).toBeGreaterThan(0);
+    for (const node of nodes) {
+      expect(node.address).toContain(':');
+      expect(['STARTING', 'UP', 'SUSPICIOUS', 'DOWN', 'ISOLATION']).toContain(node.state);
+    }
+
+    console.log(`  ${nodes.length} cluster node(s) via a ${client.state.majorVersion}.x chain:`);
+    for (const node of nodes) {
+      console.log(
+        `    ${node.address.padEnd(20)} state=${node.state.padEnd(10)} version=${node.version ?? '?'} ` +
+          `raftPort=${node.raftPort ?? '?'} failAccessCnt=${node.failAccessCnt ?? '?'}`
+      );
+      for (const group of node.raftGroups ?? []) {
+        console.log(
+          `      raft ${group.group.padEnd(30)} leader=${group.leader} term=${group.term} ` +
+            `members=[${group.members.join(', ')}]`
+        );
+      }
+    }
+  });
+
+  /**
+   * The one assertion this milestone turns on. Without `onlyStatus=false` the
+   * server answers `{"status":"UP"}` and nothing else -- a parameter default,
+   * not the version-dependent degradation the research recorded -- so a
+   * `serviceCount` that arrived at all is proof the parameter did.
+   */
+  it('reports the full server metrics, which is only possible with onlyStatus=false', async () => {
+    const client = await connectLive();
+    const metrics = await client.getServerMetrics();
+
+    expect(metrics.status.length).toBeGreaterThan(0);
+    expect(metrics.serviceCount, 'only `status` came back, so onlyStatus=false did not reach the server').toBeDefined();
+
+    console.log(
+      `  status=${metrics.status} services=${metrics.serviceCount} instances=${metrics.instanceCount} ` +
+        `subscribers=${metrics.subscribeCount} clients=${metrics.clientCount}\n` +
+        `    cpu=${metrics.cpu} load=${metrics.load} mem=${metrics.mem}`
+    );
+  });
+
+  /**
+   * Every namespace, unfiltered, which is what the tree will ask for.
+   *
+   * Two things have to hold at once and they pull in opposite directions: a
+   * namespace with nothing in it must answer an empty page rather than fail
+   * (nine of the eleven here do), and a namespace whose services live outside
+   * `DEFAULT_GROUP` must still show them (the other two). The second is what
+   * a listing scoped to the default group cannot do.
+   */
+  it('finds services in every group, and answers an empty namespace with an empty page', async () => {
+    const { client, pages } = await browseServices();
+
+    for (const { namespaceId, page } of pages) {
+      expect(Array.isArray(page.items), `namespace ${namespaceId} answered no item list`).toBe(true);
+      expect(page.items.length).toBeLessThanOrEqual(page.totalCount);
+    }
+    const found = pages.flatMap((entry) => entry.page.items);
+    expect(found.length, 'no services at all: the group filter may have collapsed to DEFAULT_GROUP').toBeGreaterThan(0);
+    expect(
+      found.some((service) => service.group !== 'DEFAULT_GROUP'),
+      'every service found was in DEFAULT_GROUP, so this run proves nothing about the group filter'
+    ).toBe(true);
+    // Counts come from the catalog and are left undefined by the name-only
+    // fallback, so their presence is what says which endpoint answered.
+    expect(found[0]?.instanceCount, 'the counts are missing, so the catalog did not serve this').toBeDefined();
+
+    const total = pages.reduce((sum, entry) => sum + entry.page.totalCount, 0);
+    console.log(
+      `  ${total} services across ${pages.length} namespaces via a ${client.state.majorVersion}.x chain: ` +
+        pages.map((entry) => `${JSON.stringify(entry.namespaceId)}=${entry.page.totalCount}`).join(' ')
+    );
+    for (const { namespaceId, page } of pages.filter((entry) => entry.page.items.length > 0)) {
+      for (const service of page.items) {
+        console.log(
+          `    ${namespaceId}/${service.group}/${service.serviceName.padEnd(32)} ` +
+            `healthy=${service.healthyInstanceCount ?? '?'}/${service.instanceCount ?? '?'} ` +
+            `clusters=${service.clusterCount ?? '?'} triggerFlag=${String(service.triggerFlag)}`
+        );
+      }
+    }
+  }, LIVE_BROWSE_TIMEOUT_MS);
+
+  /**
+   * The trap, demonstrated rather than described: the same namespace answers
+   * twelve services unfiltered and none under `DEFAULT_GROUP`. That second
+   * number is what a caller gets from any endpoint whose group parameter
+   * defaults -- which is what `/v1/ns/service/list` does, and why the group
+   * here means *every* group when absent.
+   */
+  it('answers nothing for DEFAULT_GROUP in the namespace where twelve services live', async () => {
+    const { client, populated } = await browseServices();
+
+    const defaultGroupOnly = await client.listServices({
+      namespaceId: populated.namespaceId,
+      group: 'DEFAULT_GROUP',
+      pageNo: 1,
+      pageSize: 100
+    });
+
+    expect(populated.page.items.length).toBeGreaterThan(0);
+    expect(defaultGroupOnly.totalCount).toBe(0);
+    console.log(
+      `  namespace ${JSON.stringify(populated.namespaceId)}: ` +
+        `${populated.page.totalCount} services across all groups, ` +
+        `${defaultGroupOnly.totalCount} under DEFAULT_GROUP`
+    );
+  }, LIVE_BROWSE_TIMEOUT_MS);
+
+  it('lists the instances of a service the listing found', async () => {
+    const { client, populated } = await browseServices();
+    const service = populated.page.items[0];
+    expect(service, 'no service to list instances for').toBeDefined();
+
+    const instances = await client.listInstances({
+      namespaceId: service?.namespaceId ?? '',
+      group: service?.group ?? '',
+      serviceName: service?.serviceName ?? ''
+    });
+
+    expect(instances.length).toBeGreaterThan(0);
+    for (const instance of instances) {
+      expect(instance.ip.length).toBeGreaterThan(0);
+      expect(instance.port).toBeGreaterThan(0);
+    }
+    console.log(`  ${populated.namespaceId}/${service?.group}/${service?.serviceName}:`);
+    for (const instance of instances) {
+      console.log(
+        `    ${instance.ip}:${instance.port} healthy=${instance.healthy} enabled=${instance.enabled} ` +
+          `weight=${instance.weight} cluster=${instance.clusterName} ephemeral=${instance.ephemeral}\n` +
+          `      instanceId=${instance.instanceId ?? '(none)'}\n` +
+          `      metadata=${JSON.stringify(instance.metadata)}`
+      );
+    }
+  }, LIVE_BROWSE_TIMEOUT_MS);
+
+  /**
+   * A service nobody registered is an empty `hosts` array under HTTP 200, not
+   * a 404 -- unlike a configuration nobody published, which is the opposite
+   * (§14.2 ⓪). Anything that read this as a failure would put an error in
+   * front of a user whose server is fine.
+   */
+  it('answers the instances of a service nobody registered with an empty list', async () => {
+    const client = await connectLive();
+
+    const instances = await client.listInstances({
+      namespaceId: '',
+      group: 'DEFAULT_GROUP',
+      serviceName: 'at-nacos-no-such-service-please-do-not-register'
+    });
+
+    expect(instances).toEqual([]);
+    console.log('  a service nobody registered -> 0 instances, no error');
+  });
+});
+
+/** One namespace of the live server and the services in it, whichever namespace has any. */
+interface BrowsedServices {
+  client: NacosClient;
+  pages: { namespaceId: string; page: Paged<NacosServiceSummary> }[];
+  populated: { namespaceId: string; page: Paged<NacosServiceSummary> };
+}
+
+let browsedServices: Promise<BrowsedServices> | undefined;
+
+/** Shared across the naming tests: one probe and eleven listings is enough to pay for once. */
+function browseServices(): Promise<BrowsedServices> {
+  browsedServices ??= (async () => {
+    const client = await connectLive();
+    const namespaces = await client.listNamespaces();
+    const pages = await Promise.all(
+      namespaces.map(async (namespace) => ({
+        namespaceId: namespace.namespaceId,
+        page: await client.listServices({ namespaceId: namespace.namespaceId, pageNo: 1, pageSize: 100 })
+      }))
+    );
+    const populated = pages.find((entry) => entry.page.items.length > 0);
+    if (!populated) {
+      throw new Error('no namespace on this server has a registered service; nothing to browse');
+    }
+    return { client, pages, populated };
+  })();
+  return browsedServices;
+}
+
+/**
  * The same server, reached the way a user reaches it: through the tree
  * provider the view is backed by and the document layer a click goes through,
  * rather than through the client those two are built on.
@@ -242,12 +454,7 @@ describeLive('a real Nacos server, browsing configurations', () => {
  * address built from it survives a round trip, and that the language mode
  * survives a filter. The driver tests above prove the server answers; these
  * prove the answer reaches the editor.
- *
- * A generous timeout, because a page is a fresh client: `createNacosClient`
- * probes the version on every call, deliberately, and expanding eleven
- * namespaces to find one with configurations pays for eleven of them.
  */
-const LIVE_BROWSE_TIMEOUT_MS = 60_000;
 
 /** One namespace of the live server, expanded down to its configurations. */
 interface BrowsedNamespace {

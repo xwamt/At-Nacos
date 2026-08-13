@@ -5,9 +5,29 @@ import {
   fetchNamespaces,
   type NacosApiFlavor,
   type NacosConfigListQuery,
-  type NacosDriver
+  type NacosDriver,
+  type NacosInstanceQuery,
+  type NacosServiceListQuery
 } from './NacosDriver';
-import type { NacosConfigDetail, NacosConfigRef, NacosConfigSummary, NacosNamespace, Paged } from './normalize';
+import {
+  fetchCatalogServices,
+  fetchClusterNodes,
+  fetchInstances,
+  fetchServerMetrics,
+  fetchServiceNames,
+  listServicesPreferringCounts
+} from './naming';
+import type {
+  NacosClusterNode,
+  NacosConfigDetail,
+  NacosConfigRef,
+  NacosConfigSummary,
+  NacosInstance,
+  NacosNamespace,
+  NacosServerMetrics,
+  NacosServiceSummary,
+  Paged
+} from './normalize';
 
 /**
  * 1.x's `RestResult` interface, whose success code is **200 rather than 0**
@@ -32,6 +52,31 @@ const CONFIG_PATH = '/v1/cs/configs';
  */
 const SHOW_ALL = { query: { show: 'all' } };
 
+/**
+ * The two service listings 1.x has, in the order they are worth asking in.
+ *
+ * The catalog is the only one that reports instance and healthy counts, which
+ * is what the tree colors its service nodes by; `service/list` gives names
+ * alone. The catalog is also the more fragile of the two -- it is a
+ * console-side endpoint, older 1.x releases served it at
+ * `/v1/ns/catalog/serviceList`, and 3.0/3.1 answer 410 for it with the
+ * compatibility switch off.
+ */
+const CATALOG_SERVICES_PATH = '/v1/ns/catalog/services';
+const SERVICE_LIST_PATH = '/v1/ns/service/list';
+
+const INSTANCE_LIST_PATH = '/v1/ns/instance/list';
+
+/**
+ * `/v1/core/cluster/nodes`, not `/v1/ns/operator/servers` -- the latter is in
+ * the research as an equivalent and a real 2.3.2 answers it with **HTTP 501
+ * no-such-api**, which is not even a fall-through kind.
+ */
+const CLUSTER_NODES_PATH = '/v1/core/cluster/nodes';
+
+/** No @Secured on this one, so it answers without authentication on 1.x/2.x. */
+const METRICS_PATH = '/v1/ns/operator/metrics';
+
 export class V1Driver implements NacosDriver {
   readonly flavor: NacosApiFlavor = 'v1';
 
@@ -47,5 +92,24 @@ export class V1Driver implements NacosDriver {
 
   getConfig(ref: NacosConfigRef): Promise<NacosConfigDetail> {
     return fetchConfigDetail(this.http, this.flavor, CONFIG_PATH, ref, SHOW_ALL);
+  }
+
+  listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {
+    return listServicesPreferringCounts(
+      () => fetchCatalogServices(this.http, CATALOG_SERVICES_PATH, query),
+      () => fetchServiceNames(this.http, SERVICE_LIST_PATH, query)
+    );
+  }
+
+  listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]> {
+    return fetchInstances(this.http, this.flavor, INSTANCE_LIST_PATH, query);
+  }
+
+  listClusterNodes(): Promise<NacosClusterNode[]> {
+    return fetchClusterNodes(this.http, CLUSTER_NODES_PATH);
+  }
+
+  getServerMetrics(): Promise<NacosServerMetrics> {
+    return fetchServerMetrics(this.http, METRICS_PATH);
   }
 }

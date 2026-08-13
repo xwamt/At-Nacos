@@ -68,6 +68,20 @@ export function groupParamName(flavor: NacosApiFlavor, module: NacosModule): 'gr
 }
 
 /**
+ * Which spelling of the cluster filter an endpoint family expects.
+ *
+ * v1 takes **`clusters`**, plural and comma-separated, and splits it into a
+ * set; v2 renamed it to the singular `clusterName` and v3 kept that. Both
+ * were seen answering on a real 2.3.2, which echoes the parsed value back in
+ * the ServiceInfo's `clusters` field. Getting it wrong is silent in the worst
+ * way here -- an unrecognized parameter is dropped, so the request asks for
+ * *every* cluster and the answer looks like a filter that matched everything.
+ */
+export function clusterParamName(flavor: NacosApiFlavor): 'clusters' | 'clusterName' {
+  return flavor === 'v1' ? 'clusters' : 'clusterName';
+}
+
+/**
  * `displayName` falls back to the id when `namespaceShowName` is absent, and
  * on 1.x the public namespace's id is the empty string -- so the display name
  * can be empty too. No default is invented here: the domain layer should not
@@ -194,6 +208,319 @@ function optionalString(value: unknown): string | undefined {
 
 function optionalNumber(value: unknown): number | undefined {
   return typeof value === 'number' ? value : undefined;
+}
+
+/** Nacos's separator between a group and a service name, everywhere both are carried in one string. */
+const GROUP_SEPARATOR = '@@';
+
+/** Where a service lives. All three are needed to list its instances. */
+export interface NacosServiceRef {
+  namespaceId: string;
+  group: string;
+  serviceName: string;
+}
+
+/**
+ * The namespace and group a listing was asked for.
+ *
+ * 1.x answers a service listing with names and nothing else, so the only
+ * thing that can place those names is the question that produced them.
+ */
+export interface NacosServiceScope {
+  namespaceId: string;
+  group: string;
+}
+
+export interface NacosServiceSummary extends NacosServiceRef {
+  /** Absent on the 1.x/2.x name-only listings; only the catalog and 3.x carry counts. */
+  instanceCount?: number;
+  healthyInstanceCount?: number;
+  clusterCount?: number;
+  /** Whether the service's protect threshold is currently tripped. */
+  triggerFlag?: boolean;
+}
+
+export interface NacosInstance {
+  ip: string;
+  port: number;
+  healthy: boolean;
+  enabled: boolean;
+  weight: number;
+  clusterName: string;
+  ephemeral: boolean;
+  instanceId?: string;
+  metadata: Record<string, string>;
+}
+
+/** One JRaft group a server node takes part in, flattened out of `extendInfo.raftMetaData`. */
+export interface NacosRaftGroup {
+  group: string;
+  leader: string;
+  members: string[];
+  term: number;
+}
+
+export interface NacosClusterNode {
+  address: string;
+  ip: string;
+  port: number;
+  /** `STARTING` | `UP` | `SUSPICIOUS` | `DOWN` | `ISOLATION`, and `UNKNOWN` when the node named none. */
+  state: string;
+  version?: string;
+  raftPort?: string;
+  failAccessCnt?: number;
+  raftGroups?: NacosRaftGroup[];
+}
+
+export interface NacosServerMetrics {
+  status: string;
+  /** All absent when the request forgot `onlyStatus=false`; see `fetchServerMetrics`. */
+  serviceCount?: number;
+  instanceCount?: number;
+  subscribeCount?: number;
+  clientCount?: number;
+  cpu?: number;
+  load?: number;
+  mem?: number;
+}
+
+/**
+ * Splits Nacos's `GROUP@@service` into its two halves.
+ *
+ * The split is at the **first** separator and the rest is the name. Nacos's
+ * own `NamingUtils.getServiceName` splits on every occurrence and keeps only
+ * the second field, which would turn `g@@b@@c` into `b` -- a client that
+ * renames a service is worse than one that shows an unusual name. (2.3.2's
+ * parameter checker rejects such a name on the way in, so this only decides
+ * what happens to one that got in some other way.)
+ *
+ * A leading separator leaves no group, so the scope's group answers instead.
+ */
+export function splitGroupedServiceName(
+  grouped: string,
+  fallbackGroup: string
+): { group: string; serviceName: string } {
+  const separator = grouped.indexOf(GROUP_SEPARATOR);
+  if (separator <= 0) {
+    return { group: fallbackGroup, serviceName: grouped.slice(separator < 0 ? 0 : GROUP_SEPARATOR.length) };
+  }
+  return { group: grouped.slice(0, separator), serviceName: grouped.slice(separator + GROUP_SEPARATOR.length) };
+}
+
+/**
+ * Joins a group and a service back into the one string Nacos parses them out
+ * of, which is how v1's instance endpoint -- which has no group parameter at
+ * all -- is told which group to look in.
+ *
+ * An empty group would produce a leading separator and put the service in a
+ * group named `''`, so the bare name goes instead and the server applies its
+ * own default.
+ */
+export function groupedServiceName(ref: NacosServiceRef): string {
+  return ref.group.length === 0 ? ref.serviceName : `${ref.group}${GROUP_SEPARATOR}${ref.serviceName}`;
+}
+
+/**
+ * One entry of a service listing, in any of the three shapes §6.5 lists.
+ *
+ * **A bare string is a valid entry.** 1.x answers `{"count":N,"doms":[...]}`
+ * with nothing but names in it, so the scope supplies what the entry cannot.
+ * The counts stay undefined rather than becoming zeroes: a tree that colors
+ * services by health has to be able to tell "no healthy instances" from "the
+ * endpoint does not report health", and a zero would paint the whole listing
+ * red.
+ */
+export function normalizeServiceSummary(entry: unknown, scope: NacosServiceScope): NacosServiceSummary {
+  if (typeof entry === 'string' && entry.length > 0) {
+    return { namespaceId: scope.namespaceId, ...splitGroupedServiceName(entry, scope.group) };
+  }
+  if (!isRecord(entry)) {
+    throw new NacosApiError('invalid-response', 'Nacos returned a service entry that is neither a name nor an object.');
+  }
+  const named = firstString(entry.name, entry.serviceName);
+  if (named === undefined || named.length === 0) {
+    throw new NacosApiError('invalid-response', 'Nacos returned a service entry with no service name.');
+  }
+  const grouped = splitGroupedServiceName(named, firstString(entry.groupName, entry.group) ?? scope.group);
+  return {
+    namespaceId: firstString(entry.namespaceId, entry.namespace) ?? scope.namespaceId,
+    group: grouped.group,
+    serviceName: grouped.serviceName,
+    instanceCount: optionalNumber(entry.ipCount ?? entry.instanceCount),
+    healthyInstanceCount: optionalNumber(entry.healthyInstanceCount),
+    clusterCount: optionalNumber(entry.clusterCount),
+    triggerFlag: optionalBoolean(entry.triggerFlag)
+  };
+}
+
+/**
+ * One instance, from `hosts[]`, `data[]` or `pageItems[]` -- the same POJO
+ * however it is wrapped.
+ *
+ * The heartbeat plumbing (`instanceHeartBeatInterval` and friends) is dropped
+ * on the way through: it is a client's business, not a viewer's.
+ *
+ * The fields Nacos's `Instance` POJO initializes are defaulted to what that
+ * initializer says rather than to a zero value, so an entry that omits one
+ * reads the way the server would have meant it. `clusterName` has no such
+ * initializer and so has no default to borrow.
+ */
+export function normalizeInstance(entry: unknown): NacosInstance {
+  if (!isRecord(entry) || typeof entry.ip !== 'string' || entry.ip.length === 0 || typeof entry.port !== 'number') {
+    throw new NacosApiError('invalid-response', 'Nacos returned an instance with no ip:port address.');
+  }
+  return {
+    ip: entry.ip,
+    port: entry.port,
+    healthy: entry.healthy !== false,
+    enabled: entry.enabled !== false,
+    weight: optionalNumber(entry.weight) ?? 1,
+    clusterName: typeof entry.clusterName === 'string' ? entry.clusterName : '',
+    ephemeral: entry.ephemeral !== false,
+    instanceId: optionalString(entry.instanceId),
+    metadata: stringMap(entry.metadata)
+  };
+}
+
+/**
+ * The three shapes an instance listing arrives in (§6.4), read as one list.
+ *
+ * v1/v2 wrap the hosts in a ServiceInfo, v3's admin API answers with the
+ * array itself, and v3's console API pages it. Which one a driver gets is not
+ * something the driver should have to restate, so all three land here.
+ *
+ * A shape that is none of the three raises `invalid-response` naming the
+ * endpoint, for the reason `unwrapDataArray` does: a raw TypeError out of
+ * `.map()` carries no kind, so the resolver cannot judge whether to fall
+ * through and the chain stops there instead.
+ */
+export function normalizeInstanceList(payload: unknown, endpoint: string): NacosInstance[] {
+  const data = unwrapData<unknown>(payload);
+  const hosts = Array.isArray(data) ? data : instanceArrayIn(data);
+  if (hosts === undefined) {
+    throw new NacosApiError(
+      'invalid-response',
+      `Nacos returned no instances for ${endpoint}: the response carried ${describePayload(data)}.`
+    );
+  }
+  return hosts.map(normalizeInstance);
+}
+
+function instanceArrayIn(data: unknown): unknown[] | undefined {
+  if (!isRecord(data)) {
+    return undefined;
+  }
+  if (Array.isArray(data.hosts)) {
+    return data.hosts;
+  }
+  return Array.isArray(data.pageItems) ? data.pageItems : undefined;
+}
+
+/**
+ * One server of the cluster, with its raft metadata flattened.
+ *
+ * `extendInfo.raftMetaData.metaDataMap` is a map keyed by raft group name,
+ * three levels down; handing that to a view would make the view learn the
+ * shape of a Nacos internal. It becomes a list here, and the group name --
+ * which is the map's key, not a field -- becomes a field.
+ *
+ * The state is carried verbatim. Nacos has five (`STARTING`, `UP`,
+ * `SUSPICIOUS`, `DOWN`, `ISOLATION`, of which the 3.x documentation lists
+ * three), and a sixth from a version this plugin has not seen is still the
+ * server's answer: mapping it onto one of the five would report a health
+ * nobody claimed.
+ */
+export function normalizeClusterNode(entry: unknown): NacosClusterNode {
+  const record = isRecord(entry) ? entry : {};
+  const ip = typeof record.ip === 'string' ? record.ip : '';
+  const port = optionalNumber(record.port) ?? 0;
+  const address = optionalString(record.address) ?? (ip.length > 0 && port > 0 ? `${ip}:${port}` : undefined);
+  if (address === undefined) {
+    throw new NacosApiError('invalid-response', 'Nacos returned a cluster node with no address.');
+  }
+  const extendInfo = isRecord(record.extendInfo) ? record.extendInfo : undefined;
+  return {
+    address,
+    ip,
+    port,
+    // 'UNKNOWN' rather than '': the panel renders this as a badge, and a
+    // badge with nothing in it says the panel is broken.
+    state: optionalString(record.state) ?? 'UNKNOWN',
+    version: optionalString(extendInfo?.version),
+    // A string on the wire, oddly, while `port` beside it is a number.
+    raftPort: optionalString(extendInfo?.raftPort),
+    failAccessCnt: optionalNumber(record.failAccessCnt),
+    raftGroups: normalizeRaftGroups(extendInfo?.raftMetaData)
+  };
+}
+
+function normalizeRaftGroups(raftMetaData: unknown): NacosRaftGroup[] | undefined {
+  if (!isRecord(raftMetaData) || !isRecord(raftMetaData.metaDataMap)) {
+    return undefined;
+  }
+  return Object.entries(raftMetaData.metaDataMap).map(([group, meta]) => ({
+    group,
+    leader: (isRecord(meta) ? optionalString(meta.leader) : undefined) ?? '',
+    members: isRecord(meta) ? stringArray(meta.raftGroupMember) : [],
+    term: (isRecord(meta) ? optionalNumber(meta.term) : undefined) ?? 0
+  }));
+}
+
+/**
+ * The naming module's server metrics.
+ *
+ * Every field but `status` is optional because the server really does answer
+ * `{"status":"UP"}` and nothing else -- that is the `onlyStatus` default, not
+ * a version difference (§14). A missing count is left missing rather than
+ * defaulted to zero, so a panel can say "not reported" instead of claiming an
+ * empty registry.
+ */
+export function normalizeServerMetrics(payload: unknown): NacosServerMetrics {
+  const data = unwrapData<unknown>(payload);
+  if (!isRecord(data) || typeof data.status !== 'string') {
+    throw new NacosApiError(
+      'invalid-response',
+      `Nacos returned no server metrics: the response carried ${describePayload(data)}.`
+    );
+  }
+  return {
+    status: data.status,
+    serviceCount: optionalNumber(data.serviceCount),
+    instanceCount: optionalNumber(data.instanceCount),
+    subscribeCount: optionalNumber(data.subscribeCount),
+    clientCount: optionalNumber(data.clientCount),
+    cpu: optionalNumber(data.cpu),
+    load: optionalNumber(data.load),
+    mem: optionalNumber(data.mem)
+  };
+}
+
+/**
+ * 2.3.2's `ServiceView.triggerFlag` is the string `"true"` or `"false"`;
+ * 3.x models the same field as a boolean. Anything else is not an answer,
+ * and undefined says so.
+ */
+function optionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (value === 'true' || value === 'false') {
+    return value === 'true';
+  }
+  return undefined;
+}
+
+/** Nacos's instance metadata is a Map<String,String>; anything else in it cannot be rendered as one. */
+function stringMap(value: unknown): Record<string, string> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const entries = Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string');
+  return Object.fromEntries(entries);
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
 }
 
 /**

@@ -241,6 +241,96 @@ describe('NacosClient', () => {
     expect(resolver.snapshot()).toEqual({ 'config-detail': 'v2' });
   });
 
+  it('lists services through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => ({ count: 1, serviceList: [{ name: 'order-service', groupName: 'g' }] }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    const page = await new NacosClient(resolver, serverState(2)).listServices({
+      namespaceId: 'uat',
+      pageNo: 1,
+      pageSize: 100
+    });
+    expect(page.items.map((item) => item.serviceName)).toEqual(['order-service']);
+    expect(resolver.snapshot()).toEqual({ services: 'v2' });
+  });
+
+  it('lists instances through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => ({ code: 0, data: { name: 'g@@s', hosts: [{ ip: '10.0.0.7', port: 8080 }] } }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    const instances = await new NacosClient(resolver, serverState(2)).listInstances({
+      namespaceId: 'uat',
+      group: 'g',
+      serviceName: 's'
+    });
+    expect(instances.map((instance) => instance.ip)).toEqual(['10.0.0.7']);
+    expect(resolver.snapshot()).toEqual({ instances: 'v2' });
+  });
+
+  it('lists cluster nodes through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => ({ code: 0, data: [{ ip: '172.25.0.2', port: 8848, state: 'UP' }] }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    const nodes = await new NacosClient(resolver, serverState(2)).listClusterNodes();
+    expect(nodes.map((node) => node.address)).toEqual(['172.25.0.2:8848']);
+    expect(resolver.snapshot()).toEqual({ 'cluster-nodes': 'v2' });
+  });
+
+  it('reads the server metrics through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => ({ code: 0, data: { status: 'UP', serviceCount: 13 } }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    const metrics = await new NacosClient(resolver, serverState(2)).getServerMetrics();
+    expect(metrics).toMatchObject({ status: 'UP', serviceCount: 13 });
+    expect(resolver.snapshot()).toEqual({ 'server-metrics': 'v2' });
+  });
+
+  /**
+   * The catalog fallback is the driver's own business, and this is what that
+   * buys: a 2.x server whose catalog is missing still has `services` served
+   * by v2, so the v1 driver is never tried and the resolver's cache is not
+   * taught a flavor decision that had nothing to do with the version.
+   */
+  it('keeps the catalog fallback inside one driver, out of the capability cache', async () => {
+    const http = recordingHttp((path) => {
+      if (path === '/v1/ns/catalog/services') {
+        // What `/v1/ns/**` really answers for a path it has no controller
+        // for: 501 no-such-api, which is not even a fall-through kind.
+        throw new NacosApiError('api-error', 'no such api', 501);
+      }
+      return { code: 0, data: { count: 1, services: ['order-service'] } };
+    });
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    const page = await new NacosClient(resolver, serverState(2)).listServices({
+      namespaceId: 'uat',
+      pageNo: 1,
+      pageSize: 100
+    });
+
+    expect(page.items.map((item) => item.serviceName)).toEqual(['order-service']);
+    expect(resolver.snapshot()).toEqual({ services: 'v2' });
+    expect(http.calls.map((call) => call.path)).toEqual(['/v1/ns/catalog/services', '/v2/ns/service/list']);
+  });
+
+  /**
+   * The console API has no metrics endpoint, so the 3.x chain has to walk
+   * past it -- and it does so without spending a request on finding out.
+   */
+  it('walks past the console driver for metrics, which the console API does not serve', async () => {
+    const http = recordingHttp((path) => {
+      if (path.startsWith('/v3/admin')) {
+        throw new NacosApiError('forbidden', 'not an administrator', 403);
+      }
+      return { code: 0, data: { status: 'UP', serviceCount: 13 } };
+    });
+    const resolver = new NacosCapabilityResolver(buildDriverChain(3, http.client, CONSOLE_BASE_URL));
+
+    await expect(new NacosClient(resolver, serverState(3)).getServerMetrics()).resolves.toMatchObject({ status: 'UP' });
+    expect(resolver.snapshot()).toEqual({ 'server-metrics': 'v2' });
+    expect(http.calls.map((call) => call.path)).toEqual(['/v3/admin/ns/ops/metrics', '/v2/ns/operator/metrics']);
+  });
+
   /**
    * The reason `resource-not-found` exists. Asking for a dataId nobody
    * published used to walk every driver in the chain and end in "No Nacos API
@@ -282,5 +372,14 @@ function stubDriver(flavor: NacosApiFlavor): NacosDriver {
   const unused = (): never => {
     throw new Error(`${flavor}: this capability was not part of the test`);
   };
-  return { flavor, listNamespaces: unused, listConfigs: unused, getConfig: unused };
+  return {
+    flavor,
+    listNamespaces: unused,
+    listConfigs: unused,
+    getConfig: unused,
+    listServices: unused,
+    listInstances: unused,
+    listClusterNodes: unused,
+    getServerMetrics: unused
+  };
 }

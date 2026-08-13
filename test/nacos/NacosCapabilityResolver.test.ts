@@ -15,7 +15,11 @@ function driver(flavor: NacosApiFlavor, behavior: () => Promise<unknown>): Nacos
     flavor,
     listNamespaces: behavior as never,
     listConfigs: behavior as never,
-    getConfig: behavior as never
+    getConfig: behavior as never,
+    listServices: behavior as never,
+    listInstances: behavior as never,
+    listClusterNodes: behavior as never,
+    getServerMetrics: behavior as never
   };
 }
 

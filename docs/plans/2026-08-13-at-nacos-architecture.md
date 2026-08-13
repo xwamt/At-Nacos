@@ -608,6 +608,39 @@ M2 Task 7 把 `test/live` 从驱动层抬到了 UI 层：这一组驱动的是 `
 14. **非 ASCII 的 dataId。** 这台服务器上一个都没有，所以 URI 的中文编解码往返只有单测覆盖，标签页标题的实际渲染也没有在扩展宿主里看过（见 §16.6）。
 15. **虚拟文档的失败文案。** 「实例已被删除」与「配置已在服务端被删除」两条分支都只有夹具覆盖；后者要在标签页开着的时候去服务端删掉一条配置才能触发。
 
+### 14.5 M3 Task 1 驱动层的真机验证（Nacos 2.3.2，2026-08-14）
+
+M3 计划开篇的三条真机发现里，**第二条是错的**，而它错的方式恰好是第三条陷阱本身。
+
+**① 这台服务器有 13 个注册服务，不是零。** 分布在两个命名空间、同一个分组 `cl-intimfy`：`cl-parent-offline` 12 个、`cl-taskcenter` 1 个，各带 1 个健康实例，实例全部在 `192.168.99.92`，metadata 是 `{"preserved.register.source":"SPRING_CLOUD"}`。
+
+得出「零服务」结论的是 `/v1/ns/service/list`，而它的 `groupName` 默认 `DEFAULT_GROUP`。同一个命名空间实测：不带分组返回 `{"count":0,"doms":[]}`，带 `groupName=cl-intimfy` 返回 12 条。**分组默认值不只是「可能藏住一个注册表」——它藏住了这一个，并且骗过了为它做调研的人。**
+
+因此 M3 计划里「服务树本轮无法端到端真机验证」的结论作废：`test/live/liveServer.test.ts` 现在从命名空间一路走到实例，13 个服务连同实例的 ip:port、健康、权重、集群名与 metadata 全部真机可见。
+
+**② 只有 `/v1/ns/**` 用 HTTP 501 报告「没有这个接口」，其余前缀都是 Spring 404。** 实测 `/v1/ns/__nope__` → `501 {"message":"no such api:GET:/nacos/v1/ns/__nope__"}`，而 `/v2/ns/__nope__`、`/v1/cs/__nope__`、`/v1/core/__nope__`、`/v2/core/__nope__`、`/v1/console/__nope__` 全是 404 错误页。这是 naming 模块自己的 filter。
+
+两个后果。501 归类为 `api-error`，**不触发驱动降级**——目前只影响 driver 内部的 catalog 回退（它对任何分类错误都回退，所以无碍），但任何「v1 naming 端点缺失 → 换驱动」的设计都会卡在这里。以及 §9 把 `GET {base}/v1/ns/operator/servers` 列为集群节点的等价接口，**2.3.2 上它并不存在**（501），`listClusterNodes` 只走 `/v1/core/cluster/nodes`。
+
+**③ catalog 的搜索参数在 2.3.2 上就带 `Param` 后缀。** §6.5 把 `serviceNameParam` / `groupNameParam` 记成 3.x 的拼法，实则 2.3.2 的 `CatalogController` 声明的就是 `@RequestParam(name = "groupNameParam")`，3.x 是继承而非发明。给 catalog 传 `groupName` 会被静默丢弃、整个命名空间照原样返回，看起来像「过滤器匹配了所有东西」。空值才是「所有分组」（`patternServices` 用 `isBlank` 判断），服务树的无分组列举依赖这一条。
+
+**④ `triggerFlag` 在 2.x 上是字符串。** catalog 写的是 `"true"` / `"false"`，3.x 的同名字段是 boolean，归一化两种都收。
+
+**⑤「服务不存在」是 HTTP 200 + 空 `hosts`，与「配置不存在」正好相反。** `/v1/ns/instance/list?serviceName=<不存在>` 返回完整 ServiceInfo、`hosts: []`。§14.2 ⓪ 记的配置侧判据（2xx 但解包后为空 = 不存在）**不能**套到 naming 上：那会把一个空服务读成一个缺失的服务。
+
+**⑥ v1 的实例接口两种问法都认。** `serviceName=G@@svc` 与 `serviceName=svc&groupName=G` 等价，两个一起传也不会把分组拼两次（都得到 `G@@svc`）。但 `InstanceController.list` 源码只读 `serviceName`，所以驱动只发分组名形式。另外 `serviceName=G@@a@@b` 会被参数校验拒绝：`HTTP 400 Param 'serviceName' is illegal`——服务名里不可能出现 `@@`，但响应里的 `serviceName` 字段一定带着它。
+
+**⑦ `/v2/ns/operator/metrics` 存在。** 2.3.2 上可用，`{code:0,data:{...}}` 包装，比 v1 少一个 `responsibleInstanceCount`。v2 驱动不必借 v1 的路径。
+
+**⑧ metrics 的退化与版本无关，是参数默认值。** §4.1 把 `/v1/ns/operator/metrics` 只返回 `{"status":"UP"}` 记成 3.2+ 的退化；实际上 `onlyStatus` 在每个版本都默认 `true`（v1/v2 `WebUtils.optional(request,"onlyStatus","true")`，v3 `@RequestParam(defaultValue="true")`），2.3.2 上行为一模一样。带 `onlyStatus=false` 才有那 13 项指标。§4.1 里「3.2+ 仍保留该端点」的部分仍未验证。
+
+**M3 Task 1 仍未覆盖的：**
+
+16. **v3 的全部 naming / cluster 路径与参数。** `/v3/admin/ns/service/list`、`/v3/admin/ns/instance/list`、`/v3/admin/ns/ops/metrics`、`/v3/admin/core/cluster/node/list` 与四个 console 对应路径，都是照 3.1.0 源码写的（`UtilsAndCommons` 里的常量与各 Controller 的 `@RequestMapping`），没有 3.x 环境跑过。风险最低的是实例列表——`normalizeInstanceList` 三种形状都收，猜错顶多是「仍然能解析」。
+17. **catalog 的回退路径。** 2.3.2 的 catalog 正常，所以「catalog 不可用 → 退回 service/list」只有夹具覆盖。它真正要救的是老 1.x（catalog 曾在 `/v1/ns/catalog/serviceList`，路径不同即 501）与 3.0/3.1 关掉兼容开关（catalog 是 CONSOLE_API，410）。
+18. **console 没有 naming metrics 端点这一判断。** 来自 3.1.0 的 `console/controller/v3` 目录清单（只有 health、serverState、naming 的 service/instance、core 的 cluster/namespace），据此 `V3ConsoleDriver.getServerMetrics` 不发请求直接拒绝。若某个 3.x 其实提供了，我们会拒绝一个存在的能力。
+19. **多节点集群与非 UP 状态。** 这台是单节点 standalone，所以 `raftGroups` 的多成员分支、以及 `STARTING` / `SUSPICIOUS` / `DOWN` / `ISOLATION` 四种状态全部只有夹具覆盖。
+
 ## 16. 已知延后项（M1 完成时记录）
 
 这些是 M1 整体评审确认过的、有意留到后续里程碑的问题。它们不是缺陷清单里的遗漏，但**开始 M2 之前应当各自有个决定**。

@@ -14,7 +14,14 @@ import type { NacosApiFlavor, NacosDriver } from './driver/NacosDriver';
  * is an OPEN_API and keeps working (§4.2). Sharing an entry would let a
  * fall-through on either one evict the winner the other had already found.
  */
-export type NacosCapability = 'namespaces' | 'configs' | 'config-detail';
+export type NacosCapability =
+  | 'namespaces'
+  | 'configs'
+  | 'config-detail'
+  | 'services'
+  | 'instances'
+  | 'cluster-nodes'
+  | 'server-metrics';
 
 /** How one driver in the chain declined, in the terms the chain builder reasons about. */
 export interface NacosDriverRefusal {

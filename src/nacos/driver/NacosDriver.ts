@@ -16,10 +16,15 @@ import {
   normalizePaged,
   unwrapData,
   unwrapDataArray,
+  type NacosClusterNode,
   type NacosConfigDetail,
   type NacosConfigRef,
   type NacosConfigSummary,
+  type NacosInstance,
   type NacosNamespace,
+  type NacosServerMetrics,
+  type NacosServiceRef,
+  type NacosServiceSummary,
   type Paged
 } from './normalize';
 
@@ -48,16 +53,56 @@ export interface NacosConfigListQuery {
 }
 
 /**
- * M1 defined the namespace capability; M2 adds the two configuration ones.
- * Later milestones widen this interface as they need to, and every widening
- * has to bring all four implementations along with it -- TypeScript enforces
- * that, which is exactly why the interface is kept narrow.
+ * One page of one namespace's services.
+ *
+ * `group` is optional and **absent means every group**, which is the shape
+ * the tree needs: Nacos has no endpoint that lists groups, so the group nodes
+ * are derived from the services that came back, and a listing scoped to one
+ * group could never produce them.
+ *
+ * Every group is not a thing every endpoint can express. The catalog and 3.x
+ * read a blank group filter as no filter at all; the older name-only
+ * listings match one group exactly and silently substitute `DEFAULT_GROUP`
+ * for a blank one. So a driver reduced to the fallback answers for the
+ * default group alone -- see `listServicesPreferringCounts`. Making the field
+ * required instead would not fix that and would cost the tree its groups on
+ * every version.
+ */
+export interface NacosServiceListQuery {
+  namespaceId: string;
+  /** Absent = every group. */
+  group?: string;
+  /** One-based, as Nacos counts. */
+  pageNo: number;
+  pageSize: number;
+}
+
+export interface NacosInstanceQuery extends NacosServiceRef {
+  /** One cluster of the service; absent means every cluster. */
+  cluster?: string;
+}
+
+/**
+ * M1 defined the namespace capability, M2 the two configuration ones, and M3
+ * the naming and cluster ones. Later milestones widen this interface as they
+ * need to, and every widening has to bring all four implementations along
+ * with it -- TypeScript enforces that, which is exactly why the interface is
+ * kept narrow.
  */
 export interface NacosDriver {
   readonly flavor: NacosApiFlavor;
   listNamespaces(): Promise<NacosNamespace[]>;
   listConfigs(query: NacosConfigListQuery): Promise<Paged<NacosConfigSummary>>;
   getConfig(ref: NacosConfigRef): Promise<NacosConfigDetail>;
+  listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>>;
+  /**
+   * Every instance of one service, unpaged. Only 3.x's console API pages
+   * this, and it is the driver's business to ask for a page large enough that
+   * the difference does not reach here.
+   */
+  listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]>;
+  listClusterNodes(): Promise<NacosClusterNode[]>;
+  getServerMetrics(): Promise<NacosServerMetrics>;
 }
 
 /**

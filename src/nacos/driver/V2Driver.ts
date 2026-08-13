@@ -5,9 +5,29 @@ import {
   fetchNamespaces,
   type NacosApiFlavor,
   type NacosConfigListQuery,
-  type NacosDriver
+  type NacosDriver,
+  type NacosInstanceQuery,
+  type NacosServiceListQuery
 } from './NacosDriver';
-import type { NacosConfigDetail, NacosConfigRef, NacosConfigSummary, NacosNamespace, Paged } from './normalize';
+import {
+  fetchCatalogServices,
+  fetchClusterNodes,
+  fetchInstances,
+  fetchServerMetrics,
+  fetchServiceNames,
+  listServicesPreferringCounts
+} from './naming';
+import type {
+  NacosClusterNode,
+  NacosConfigDetail,
+  NacosConfigRef,
+  NacosConfigSummary,
+  NacosInstance,
+  NacosNamespace,
+  NacosServerMetrics,
+  NacosServiceSummary,
+  Paged
+} from './normalize';
 
 /** The v2 endpoint 2.x added: entries have v1's shape, and the success code becomes 0. It needs no auth either. */
 const NAMESPACE_LIST_PATH = '/v2/console/namespace/list';
@@ -40,6 +60,22 @@ const CONFIG_ENDPOINT_FLAVOR: NacosApiFlavor = 'v1';
 /** Without it the same path answers in plain text, with no `type` in it. */
 const SHOW_ALL = { query: { show: 'all' } };
 
+/**
+ * v2 never got a catalog of its own, so the counts come from v1's -- the same
+ * server serves both, and `/v2/ns/service/list` reports nothing but names
+ * (`{"code":0,"data":{"count":N,"services":[...]}}`, measured). The fallback
+ * stays on the v2 path: it is this driver's own version, and the only thing
+ * the v1 one would add is a second dialect to get wrong.
+ */
+const CATALOG_SERVICES_PATH = '/v1/ns/catalog/services';
+const SERVICE_LIST_PATH = '/v2/ns/service/list';
+
+const INSTANCE_LIST_PATH = '/v2/ns/instance/list';
+const CLUSTER_NODES_PATH = '/v2/core/cluster/node/list';
+
+/** v2 does have its own metrics endpoint -- confirmed answering on a real 2.3.2. */
+const METRICS_PATH = '/v2/ns/operator/metrics';
+
 export class V2Driver implements NacosDriver {
   readonly flavor: NacosApiFlavor = 'v2';
 
@@ -55,5 +91,24 @@ export class V2Driver implements NacosDriver {
 
   getConfig(ref: NacosConfigRef): Promise<NacosConfigDetail> {
     return fetchConfigDetail(this.http, CONFIG_ENDPOINT_FLAVOR, CONFIG_PATH, ref, SHOW_ALL);
+  }
+
+  listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {
+    return listServicesPreferringCounts(
+      () => fetchCatalogServices(this.http, CATALOG_SERVICES_PATH, query),
+      () => fetchServiceNames(this.http, SERVICE_LIST_PATH, query)
+    );
+  }
+
+  listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]> {
+    return fetchInstances(this.http, this.flavor, INSTANCE_LIST_PATH, query);
+  }
+
+  listClusterNodes(): Promise<NacosClusterNode[]> {
+    return fetchClusterNodes(this.http, CLUSTER_NODES_PATH);
+  }
+
+  getServerMetrics(): Promise<NacosServerMetrics> {
+    return fetchServerMetrics(this.http, METRICS_PATH);
   }
 }

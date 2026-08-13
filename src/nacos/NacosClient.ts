@@ -1,15 +1,24 @@
 import type { NacosCapabilityResolver, NacosChainAdvice } from './NacosCapabilityResolver';
 import type { NacosHttpClient } from './NacosHttpClient';
-import type { NacosConfigListQuery, NacosDriver } from './driver/NacosDriver';
+import type {
+  NacosConfigListQuery,
+  NacosDriver,
+  NacosInstanceQuery,
+  NacosServiceListQuery
+} from './driver/NacosDriver';
 import { V1Driver } from './driver/V1Driver';
 import { V2Driver } from './driver/V2Driver';
 import { V3AdminDriver } from './driver/V3AdminDriver';
 import { V3ConsoleDriver } from './driver/V3ConsoleDriver';
 import type {
+  NacosClusterNode,
   NacosConfigDetail,
   NacosConfigRef,
   NacosConfigSummary,
+  NacosInstance,
   NacosNamespace,
+  NacosServerMetrics,
+  NacosServiceSummary,
   Paged
 } from './driver/normalize';
 import type { NacosServerState } from './probe/probeServerState';
@@ -123,5 +132,27 @@ export class NacosClient {
 
   getConfig(ref: NacosConfigRef): Promise<NacosConfigDetail> {
     return this.resolver.run('config-detail', (driver) => driver.getConfig(ref));
+  }
+
+  listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {
+    return this.resolver.run('services', (driver) => driver.listServices(query));
+  }
+
+  listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]> {
+    return this.resolver.run('instances', (driver) => driver.listInstances(query));
+  }
+
+  /**
+   * The cluster and the metrics are two capabilities rather than one because
+   * a server can serve one and not the other: 3.x's console API has the node
+   * list and no metrics endpoint at all, so sharing a cache entry would let
+   * the one it cannot serve evict the driver the other had settled on.
+   */
+  listClusterNodes(): Promise<NacosClusterNode[]> {
+    return this.resolver.run('cluster-nodes', (driver) => driver.listClusterNodes());
+  }
+
+  getServerMetrics(): Promise<NacosServerMetrics> {
+    return this.resolver.run('server-metrics', (driver) => driver.getServerMetrics());
   }
 }
