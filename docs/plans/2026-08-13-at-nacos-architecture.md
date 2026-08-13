@@ -172,6 +172,18 @@ export type NacosApiFlavor = 'v1' | 'v2' | 'v3-admin' | 'v3-console';
 
 能力探测结果按 `实例 id + 能力名` 缓存在内存中，避免每次请求都试错。
 
+### 5.5 M2 必须先解决：404 同时表示两件事
+
+`classifyHttpStatus` 把 HTTP 404 映射成 `not-found`，而 `not-found` 是 fall-through 类型。这在 M1 成立，因为命名空间列表端点要么存在要么不存在。
+
+**但 Nacos 对「配置不存在」也返回 404**（1.x 是 `config data not exist`，2.x 是 `RESOURCE_NOT_FOUND`）。一旦 M2 加入 `getConfig` 能力，每一次查询一个不存在的 dataId 都会被当成「这个版本没有这个端点」，触发完整的驱动链遍历，最终报出「No Nacos API flavor could serve "configs"」——而正确答案只是「这条配置不存在」。
+
+修法方向（M2 开始前定夺，并在真机上确认响应体形状）：
+
+- 让 driver 在解析响应时区分二者，把「资源不存在」重新分类为 `api-error` 或新增一个 `resource-not-found` 类型（后者不 fall-through）
+- 判据只能来自响应体：v2/v3 有 `code` 字段（`20004` / `21008` / `22001` 分别对应资源、服务、命名空间不存在），1.x 只有纯文本消息
+- 不要试图靠路径猜测，同一个路径既可能因版本不对而 404，也可能因资源不存在而 404
+
 ## 6. 参数名与响应形状的版本差异
 
 这一节是实现 driver 时的对照表，写代码时必须逐条核对。
