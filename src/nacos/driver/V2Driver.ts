@@ -2,7 +2,7 @@ import type { NacosHttpClient } from '../NacosHttpClient';
 import { fetchNamespaces, type NacosApiFlavor, type NacosDriver } from './NacosDriver';
 import type { NacosNamespace } from './normalize';
 
-/** 2.x 新增的 v2 端点：条目形状与 v1 相同，成功码换成了 0。同样免鉴权。 */
+/** The v2 endpoint 2.x added: entries have v1's shape, and the success code becomes 0. It needs no auth either. */
 const NAMESPACE_LIST_PATH = '/v2/console/namespace/list';
 
 export class V2Driver implements NacosDriver {

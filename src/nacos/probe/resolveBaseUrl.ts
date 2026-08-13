@@ -2,12 +2,14 @@ import { NacosApiError } from '../NacosApiError';
 import { normalizeBaseUrl, type NacosHttpClient } from '../NacosHttpClient';
 
 /**
- * 按顺序要试的 base URL。`/nacos` 不是绝对的：K8s Ingress 和部分 Docker
- * 镜像把服务开在根路径上。
+ * The base URLs to try, in order. `/nacos` is not a given: a K8s Ingress and
+ * some Docker images serve Nacos at the root path.
  *
- * `normalizeBaseUrl` 在这里再走一遍，不是因为 HTTP client 那边不做——那边
- * 做了——而是因为候选本身会被回显：连接测试把探通的那个候选当作要保存的
- * `serverUrl`，带着 `#/login` 存进配置只会让人以为自己填对了。
+ * `normalizeBaseUrl` runs again here, not because the HTTP client fails to do
+ * it -- it does -- but because the candidate itself is echoed back: the
+ * connection test treats whichever candidate answered as the `serverUrl` to
+ * save, and storing one with `#/login` still on it would only convince the
+ * user they had typed it correctly.
  */
 export function candidateBaseUrls(input: string): string[] {
   const trimmed = normalizeBaseUrl(input);
@@ -15,15 +17,18 @@ export function candidateBaseUrls(input: string): string[] {
   try {
     url = new URL(trimmed);
   } catch {
-    // 连解析都过不去的地址，也就无从把 userinfo 里的口令摘掉，所以一个字
-    // 都不回显——这条消息会进输出通道。
+    // An address that will not even parse gives us no way to strip the
+    // password out of its userinfo, so none of it is echoed back -- this
+    // message goes to the output channel.
     throw new NacosApiError(
       'validation',
       'The Nacos server address is not a valid URL. It should look like http://host:8848/nacos.'
     );
   }
-  // 用户已经给了 context-path（路径非空），照单全收——猜测只会帮倒忙。
-  // 原样返回而不是用 origin 重拼，是为了不动用户写下的任何东西。
+  // The user has already given a context path (the path is non-empty), so
+  // take it exactly as written -- guessing would only get in the way.
+  // Returning it as-is rather than rebuilding it from `origin` is what leaves
+  // everything the user wrote untouched.
   if (url.pathname !== '/' && url.pathname !== '') {
     return [trimmed];
   }
@@ -31,10 +36,13 @@ export function candidateBaseUrls(input: string): string[] {
 }
 
 /**
- * 提示句后面可能还跟着别的话，所以右边界用前瞻的空白（含换行）或串尾，而
- * 不是行尾锚点：`$` 配 `m` 只在提示恰好独占一行时成立，同一行上多一句
- * 「Please visit ...」就匹配不上了。`\S+?` 的惰性由这个前瞻收口，路径不是
- * `/` 时（运维改过 `nacos.console.contextPath`）也能取全。
+ * More text may follow the hint sentence, so the right-hand boundary is a
+ * lookahead for whitespace (newlines included) or the end of the string,
+ * rather than an end-of-line anchor: `$` with `m` only holds when the hint
+ * has a line to itself, and one more sentence such as "Please visit ..." on
+ * the same line would stop it matching. That lookahead is what closes off the
+ * laziness of `\S+?`, so the path is still captured whole when it is not `/`
+ * (an operator having changed `nacos.console.contextPath`).
  */
 const CONSOLE_HINT_PATTERN = /Nacos Console default port is (\d+), and the path is (\S+?)\.?(?=\s|$)/;
 
@@ -44,9 +52,10 @@ export interface NacosConsoleHint {
 }
 
 /**
- * Nacos 3.x 的 `NacosConsolePathTipFilter` 会对 `{base}/` 返回一行 text/plain
- * 提示。命中它等于同时确认了「这是 3.x」和「console 在哪个端口」。
- * 1.x/2.x 在同一路径返回控制台 HTML，匹配不上。
+ * Nacos 3.x's `NacosConsolePathTipFilter` answers `{base}/` with a one-line
+ * text/plain hint. Matching it settles both "this is 3.x" and "which port the
+ * console is on" at once. 1.x/2.x answer the same path with the console's
+ * HTML, which does not match.
  */
 export function parseConsoleHint(body: string): NacosConsoleHint | undefined {
   const match = CONSOLE_HINT_PATTERN.exec(body);
@@ -61,21 +70,25 @@ export function parseConsoleHint(body: string): NacosConsoleHint | undefined {
 }
 
 /**
- * 提示只有一行。给一个小上限，好让明显装不下这句话的 body（1.x/2.x 在同
- * 一路径返回的控制台首页）不必读完——超限时 `requestRaw` 抛
- * `response-too-large`，正好落进下面的 catch。
+ * The hint is a single line. A small cap means a body that plainly cannot be
+ * that sentence (the console home page 1.x/2.x serve at the same path) does
+ * not have to be read to the end -- over the limit `requestRaw` throws
+ * `response-too-large`, which lands squarely in the catch below.
  */
 const CONSOLE_HINT_MAX_BYTES = 8 * 1024;
 
 /**
- * 对 `{base}/` 发一次裸请求，看它是不是 3.x 的 console 提示。
+ * Makes one raw request to `{base}/` and asks whether the answer is 3.x's
+ * console hint.
  *
- * 用 `requestRaw` 有两个理由：body 是 text/plain 而非 JSON；以及非 2xx 时
- * 也要 body——这个 filter 回什么状态码没在真机上确认过，能信的只有那句话
- * 本身。
+ * `requestRaw` for two reasons: the body is text/plain rather than JSON, and
+ * the body is wanted on a non-2xx as well -- which status code this filter
+ * answers with has never been confirmed against a real server, so the
+ * sentence itself is the only thing worth trusting.
  *
- * 探测不到 console 不是错误，只是「这台不是 3.x，或者它不肯说」。所以任何
- * 已分类的失败都归为 undefined：调用方少一条线索，不该因此少一个连接。
+ * Not detecting the console is not an error, only "this one is not 3.x, or it
+ * will not say". So every classified failure becomes undefined: the caller
+ * loses one hint, and should not lose a connection over it.
  */
 export async function fetchConsoleHint(
   http: Pick<NacosHttpClient, 'requestRaw'>

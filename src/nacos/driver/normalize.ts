@@ -75,16 +75,19 @@ export function normalizeNamespace(entry: unknown): NacosNamespace {
 }
 
 /**
- * v2/v3 的 `{code,message,data}` 与 1.x 的裸响应统一取值。
+ * Reads v2/v3's `{code,message,data}` and 1.x's bare responses the same way.
  *
- * 判据是「`code` 与 `data` 有其一」而不是「两者都有」：`{code:0,
- * message:'success'}`（1.x/2.x 用于无返回值的操作）少了 `data`，若按两者
- * 都有来判就会把信封本身当成内容还给调用方——一个长得像数据的对象，比
- * undefined 难查得多。反过来，1.x 的配置/历史列表是裸 `Page` 对象，两个
- * 键都没有，照原样透传。
+ * The test is that *either* `code` or `data` is present, not that both are:
+ * `{code:0, message:'success'}`, which 1.x/2.x use for operations that return
+ * nothing, has no `data`, and a both-must-be-present test would hand the
+ * envelope itself back to the caller as the content -- an object that looks
+ * like data is much harder to track down than an undefined. In the other
+ * direction, 1.x's config and history listings are bare `Page` objects with
+ * neither key, and pass through as they are.
  *
- * 只剥一层：外层信封是 Nacos 加的，里面再有同名字段就是数据本身了。
- * body 里的业务 code 由 `NacosHttpClient` 校验，这里不重复判。
+ * One layer only: the outer envelope is Nacos's, and a field of the same name
+ * inside it is the data itself. The business code in the body is checked by
+ * `NacosHttpClient`, and is not checked again here.
  */
 export function unwrapData<T>(payload: unknown): T {
   if (isRecord(payload) && ('data' in payload || 'code' in payload)) {
@@ -94,12 +97,15 @@ export function unwrapData<T>(payload: unknown): T {
 }
 
 /**
- * 列表端点专用：取出 `data` 并确认它真是数组。
+ * For list endpoints: takes `data` out and confirms it really is an array.
  *
- * 少了这道检查，`data` 是 null/对象/缺失时会一路走到 `.map()` 抛
- * `TypeError`。那种错误不带 kind，`NacosCapabilityResolver` 无从判断该不该
- * 降级，会直接中断整条 driver 链。所以在这里换成带 kind 的 NacosApiError，
- * 并把端点写进消息里——四个版本的路径不同，消息里有路径才知道是谁答的。
+ * Without this check, a `data` that is null, an object or missing travels as
+ * far as `.map()` and throws a `TypeError`. That error carries no kind, so
+ * `NacosCapabilityResolver` has no way to judge whether to fall through and
+ * the whole driver chain stops there. A NacosApiError with a kind goes out
+ * instead, with the endpoint written into the message -- the four versions
+ * each have their own path, and only a path in the message says which of them
+ * answered.
  */
 export function unwrapDataArray(payload: unknown, endpoint: string): unknown[] {
   const data = unwrapData<unknown>(payload);

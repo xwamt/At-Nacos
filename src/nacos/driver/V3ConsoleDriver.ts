@@ -3,10 +3,11 @@ import { fetchNamespaces, type NacosApiFlavor, type NacosDriver } from './NacosD
 import type { NacosNamespace } from './normalize';
 
 /**
- * 3.x 的 console API 在**另一个源**上：默认 8080，context-path 为**空**。
- * 所以这里必须用 baseUrlOverride 覆盖服务端 base URL，否则会把
- * `/v3/console/...` 打到 8848 的 `/nacos` 下面去。它只要求一个有效身份，
- * 于是成为 admin 返回 403 时的兜底。
+ * 3.x's console API lives on **a different origin**: port 8080 by default,
+ * with an **empty** context path. So baseUrlOverride has to replace the
+ * server's base URL here, or `/v3/console/...` goes to `/nacos` on 8848
+ * instead. It asks only for a valid identity, which makes it the fallback for
+ * an admin 403.
  */
 const NAMESPACE_LIST_PATH = '/v3/console/core/namespace/list';
 

@@ -3,9 +3,10 @@ import { fetchNamespaces, type NacosApiFlavor, type NacosDriver } from './NacosD
 import type { NacosNamespace } from './normalize';
 
 /**
- * 1.x 的 `RestResult` 接口，成功码是 **200 而不是 0**（`NacosHttpClient`
- * 两个都认）。这条属于 CONSOLE_API 且没有 @Secured，1.x/2.x 上免鉴权；
- * 3.0/3.1 关掉兼容开关时返回 410、3.2+ 返回 404，两者都会触发降级。
+ * 1.x's `RestResult` interface, whose success code is **200 rather than 0**
+ * (`NacosHttpClient` accepts both). This one is a CONSOLE_API and carries no
+ * @Secured, so it needs no authentication on 1.x/2.x; 3.0/3.1 answer 410 with
+ * the compatibility switch off and 3.2+ answer 404, and both fall through.
  */
 const NAMESPACE_LIST_PATH = '/v1/console/namespaces';
 

@@ -6,7 +6,7 @@ export interface NacosServerState {
   version: string;
   majorVersion: number;
   startupMode: 'standalone' | 'cluster' | 'unknown';
-  /** 只反映 `nacos.core.auth.enabled`。3.x 上为 false 也不代表 admin/console 免鉴权。 */
+  /** Reflects `nacos.core.auth.enabled` alone. False on 3.x still does not mean admin/console need no auth. */
   authEnabled: boolean;
   raw: Record<string, string>;
 }
@@ -15,8 +15,9 @@ const V3_STATE_PATH = '/v3/admin/core/state';
 const V1_STATE_PATH = '/v1/console/server/state';
 
 /**
- * 3.x 的响应形状存在争议：源码是 `Result<Map<String,String>>`（带包装），
- * 官方文档示例是裸 map。两种都接受。
+ * The shape of the 3.x response is disputed: the source says
+ * `Result<Map<String,String>>` (wrapped), while the official documentation's
+ * example is a bare map. Both are accepted.
  */
 export function parseServerState(payload: unknown): NacosServerState {
   const raw = unwrap(payload);
@@ -28,8 +29,9 @@ export function parseServerState(payload: unknown): NacosServerState {
   if (!Number.isFinite(majorVersion)) {
     throw new NacosApiError('invalid-response', `Unrecognized Nacos version string: ${version}`);
   }
-  // 2.5 把 standalone_mode 改名成了 startup_mode。用版本号选 key 会在
-  // 改名的分界版本上出错，所以两个都读。
+  // 2.5 renamed standalone_mode to startup_mode. Picking the key by version
+  // number gets it wrong on whichever release sits on that boundary, so both
+  // are read.
   const mode = raw.startup_mode ?? raw.standalone_mode;
   return {
     version,
@@ -41,11 +43,13 @@ export function parseServerState(payload: unknown): NacosServerState {
 }
 
 /**
- * 带 version 的 `data` 优先于顶层的 version：状态图本身才是我们要的 raw，
- * 顶层只是信封。若反过来取顶层，`{code,message,data:{...}}` 的 raw 会变成
- * `{message:'success'}` —— 既丢了 startup_mode 之类的字段，又会把网关自己
- * 加的 version 当成服务端版本。`data` 里没有 version 时退回顶层，这样文档
- * 里那种裸 map 照样能读。
+ * A `data` carrying a version wins over a version at the top level: the state
+ * map itself is the raw we want, and the top level is only an envelope.
+ * Taking the top level instead would reduce the raw of
+ * `{code,message,data:{...}}` to `{message:'success'}` -- losing fields such
+ * as startup_mode, and mistaking a version a gateway added of its own accord
+ * for the server's. When `data` carries no version the top level is used
+ * after all, which is what keeps the documentation's bare map readable.
  */
 function unwrap(payload: unknown): Record<string, string> {
   if (isRecord(payload)) {
@@ -73,9 +77,11 @@ export async function probeServerState(
   try {
     return parseServerState(await http.requestJson('GET', V1_STATE_PATH));
   } catch (v1Error) {
-    // 410 意味着这是 3.0/3.1 且 console 兼容开关关闭，也就等于证明了 v3
-    // 存在——第一次 v3 失败是别的原因（代理抖了一下、body 截断）。只再试
-    // 这一次，失败就抛出去：这不是通用重试策略。
+    // 410 means this is 3.0/3.1 with the console compatibility switch turned
+    // off, which is itself proof that v3 exists -- the first v3 failure had
+    // some other cause (a proxy hiccup, a truncated body). This one retry and
+    // no more; if it fails the error goes out. This is not a general retry
+    // policy.
     if (v1Error instanceof NacosApiError && v1Error.kind === 'api-deprecated') {
       return parseServerState(await http.requestJson('GET', V3_STATE_PATH));
     }
@@ -84,9 +90,10 @@ export async function probeServerState(
 }
 
 /**
- * 两条路径都 404 时，只报 v1 的那条最没有信息量：真正的原因几乎总是
- * context-path 猜错，或者这个地址根本不是 Nacos。kind 保持 not-found，
- * Task 10 的候选遍历照样会接着试下一个 base URL。
+ * When both paths answer 404, reporting only the v1 one is the least
+ * informative thing available: the real cause is almost always a wrong guess
+ * at the context path, or an address that is not Nacos at all. The kind stays
+ * not-found, so Task 10's candidate walk still goes on to the next base URL.
  */
 function combineMissingEndpoints(v3Error: unknown, v1Error: unknown): NacosApiError | undefined {
   if (!isNotFound(v3Error) || !isNotFound(v1Error)) {
@@ -104,10 +111,11 @@ function isNotFound(error: unknown): boolean {
 }
 
 /**
- * `invalid-response` 也算：一个把未知路径重写到控制台 SPA 的 Ingress 会让
- * v3 返回 HTML（`requestJson` 判为 invalid-response），而它下面的 v1 是好
- * 的。代价是「每条路径都回同一个 JSON 错误页」的反代会多花一次请求，最终
- * 仍然报错，不会误判成功。
+ * `invalid-response` counts too: an Ingress that rewrites unknown paths to
+ * the console SPA makes v3 answer with HTML (which `requestJson` reads as
+ * invalid-response) while the v1 underneath it is fine. The cost is one extra
+ * request against a reverse proxy that answers every path with the same JSON
+ * error page, which still ends in an error rather than a false success.
  */
 function shouldTryOlderState(error: unknown): boolean {
   return error instanceof NacosApiError && (error.shouldFallThrough() || error.kind === 'invalid-response');

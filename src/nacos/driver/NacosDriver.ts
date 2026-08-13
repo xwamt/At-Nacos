@@ -4,8 +4,10 @@ import { normalizeNamespace, unwrapDataArray, type NacosNamespace } from './norm
 export type NacosApiFlavor = 'v1' | 'v2' | 'v3-admin' | 'v3-console';
 
 /**
- * M1 只定义命名空间能力。后续里程碑按需扩展本接口，每次扩展都必须让
- * 四个实现同时跟进——TypeScript 会强制这一点，这正是把接口做窄的理由。
+ * M1 defines the namespace capability and nothing more. Later milestones
+ * widen this interface as they need to, and every widening has to bring all
+ * four implementations along with it -- TypeScript enforces that, which is
+ * exactly why the interface is kept narrow.
  */
 export interface NacosDriver {
   readonly flavor: NacosApiFlavor;
@@ -13,11 +15,14 @@ export interface NacosDriver {
 }
 
 /**
- * 四个 driver 的 listNamespaces 只差一个路径（v3-console 再多一个 base
- * URL），差异之外的取值、校验、归一化必须逐字相同——否则某个版本的空
- * `data` 会抛 TypeError 而别的版本抛 NacosApiError，降级链的行为就跟服务端
- * 版本挂上钩了。所以共用体放在接口旁边，路径仍写在各自的 driver 文件里：
- * 想知道某个版本打的是哪个 URL，看那一个文件就够。
+ * The four drivers' listNamespaces differ by one path (v3-console by one more
+ * base URL). Everything either side of that difference -- the unwrapping, the
+ * validation, the normalization -- has to be word-for-word identical, or an
+ * empty `data` throws a TypeError on one version and a NacosApiError on
+ * another, and the fall-through chain's behaviour becomes a function of the
+ * server's version. So the shared part sits beside the interface while the
+ * paths stay in their own driver files: to see which URL a version asks for,
+ * that one file is enough.
  */
 export async function fetchNamespaces(
   http: Pick<NacosHttpClient, 'requestJson'>,

@@ -3,9 +3,10 @@ import { fetchNamespaces, type NacosApiFlavor, type NacosDriver } from './NacosD
 import type { NacosNamespace } from './normalize';
 
 /**
- * 3.x 的 admin API，走服务端 base URL（8848 + context-path `/nacos`），因此
- * 不传 baseUrlOverride。它要求**管理员身份**，普通账号会拿到 403——那时
- * 降级到 V3ConsoleDriver。
+ * 3.x's admin API, which uses the server's own base URL (8848 plus the
+ * `/nacos` context path) and therefore passes no baseUrlOverride. It requires
+ * **administrator identity**, and an ordinary account gets a 403 -- which
+ * falls through to V3ConsoleDriver.
  */
 const NAMESPACE_LIST_PATH = '/v3/admin/core/namespace/list';
 
