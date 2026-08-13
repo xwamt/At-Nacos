@@ -7,8 +7,14 @@ import type { NacosApiFlavor, NacosDriver } from './driver/NacosDriver';
  * misspelling is a compile error instead of a second cache entry that probes
  * the whole chain forever and never collides with the first. Every milestone
  * that widens `NacosDriver` widens this alongside it.
+ *
+ * Listing and reading a config are two keys rather than one because a server
+ * can serve one and not the other: on 3.0/3.1 the listing is a CONSOLE_API
+ * and answers 410 with the compatibility switch off, while reading a config
+ * is an OPEN_API and keeps working (§4.2). Sharing an entry would let a
+ * fall-through on either one evict the winner the other had already found.
  */
-export type NacosCapability = 'namespaces';
+export type NacosCapability = 'namespaces' | 'configs' | 'config-detail';
 
 /** How one driver in the chain declined, in the terms the chain builder reasons about. */
 export interface NacosDriverRefusal {

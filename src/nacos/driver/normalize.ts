@@ -46,10 +46,25 @@ export function publicNamespaceId(majorVersion: number): string {
  * Keyed on flavor rather than on major version, because the spelling follows
  * the endpoint being called, not the server answering it. A 2.x server serves
  * both the v1 paths and the v2 paths, and a major-version argument cannot
- * tell those apart.
+ * tell those apart. Read the argument as the endpoint family, therefore, not
+ * as the driver asking: `V2Driver` reaches the v1 config endpoints, so its
+ * config requests have to ask as v1.
  */
 export function namespaceParamName(flavor: NacosApiFlavor, module: NacosModule): 'tenant' | 'namespaceId' {
   return flavor === 'v1' && module === 'config' ? 'tenant' : 'namespaceId';
+}
+
+/**
+ * Which spelling of the group parameter an endpoint family expects.
+ *
+ * Splits exactly where `namespaceParamName` splits, and the two must always
+ * be used together: a request that says `tenant` and `groupName` is half in
+ * each dialect, and the half the server does not recognize is dropped in
+ * silence rather than refused. Only v1's config module says `group`; v1
+ * naming already said `groupName`, and v3 settled on it everywhere.
+ */
+export function groupParamName(flavor: NacosApiFlavor, module: NacosModule): 'group' | 'groupName' {
+  return flavor === 'v1' && module === 'config' ? 'group' : 'groupName';
 }
 
 /**

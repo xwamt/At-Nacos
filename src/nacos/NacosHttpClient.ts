@@ -61,8 +61,16 @@ interface RequestPayload {
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-/** Nacos's two success codes: v2/v3 use 0, and 1.x's RestResult uses an HTTP-style 200. */
-const SUCCESS_CODES: ReadonlySet<number> = new Set([0, 200]);
+/**
+ * Nacos's two success codes: v2/v3 use 0, and 1.x's RestResult uses an
+ * HTTP-style 200.
+ *
+ * Exported because `requestRaw` performs no body check at all -- by design,
+ * its callers came for the status and the body -- so a driver that has to
+ * read a body raw is the one that owes this check, and it must be the same
+ * check.
+ */
+export const SUCCESS_CODES: ReadonlySet<number> = new Set([0, 200]);
 
 /**
  * Reduces an address to the part that can serve as a base for relative paths.
@@ -466,7 +474,7 @@ function portOf(target: URL): number {
 function parseJsonResponse<T>(status: number, text: string, target: URL): T {
   const kind = classifyHttpStatus(status);
   if (kind !== undefined) {
-    throw new NacosApiError(kind, describeFailure(kind, status, text, target), status);
+    throw new NacosApiError(kind, describeFailure(kind, status, text, target.pathname), status);
   }
   if (text.length === 0) {
     return undefined as T;

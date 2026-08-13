@@ -113,30 +113,37 @@ export function classifyHttpStatus(status: number): NacosApiErrorKind | undefine
  * lead somewhere different: 410 is a server-side switch an administrator can
  * flip, 404 is a version that never had the endpoint, and 401 is not Nacos
  * answering at all.
+ *
+ * `endpoint` takes either the resolved URL, which is what the HTTP client
+ * holds, or the path a driver asked for, which is all a driver reading a raw
+ * response has. Only the path ever reaches the sentence either way: a Nacos
+ * query string carries the dataId a user typed, and these messages go to the
+ * output channel.
  */
 export function describeFailure(
   kind: NacosApiErrorKind,
   status: number,
   text: string,
-  target: URL
+  endpoint: URL | string
 ): string {
+  const path = typeof endpoint === 'string' ? endpoint : endpoint.pathname;
   const detail = extractErrorMessage(text);
   switch (kind) {
     case 'api-deprecated':
-      return `Nacos rejected ${target.pathname} as a deprecated API (HTTP 410). This server is Nacos 3.0/3.1 with the v1/v2 compatibility switch turned off.`;
+      return `Nacos rejected ${path} as a deprecated API (HTTP 410). This server is Nacos 3.0/3.1 with the v1/v2 compatibility switch turned off.`;
     case 'not-found':
-      return `Nacos has no endpoint at ${target.pathname} (HTTP 404).`;
+      return `Nacos has no endpoint at ${path} (HTTP 404).`;
     // Same status, opposite meaning, so the two sentences have to be
     // unmistakable: this one is the server saying the thing asked for is not
     // there, and no other API version or address would change that.
     case 'resource-not-found':
-      return `Nacos has no such resource at ${target.pathname} (HTTP ${status})${detail ? `: ${detail}` : '.'}`;
+      return `Nacos has no such resource at ${path} (HTTP ${status})${detail ? `: ${detail}` : '.'}`;
     case 'forbidden':
-      return `Nacos denied the request to ${target.pathname} (HTTP 403)${detail ? `: ${detail}` : '. The credential may be expired, or the account may lack permission for this API.'}`;
+      return `Nacos denied the request to ${path} (HTTP 403)${detail ? `: ${detail}` : '. The credential may be expired, or the account may lack permission for this API.'}`;
     case 'gateway-auth':
-      return `Something in front of Nacos returned HTTP 401 for ${target.pathname}. Nacos itself never answers 401, so check the reverse proxy or gateway.`;
+      return `Something in front of Nacos returned HTTP 401 for ${path}. Nacos itself never answers 401, so check the reverse proxy or gateway.`;
     default:
-      return `Nacos returned HTTP ${status} for ${target.pathname}${detail ? `: ${detail}` : '.'}`;
+      return `Nacos returned HTTP ${status} for ${path}${detail ? `: ${detail}` : '.'}`;
   }
 }
 

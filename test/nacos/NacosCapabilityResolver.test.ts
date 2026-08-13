@@ -4,8 +4,19 @@ import { NacosCapabilityResolver, type NacosCapability } from '../../src/nacos/N
 import type { NacosApiFlavor, NacosDriver } from '../../src/nacos/driver/NacosDriver';
 import type { AtNacosLog } from '../../src/utils/logger';
 
+/**
+ * Every capability shares one behavior, because what is under test here is
+ * the walking and the caching rather than any particular request. `as never`
+ * because the resolver is generic over what a capability returns and these
+ * tests hand back marker arrays.
+ */
 function driver(flavor: NacosApiFlavor, behavior: () => Promise<unknown>): NacosDriver {
-  return { flavor, listNamespaces: behavior as never };
+  return {
+    flavor,
+    listNamespaces: behavior as never,
+    listConfigs: behavior as never,
+    getConfig: behavior as never
+  };
 }
 
 function recordingLog(): { lines: string[]; log: AtNacosLog } {
@@ -15,12 +26,12 @@ function recordingLog(): { lines: string[]; log: AtNacosLog } {
 }
 
 /**
- * The M1 vocabulary has a single capability, so a second key can only be a
- * cast. The property under test -- that the cache is keyed at all -- outlives
- * M1, and asserting it now is what stops a later milestone from adding a
- * capability that shares another one's cache entry.
+ * A second key, so that the cache is shown to be keyed at all -- which is
+ * what stops a later milestone from adding a capability that quietly shares
+ * another one's entry. Which one it is does not matter; it is only ever
+ * asked for the same behavior as `'namespaces'`.
  */
-const OTHER_CAPABILITY = 'configs' as NacosCapability;
+const OTHER_CAPABILITY: NacosCapability = 'configs';
 
 describe('NacosCapabilityResolver', () => {
   it('returns the first driver that succeeds', async () => {

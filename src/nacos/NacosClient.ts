@@ -1,12 +1,25 @@
 import type { NacosCapabilityResolver, NacosChainAdvice } from './NacosCapabilityResolver';
 import type { NacosHttpClient } from './NacosHttpClient';
-import type { NacosDriver } from './driver/NacosDriver';
+import type { NacosConfigListQuery, NacosDriver } from './driver/NacosDriver';
 import { V1Driver } from './driver/V1Driver';
 import { V2Driver } from './driver/V2Driver';
 import { V3AdminDriver } from './driver/V3AdminDriver';
 import { V3ConsoleDriver } from './driver/V3ConsoleDriver';
-import type { NacosNamespace } from './driver/normalize';
+import type {
+  NacosConfigDetail,
+  NacosConfigRef,
+  NacosConfigSummary,
+  NacosNamespace,
+  Paged
+} from './driver/normalize';
 import type { NacosServerState } from './probe/probeServerState';
+
+/**
+ * Both request surfaces, because `getConfig` has to read a 404's body to tell
+ * a missing config from a missing endpoint and only `requestRaw` hands it
+ * one. `withAuth` already produces exactly this pair.
+ */
+type NacosRequests = Pick<NacosHttpClient, 'requestJson' | 'requestRaw'>;
 
 /**
  * The order the resolver walks for a server of this major version.
@@ -18,7 +31,7 @@ import type { NacosServerState } from './probe/probeServerState';
  */
 export function buildDriverChain(
   majorVersion: number,
-  http: Pick<NacosHttpClient, 'requestJson'>,
+  http: NacosRequests,
   consoleBaseUrl: string | undefined
 ): NacosDriver[] {
   const v3Admin = new V3AdminDriver(http);
@@ -102,5 +115,13 @@ export class NacosClient {
 
   listNamespaces(): Promise<NacosNamespace[]> {
     return this.resolver.run('namespaces', (driver) => driver.listNamespaces());
+  }
+
+  listConfigs(query: NacosConfigListQuery): Promise<Paged<NacosConfigSummary>> {
+    return this.resolver.run('configs', (driver) => driver.listConfigs(query));
+  }
+
+  getConfig(ref: NacosConfigRef): Promise<NacosConfigDetail> {
+    return this.resolver.run('config-detail', (driver) => driver.getConfig(ref));
   }
 }

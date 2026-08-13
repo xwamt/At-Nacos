@@ -9,6 +9,9 @@ import { V3ConsoleDriver } from '../../../src/nacos/driver/V3ConsoleDriver';
 
 const CONSOLE_BASE_URL = 'http://h:8080';
 
+/** What every driver's constructor takes: both request surfaces, JSON and raw. */
+type DriverHttp = Pick<NacosHttpClient, 'requestJson' | 'requestRaw'>;
+
 interface StubCall {
   method: string;
   path: string;
@@ -17,13 +20,18 @@ interface StubCall {
 
 interface StubHttp {
   calls: StubCall[];
-  client: Pick<NacosHttpClient, 'requestJson'>;
+  client: DriverHttp;
 }
 
 /**
  * `requestJson` is generic, so a responder returning a concrete shape is not
  * assignable to it without a cast. Doing the cast once here keeps every test
- * below typed against the real `Pick<NacosHttpClient, 'requestJson'>`.
+ * below typed against the real request surface.
+ *
+ * `requestRaw` throws rather than answering: the namespace capability reads
+ * JSON on every version, so a raw request from one of these drivers means the
+ * wrong request surface was picked, and a stub that answered it would hide
+ * that behind a normalization failure.
  */
 function respondingHttp(respond: () => unknown): StubHttp {
   const calls: StubCall[] = [];
@@ -33,6 +41,9 @@ function respondingHttp(respond: () => unknown): StubHttp {
       async requestJson<T>(method: string, path: string, options?: NacosRequestOptions): Promise<T> {
         calls.push({ method, path, options });
         return respond() as T;
+      },
+      requestRaw(_method: string, path: string): never {
+        throw new Error(`the namespace capability should not read ${path} raw`);
       }
     }
   };
@@ -59,7 +70,7 @@ const REAL_V3_BODY =
 interface DriverCase {
   flavor: NacosApiFlavor;
   path: string;
-  make(http: Pick<NacosHttpClient, 'requestJson'>): NacosDriver;
+  make(http: DriverHttp): NacosDriver;
 }
 
 const DRIVER_CASES: DriverCase[] = [

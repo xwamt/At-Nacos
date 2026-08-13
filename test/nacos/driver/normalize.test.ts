@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NacosApiError } from '../../../src/nacos/NacosApiError';
 import {
+  groupParamName,
   namespaceParamName,
   normalizeConfigDetail,
   normalizeConfigSummary,
@@ -57,6 +58,36 @@ describe('namespaceParamName', () => {
     expect(namespaceParamName('v3-console', 'config')).toBe('namespaceId');
     expect(namespaceParamName('v3-admin', 'naming')).toBe('namespaceId');
     expect(namespaceParamName('v3-console', 'console')).toBe('namespaceId');
+  });
+});
+
+describe('groupParamName', () => {
+  /** The same split as `namespaceParamName`, and for the same reason: only v1 config is the odd one out. */
+  it('uses group for the v1 config module', () => {
+    expect(groupParamName('v1', 'config')).toBe('group');
+  });
+
+  it('uses groupName for the v1 naming module, which never said group', () => {
+    expect(groupParamName('v1', 'naming')).toBe('groupName');
+  });
+
+  it('uses groupName from v2 onward', () => {
+    expect(groupParamName('v2', 'config')).toBe('groupName');
+    expect(groupParamName('v3-admin', 'config')).toBe('groupName');
+    expect(groupParamName('v3-console', 'config')).toBe('groupName');
+  });
+
+  /**
+   * The two spellings have to move together: a request that says `tenant` and
+   * `groupName` is half in each dialect, and the half the server does not read
+   * is silently ignored rather than refused.
+   */
+  it('agrees with namespaceParamName about which dialect an endpoint family speaks', () => {
+    const flavors = ['v1', 'v2', 'v3-admin', 'v3-console'] as const;
+    for (const flavor of flavors) {
+      const legacy = namespaceParamName(flavor, 'config') === 'tenant';
+      expect(groupParamName(flavor, 'config') === 'group').toBe(legacy);
+    }
   });
 });
 
@@ -304,7 +335,10 @@ describe('normalizeConfigSummary', () => {
     expect(normalizeConfigSummary({ ...ACCURATE_LIST_ITEM, type: null }).type).toBeUndefined();
   });
 
-  /** `md5` is null under accurate search on the real 2.3.2, and a string under blur. */
+  /**
+   * The real 2.3.2 sends `md5: null` in *both* search modes, so the listing
+   * never supplies one there. A version that does is still read.
+   */
   it('keeps an md5 the server did send', () => {
     expect(normalizeConfigSummary({ ...ACCURATE_LIST_ITEM, md5: 'e1a9de8c' }).md5).toBe('e1a9de8c');
   });

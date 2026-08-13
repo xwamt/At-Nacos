@@ -15,7 +15,7 @@ interface StubCall {
 
 interface StubHttp {
   calls: StubCall[];
-  client: Pick<NacosHttpClient, 'requestJson'>;
+  client: Pick<NacosHttpClient, 'requestJson' | 'requestRaw'>;
 }
 
 /** `requestJson` is generic, so the cast happens here once instead of in every test. */
@@ -27,6 +27,15 @@ function recordingHttp(respond: (path: string) => unknown = () => ({ code: 0, da
       async requestJson<T>(_method: string, path: string, options?: NacosRequestOptions): Promise<T> {
         calls.push({ path, options });
         return respond(path) as T;
+      },
+      async requestRaw(_method: string, path: string, options?: NacosRequestOptions) {
+        calls.push({ path, options });
+        return {
+          status: 200,
+          ok: true,
+          text: JSON.stringify(respond(path)),
+          contentType: 'application/json'
+        };
       }
     }
   };
@@ -204,11 +213,74 @@ describe('NacosClient', () => {
    */
   it('asks again on every call rather than memoizing the list', async () => {
     const listNamespaces = vi.fn(() => Promise.resolve([]));
-    const driver: NacosDriver = { flavor: 'v1', listNamespaces };
+    const driver: NacosDriver = { ...stubDriver('v1'), listNamespaces };
     const client = new NacosClient(new NacosCapabilityResolver([driver]), serverState(1));
 
     await client.listNamespaces();
     await client.listNamespaces();
     expect(listNamespaces).toHaveBeenCalledTimes(2);
   });
+
+  it('lists configs through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => ({ totalCount: 0, pageNumber: 1, pagesAvailable: 0, pageItems: [] }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    await expect(
+      new NacosClient(resolver, serverState(2)).listConfigs({ namespaceId: 'uat', pageNo: 1, pageSize: 100 })
+    ).resolves.toEqual({ items: [], totalCount: 0, pageNumber: 1, pagesAvailable: 0 });
+    expect(resolver.snapshot()).toEqual({ configs: 'v2' });
+  });
+
+  it('fetches one config through the resolver, under a capability of its own', async () => {
+    const http = recordingHttp(() => ({ dataId: 'a.yml', group: 'g', tenant: 'uat', content: 'a: 1', type: 'yaml' }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    await expect(
+      new NacosClient(resolver, serverState(2)).getConfig({ namespaceId: 'uat', group: 'g', dataId: 'a.yml' })
+    ).resolves.toMatchObject({ content: 'a: 1', type: 'yaml' });
+    expect(resolver.snapshot()).toEqual({ 'config-detail': 'v2' });
+  });
+
+  /**
+   * The reason `resource-not-found` exists. Asking for a dataId nobody
+   * published used to walk every driver in the chain and end in "No Nacos API
+   * flavor could serve ...", which names the wrong problem entirely.
+   */
+  it('reports a missing config without walking the rest of the chain', async () => {
+    const tried: string[] = [];
+    const chain = buildDriverChain(3, missingConfigHttp(tried), CONSOLE_BASE_URL);
+    const client = new NacosClient(new NacosCapabilityResolver(chain), serverState(3));
+
+    const error = await client
+      .getConfig({ namespaceId: 'uat', group: 'g', dataId: 'nope.yml' })
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(NacosApiError);
+    expect((error as NacosApiError).kind).toBe('resource-not-found');
+    expect(tried).toHaveLength(1);
+  });
 });
+
+/** Answers every config fetch the way a real Nacos answers a dataId nobody published. */
+function missingConfigHttp(tried: string[]): Pick<NacosHttpClient, 'requestJson' | 'requestRaw'> {
+  return {
+    requestJson: <T,>(): Promise<T> => Promise.reject(new NacosApiError('not-found', 'no endpoint', 404)),
+    requestRaw: (_method: string, path: string) => {
+      tried.push(path);
+      return Promise.resolve({
+        status: 404,
+        ok: false,
+        text: 'config data not exist',
+        contentType: 'application/json;charset=UTF-8'
+      });
+    }
+  };
+}
+
+/** A driver whose unexercised capabilities reject rather than resolve to a shape nobody supplied. */
+function stubDriver(flavor: NacosApiFlavor): NacosDriver {
+  const unused = (): never => {
+    throw new Error(`${flavor}: this capability was not part of the test`);
+  };
+  return { flavor, listNamespaces: unused, listConfigs: unused, getConfig: unused };
+}
