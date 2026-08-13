@@ -507,6 +507,45 @@ at-nacos-series/
 7. 1.x 配置列表返回的 `type` 是否总被填充（可能为 null，需按后缀名回退）。
 8. `nacos.deployment.type=console` 独立部署模式下 console 与 server 分离的完整行为。
 9. 1.x 各小版本差异（`standalone_mode` → `startup_mode` 的确切分界版本未确定）。调研只实读了 2.5.3 / 3.1.2 / 3.2.3 源码，1.x 信息全部来自官方文档。
+10. **命名空间列表条目的字段名。** 四个 driver 共用一个 `normalizeNamespace`，它硬性要求 `entry.namespace` 是字符串，否则抛 `invalid-response`——而这个类型**不触发** fall-through。`namespace` / `namespaceShowName` / `namespaceDesc` 这三个名字只出现在 M1 计划里，从未进入 §6 的版本差异表；而 §6 在别处对这种改名记录得很细（`doms` → `services`、`clusters` → `clusterMap`、`createdTime` → `createTime`）。**如果 3.x 也改了条目里的 id 字段名，每一次 3.x 命名空间列举都会以一个不可恢复的错误告终。** 这是真机验证清单里优先级最高的一条。
+11. **3.x console 提示句的确切措辞与它伴随的 HTTP 状态码。** `resolveBaseUrl.ts` 的 `parseConsoleHint` 按近似措辞匹配，且刻意不对状态码设门槛。
+12. **`/v3/auth/user/login` 是否接受与 v1 相同的 query/form 混合写法。** 这是从 v1 Java 客户端推断的，不是源码实读结论。
+
+## 16. 已知延后项（M1 完成时记录）
+
+这些是 M1 整体评审确认过的、有意留到后续里程碑的问题。它们不是缺陷清单里的遗漏，但**开始 M2 之前应当各自有个决定**。
+
+### 16.1 错误文案没有本地化
+
+`t()` 的覆盖是完整的——`src/` 里 54 处 `t()` 字面量全部在 zh-cn 包里有键。但出问题时用户读到的那些句子从来不经过 `t()`：`testNacosConnection` 里 `describeConnectionFailure` 的十二个分支、`describeForbidden`，以及 `ErrorTreeItem` 渲染的每一条 `NacosApiError` 消息。中文用户会看到一个完全汉化的界面，直到出错，然后是一段英文。
+
+原因是结构性的：这些句子由地址、状态码和服务端原话拼装而成，没有可以作为翻译键的源字符串；而且它们产自 `src/nacos/**`，那一层按约定不能 import `vscode`，也就够不到 `t()`。
+
+修法方向：失败结果已经带了 `reason`、`kind`、`status`、`triedBaseUrls` 等结构化字段，正是为此准备的。由呈现层（webview 与树）按 `reason` 选择本地化模板重建句子，而不是把 `src/nacos/**` 产出的英文原样显示。
+
+§3 记录的决定是「完整中英双语」，无保留条件，所以这是一笔明确的欠债。
+
+### 16.2 3.x 非管理员账号每次刷新多花一次登录
+
+`UserPasswordStrategy.refresh()` 无条件返回 `true` 并丢弃缓存的 token，而 `withAuth` 见到任何 403 都会调它。3.x 非管理员的标准流程因此变成：登录 → 探测 → `v3-admin` 403 → **丢弃刚签发几秒的 token** → 再登录 → `v3-admin` 再 403 → 才降级到 console。两次登录、四个请求，而一次登录、两个请求就够。
+
+因为 `createNacosClient` 每次刷新都新建客户端（这个设计本身是对的，理由在 `extension.ts` 的注释里），resolver 的能力缓存随之失效，所以这是稳态成本而非首次成本。两个视图都展开时是每次刷新四次登录，每次服务端都要做一遍 BCrypt。
+
+修法：让 `refresh()` 在当前 token 签发时间过近时返回 `false`——一个刚签发一秒的 token 收到 403，那是权限问题不是过期问题，而这正是重试机制要区分的东西。
+
+### 16.3 换认证方式时是否保留旧密码，两处结论相反
+
+`NacosInstanceConfigManager` 的测试断言「换认证方式保留已存密码」，理由是「误点两下不该赔上密码」。而 `NacosInstanceFormPanel` 做的正好相反，理由是「一个用户再也无法从任何设置触达的密码，没有留在 SecretStorage 里的道理」。两种行为各自有测试，所以测试套件是绿的，而代码库在自相矛盾。
+
+manager 的那条行为实际上不可达——唯一的生产调用方总是显式传 `''`。所以那条测试断言的是一个没有用户会遇到的默认值，而它的理由陈述对产品而言是错的。**选一个策略，删掉另一处的理由陈述。**
+
+### 16.4 自动发现的 console 地址会跨服务器变更残留
+
+对服务器 A 做连接测试（自动填入 A 的 console 地址），随后把服务端地址改成 B 并保存而不清空 console 字段，B 就会用上 A 的 console 地址。字段是可见可编辑的，用户能看到将要保存什么，这是把值写进输入框而不是暗中留存的主要理由——但重新测试不会清掉它，因为非空字段按设计会抑制发现。
+
+### 16.5 无法取消信任一张证书
+
+`NacosCertTrustStore.forget()` 存在且有测试，但没有任何命令或 UI 调用它。用户一旦信任了一张证书，除了手工编辑 `globalState` 之外没有反悔的办法。
 
 ## 15. 参考
 

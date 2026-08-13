@@ -6,7 +6,6 @@ import { NacosCapabilityResolver } from './nacos/NacosCapabilityResolver';
 import { NacosCertTrustStore } from './nacos/NacosCertTrustStore';
 import { NacosClient, buildChainAdvice, buildDriverChain } from './nacos/NacosClient';
 import { NacosHttpClient } from './nacos/NacosHttpClient';
-import type { NacosAuthedRequests } from './nacos/auth/withAuth';
 import { createAuthStrategy } from './nacos/auth/createAuthStrategy';
 import { withAuth } from './nacos/auth/withAuth';
 import { createInteractiveCertVerifier } from './nacos/createInteractiveCertVerifier';
@@ -94,7 +93,7 @@ export async function createNacosClient(
 async function resolveConsoleBaseUrl(
   instance: NacosInstanceConfig,
   majorVersion: number,
-  authed: NacosAuthedRequests
+  authed: Pick<NacosHttpClient, 'requestRaw'>
 ): Promise<string | undefined> {
   if (instance.consoleUrl) {
     return instance.consoleUrl;
