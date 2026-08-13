@@ -48,6 +48,8 @@
   "No Nacos instances configured yet.": "尚未配置任何 Nacos 实例。",
   "Select a Nacos instance to edit or delete": "选择要编辑或删除的 Nacos 实例",
   "public": "public（默认命名空间）",
+  "read-only": "只读",
+  "Failed to load": "加载失败",
   "Trust Certificate": "信任该证书",
   "Trust New Certificate": "信任新证书",
   "Reject": "拒绝",
