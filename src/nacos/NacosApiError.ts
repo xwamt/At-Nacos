@@ -14,7 +14,15 @@ export type NacosApiErrorKind =
   /** Any other non-2xx, or HTTP 200 whose body code reports a business failure. */
   | 'api-error'
   | 'invalid-response'
-  /** Client-side validation that failed before any request was sent. */
+  /**
+   * The request as configured cannot succeed, so retrying it or trying another
+   * API version would only repeat the failure. Usually a client-side check
+   * that ran before anything was sent, but also the shape of a server refusal
+   * that is really a misconfiguration -- an OIDC deployment rejecting
+   * username/password login answers 403, and reclassifying it here is what
+   * stops the driver chain from walking every API version to be told the same
+   * thing. Reads to the user as "fix your instance settings".
+   */
   | 'validation'
   | 'response-too-large';
 

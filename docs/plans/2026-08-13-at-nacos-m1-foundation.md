@@ -1848,21 +1848,9 @@ export async function probeServerState(
 function shouldTryOlderState(error: unknown): boolean {
   return error instanceof NacosApiError && (error.shouldFallThrough() || error.kind === 'invalid-response');
 }
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function toStringRecord(value: Record<string, unknown>): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry === 'string') {
-      result[key] = entry;
-    }
-  }
-  return result;
-}
 ```
+
+`isRecord` 与 `toStringRecord` 已在 Task 5 中提取到 `src/nacos/jsonGuards.ts`，直接 import，**不要重新定义**。注意 `toStringRecord` 的签名是 `(value: unknown) => Record<string, string> | undefined`，对非对象返回 `undefined` 而非抛错，所以 `unwrap` 里要处理这个分支。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -2094,11 +2082,9 @@ export function unwrapData<T>(payload: unknown): T {
   }
   return payload as T;
 }
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 ```
+
+`isRecord` 从 Task 5 建立的 `src/nacos/jsonGuards.ts` import，**不要重新定义**。
 
 Run: `npx vitest run test/nacos/driver/normalize.test.ts`
 Expected: PASS（8 个测试）
