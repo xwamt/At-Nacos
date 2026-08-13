@@ -151,6 +151,22 @@ export abstract class NacosTreeBase implements vscode.TreeDataProvider<NacosTree
     }
     const pending = this.fetchNamespaces(instance);
     this.namespaceCache.set(instance.id, pending);
+    // A rejected promise is truthy, so one left in the cache is replayed as an
+    // already-settled rejection for every later expansion -- collapsing the
+    // node and expanding it again, which is the retry gesture, shows the
+    // original error forever and only the view-title Refresh clears it.
+    // `UserPasswordStrategy.token()` guards its login the same way and for the
+    // same reason.
+    //
+    // Only drop what is still there, as `NacosCapabilityResolver` does: a
+    // Refresh during a slow expansion has already replaced this entry, and
+    // deleting the healthy fetch that replaced it would send the next
+    // expansion off to open a third one.
+    void pending.catch(() => {
+      if (this.namespaceCache.get(instance.id) === pending) {
+        this.namespaceCache.delete(instance.id);
+      }
+    });
     return pending;
   }
 

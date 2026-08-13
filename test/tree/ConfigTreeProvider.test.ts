@@ -376,6 +376,98 @@ describe('ConfigTreeProvider caching and refresh', () => {
     expect(created).toBe(2);
   });
 
+  /**
+   * Collapsing a failed instance and expanding it again is the retry gesture
+   * everyone reaches for. A rejected promise is truthy, so a cache that keeps
+   * it replays one settled rejection for the rest of the session and only the
+   * view-title Refresh clears it -- exactly the trap `UserPasswordStrategy`
+   * documents for its own in-flight login.
+   */
+  it('retries a failed expansion instead of replaying the same rejection', async () => {
+    let attempts = 0;
+    const provider = new ConfigTreeProvider({ listInstances: async () => [instance()] }, async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error('connect ETIMEDOUT 10.0.0.9:8848');
+      }
+      return stubClient([namespace({ namespaceId: 'ns-a', displayName: 'A' })]);
+    });
+
+    const [root] = await provider.getChildren();
+    const first = await provider.getChildren(root);
+    const second = await provider.getChildren(root);
+
+    expect(first[0]).toBeInstanceOf(ErrorTreeItem);
+    expect(attempts).toBe(2);
+    expect(second.map((item) => item.label)).toEqual(['A']);
+  });
+
+  /** Evicting the failures must not turn into evicting everything. */
+  it('still caches a successful expansion', async () => {
+    let attempts = 0;
+    const provider = new ConfigTreeProvider({ listInstances: async () => [instance()] }, async () => {
+      attempts += 1;
+      return stubClient([namespace()]);
+    });
+
+    const [root] = await provider.getChildren();
+    await provider.getChildren(root);
+    await provider.getChildren(root);
+
+    expect(attempts).toBe(1);
+  });
+
+  it('evicts only the instance that failed, leaving another instance cached', async () => {
+    const attempts: string[] = [];
+    const good = instance({ id: 'good', label: 'Good' });
+    const bad = instance({ id: 'bad', label: 'Bad' });
+    const provider = new ConfigTreeProvider({ listInstances: async () => [good, bad] }, async (target) => {
+      attempts.push(target.id);
+      if (target.id === 'bad') {
+        throw new Error('host unreachable');
+      }
+      return stubClient([namespace({ namespaceId: 'ns-good', displayName: 'Good NS' })]);
+    });
+
+    const roots = await provider.getChildren();
+    await Promise.all([provider.getChildren(roots[0]), provider.getChildren(roots[1])]);
+    await Promise.all([provider.getChildren(roots[0]), provider.getChildren(roots[1])]);
+
+    expect(attempts).toEqual(['good', 'bad', 'bad']);
+  });
+
+  /**
+   * Mirrors `NacosCapabilityResolver`'s identity check. Without it the
+   * rejection of the abandoned load deletes whatever is under its key by then
+   * -- which, after a Refresh during a slow expansion, is a healthy in-flight
+   * fetch, and the next expansion opens a third one.
+   */
+  it('does not evict the fetch a refresh started while the failing one was still in flight', async () => {
+    let attempts = 0;
+    let failFirst: (error: Error) => void = () => undefined;
+    const provider = new ConfigTreeProvider({ listInstances: async () => [instance()] }, async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        await new Promise<never>((_resolve, rejectFirst) => {
+          failFirst = rejectFirst;
+        });
+      }
+      return stubClient([namespace()]);
+    });
+
+    const [root] = await provider.getChildren();
+    const abandoned = provider.getChildren(root);
+    provider.refresh();
+    const replacement = provider.getChildren(root);
+
+    failFirst(new Error('connect ETIMEDOUT 10.0.0.9:8848'));
+    expect((await abandoned)[0]).toBeInstanceOf(ErrorTreeItem);
+    await replacement;
+    await provider.getChildren(root);
+
+    expect(attempts).toBe(2);
+  });
+
   it('fires onDidChangeTreeData on refresh() so the view redraws', async () => {
     const provider = providerFor(stubClient([]));
     let fired = 0;
