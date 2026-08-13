@@ -36,9 +36,47 @@ describe('redactSensitiveText', () => {
     expect(redactSensitiveText('secret: s3cr3tV4lue')).toBe('secret: [REDACTED]');
   });
 
-  it('redacts an access key in either casing', () => {
+  it('redacts a quoted value and leaves the quotes where it found them', () => {
+    expect(redactSensitiveText('{"spring.datasource.password": "hunter2"}')).toBe(
+      '{"spring.datasource.password": "[REDACTED]"}'
+    );
+    expect(redactSensitiveText('{"password":"hunter2"}')).toBe('{"password":"[REDACTED]"}');
+    expect(redactSensitiveText("password: 'hunter2'")).toBe("password: '[REDACTED]'");
+  });
+
+  it('stops a quoted value at its closing quote instead of eating the rest of the object', () => {
+    expect(redactSensitiveText('{"password":"hunter2","serverAddr":"127.0.0.1:8848"}')).toBe(
+      '{"password":"[REDACTED]","serverAddr":"127.0.0.1:8848"}'
+    );
+  });
+
+  it('is idempotent on the JSON form, whose marker now carries quotes of its own', () => {
+    const once = redactSensitiveText('{"password": "hunter2"}');
+    expect(once).toBe('{"password": "[REDACTED]"}');
+    expect(redactSensitiveText(once)).toBe(once);
+  });
+
+  it('redacts an access key in any casing and however its two words are joined', () => {
     expect(redactSensitiveText('accessKey=LTAI5tSomeAliyunKey')).toBe('accessKey=[REDACTED]');
     expect(redactSensitiveText('nacos.remote.accesskey=abc123')).toBe('nacos.remote.accesskey=[REDACTED]');
+    expect(redactSensitiveText('access-key=AKIAIOSFODNN7EXAMPLE')).toBe('access-key=[REDACTED]');
+    expect(redactSensitiveText('access_key=AKIAIOSFODNN7EXAMPLE')).toBe('access_key=[REDACTED]');
+  });
+
+  it('redacts the dotted signing key that authenticates the whole deployment', () => {
+    expect(redactSensitiveText('nacos.core.auth.plugin.nacos.token.secret.key=SecretKey0123')).toBe(
+      'nacos.core.auth.plugin.nacos.token.secret.key=[REDACTED]'
+    );
+    expect(redactSensitiveText('nacos.core.auth.server.identity.secret-key=s3cr3t')).toBe(
+      'nacos.core.auth.server.identity.secret-key=[REDACTED]'
+    );
+  });
+
+  it('still matches the standalone secret and token words the compound forms are built from', () => {
+    // A compound alternative that wins too early would truncate these back to
+    // an unredacted tail, so they are asserted alongside the compound forms.
+    expect(redactSensitiveText('secret=s3cr3t')).toBe('secret=[REDACTED]');
+    expect(redactSensitiveText('token=abc123')).toBe('token=[REDACTED]');
   });
 
   it('redacts a key whose secret word is joined by an underscore', () => {
@@ -61,16 +99,64 @@ describe('redactSensitiveText', () => {
     const benign = [
       'spring.application.name=my-app',
       'server.port=8848',
-      'nacos.core.auth.plugin.nacos.token.expire.seconds=18000'
+      'nacos.core.auth.plugin.nacos.token.expire.seconds=18000',
+      // `token` is a prefix of `tokenizer`, so this only survives because the
+      // secret word has to end where the separator begins.
+      '{"tokenizer": "standard"}'
     ];
     for (const line of benign) {
       expect(redactSensitiveText(line)).toBe(line);
     }
   });
 
+  it('does not let an empty value swallow the next line of a YAML block', () => {
+    const yaml = ['spring:', '  datasource:', '    password:', '    username: nacos'].join('\n');
+
+    const redacted = redactSensitiveText(yaml);
+
+    expect(redacted).toContain('username: nacos');
+    expect(redacted).toBe(yaml);
+  });
+
   it('leaves ordinary diagnostic text untouched', () => {
     const message = 'Nacos returned HTTP 403 for /nacos/v1/cs/configs (attempt 2 of 3, retrying in 600ms)';
     expect(redactSensitiveText(message)).toBe(message);
+  });
+
+  it('stays cheap on one unbroken token the length of a whole configuration', () => {
+    // Nacos caps config content at 100KB, and base64url content (`-` and `_`
+    // are word-ish) can arrive as a single run with nothing to break it up.
+    // A prefix that scans backwards from every position turns that into
+    // seconds of blocking on the extension host.
+    const unbroken = 'aB3_-x.'.repeat(15000).slice(0, 100000);
+
+    const started = performance.now();
+    const redacted = redactSensitiveText(unbroken);
+    const elapsedMs = performance.now() - started;
+
+    expect(redacted).toBe(unbroken);
+    expect(elapsedMs).toBeLessThan(250);
+  });
+
+  it('handles every shape at once and stays idempotent over the whole chain', () => {
+    const blob = [
+      'GET /nacos/v1/cs/configs?accessToken=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuYWNvcyJ9.Sf1kx',
+      'spring.datasource.password=hunter2',
+      '{"spring.redis.password": "r3disPass"}',
+      'nacos.core.auth.plugin.nacos.token.secret.key=SecretKey0123456789'
+    ].join('\n');
+
+    const once = redactSensitiveText(blob);
+
+    expect(once).toBe(
+      [
+        'GET /nacos/v1/cs/configs?accessToken=[REDACTED]',
+        'spring.datasource.password=[REDACTED]',
+        '{"spring.redis.password": "[REDACTED]"}',
+        'nacos.core.auth.plugin.nacos.token.secret.key=[REDACTED]'
+      ].join('\n')
+    );
+    expect(redactSensitiveText(once)).toBe(once);
   });
 });
 
