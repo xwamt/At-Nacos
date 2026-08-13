@@ -11,5 +11,5 @@
     "rootDir": ".",
     "types": ["node", "vscode", "vitest/globals"]
   },
-  "include": ["src", "webview", "test", "*.ts", "*.mjs"]
+  "include": ["src", "webview", "test", "test-fixtures", "*.ts", "*.mjs"]
 }

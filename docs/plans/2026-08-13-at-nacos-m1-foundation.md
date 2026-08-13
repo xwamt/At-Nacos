@@ -2616,6 +2616,20 @@ const strings = buildWebviewStrings({
 
 注入方式是在 body HTML 里放一个带 nonce 的 `<script type="application/json" id="atNacosStrings">`，前端 `JSON.parse` 读取。**不要**用 `<script nonce>...window.X = {...}</script>` 拼接，那等于把翻译文本当代码执行。
 
+**序列化时必须转义 `<`**（Task 3 定下的分工，转义属于写 HTML 的这一层，不属于 `buildWebviewStrings`）：
+
+```ts
+const payload = JSON.stringify(strings).replace(/</g, '\\u003c');
+```
+
+只转 `<` 就够，它同时挡住 `</script`（提前闭合标签）和 `<!--`（让分词器进入 script data escaped 状态）。三点必须记住：
+
+1. **转义只能作用在序列化后的文本上。** 若改在字典的值上替换，`JSON.stringify` 会把反斜杠再转义一次，页面拿到字面量 `\u003c/script>`——既没防住注入又损坏了文案。
+2. **HTML 实体在这里完全无效。** `<script>` 是 raw-text 元素，解析器不在其中解码实体，`&lt;` 会原样进入 `JSON.parse`。
+3. **风险是真实的，不能用「译文是我们自己写的」免除。** `t('Edit Nacos Instance: {label}', { label })` 里的 `label` 来自用户配置的实例名，是可控输入，走同一条通道。
+
+把这个动作收敛成 `src/webview/html.ts` 里的一个 helper（例如 `renderJsonScript(id, value, nonce)`），不要散落在各个 Webview——只有一处需要审。`html.ts` 现有的 CSP 是第二层防线（注入的内联脚本拿不到随机 nonce），但它挡的是执行，挡不住 DOM 结构被破坏和 `JSON.parse` 失败，替代不了转义。
+
 CSS 从 `at-terminal-series/webview/server-form/index.css` 起手（520 行，类名体系最完整），保留 `.field-stack` / `.field-grid` / `.form-footer` / `.primary-action` / `.secondary-action` / `.form-error` / `.is-success` / `.is-error` 等类名约定。
 
 - [ ] **Step 3: 运行测试确认通过**
