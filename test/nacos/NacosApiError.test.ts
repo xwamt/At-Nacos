@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { classifyHttpStatus, NacosApiError, toNetworkOrTlsError } from '../../src/nacos/NacosApiError';
+import {
+  classifyHttpStatus,
+  describeFailure,
+  NacosApiError,
+  toNetworkOrTlsError
+} from '../../src/nacos/NacosApiError';
 
 function errnoError(message: string, code?: string): NodeJS.ErrnoException {
   const error: NodeJS.ErrnoException = new Error(message);
@@ -68,5 +73,46 @@ describe('NacosApiError', () => {
     expect(new NacosApiError('forbidden', 'x', 403).shouldFallThrough()).toBe(true);
     expect(new NacosApiError('api-error', 'x', 500).shouldFallThrough()).toBe(false);
     expect(new NacosApiError('network', 'x').shouldFallThrough()).toBe(false);
+  });
+
+  /**
+   * Both 404s reach here, and only this flag separates them. If a missing
+   * config fell through, every lookup of a dataId that does not exist would
+   * walk all four drivers and end in "No Nacos API flavor could serve
+   * configs" -- a sentence about the plugin's driver chain in answer to a
+   * question about one config.
+   */
+  it('keeps a missing resource off the fall-through path even though it is also a 404', () => {
+    expect(new NacosApiError('resource-not-found', 'config data not exist', 404).shouldFallThrough()).toBe(false);
+  });
+});
+
+describe('describeFailure', () => {
+  const target = new URL('http://nacos.example.com:8848/nacos/v1/cs/configs?dataId=nope&group=DEFAULT_GROUP');
+
+  it('says the resource is missing rather than the endpoint, and quotes what Nacos said', () => {
+    const message = describeFailure('resource-not-found', 404, 'config data not exist', target);
+    expect(message).toMatch(/no such resource/i);
+    expect(message).toContain('config data not exist');
+    expect(message).toContain('/nacos/v1/cs/configs');
+    expect(message).not.toMatch(/no endpoint/i);
+  });
+
+  it('still names the path when Nacos sends an empty body with the 404', () => {
+    const message = describeFailure('resource-not-found', 404, '', target);
+    expect(message).toMatch(/no such resource/i);
+    expect(message).toContain('/nacos/v1/cs/configs');
+    expect(message).not.toMatch(/no endpoint/i);
+  });
+
+  /** The two 404s must not read alike, or the output channel cannot say which one happened. */
+  it('words a missing resource differently from a missing endpoint', () => {
+    expect(describeFailure('resource-not-found', 404, 'config data not exist', target)).not.toBe(
+      describeFailure('not-found', 404, 'config data not exist', target)
+    );
+  });
+
+  it('never leaks the query string, which carries the dataId a user typed', () => {
+    expect(describeFailure('resource-not-found', 404, 'config data not exist', target)).not.toContain('dataId=nope');
   });
 });

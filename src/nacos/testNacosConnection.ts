@@ -362,6 +362,11 @@ function describeConnectionFailure(
         message: `Nacos rejected the server-state API as deprecated (HTTP 410) at ${baseUrl}. This is Nacos 3.0 or 3.1 with the v1/v2 API compatibility switch turned off, and its v3 admin API did not answer either: ask a Nacos administrator to re-enable the compatibility switch, or to grant this account access to the v3 admin API.`
       };
     case 'api-error':
+    // The state probe asks for an endpoint, not for a resource, so a
+    // resource-not-found should never arrive here -- but the switch has to
+    // stay total, and a Nacos that answers the probe with one is malfunctioning
+    // in exactly the way the api-error sentence describes.
+    case 'resource-not-found':
       // Led by the upstream sentence, which already names the status and the
       // path it was refused on, and carries whatever the server said about
       // why. The status is on the result as a field either way.

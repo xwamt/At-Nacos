@@ -9,6 +9,14 @@ export type NacosApiErrorKind =
   | 'gateway-auth'
   /** HTTP 404 — this version has no such endpoint (e.g. v1/v2 removed in 3.2+). */
   | 'not-found'
+  /**
+   * HTTP 404 — the endpoint answered, and the config or service it was asked
+   * for does not exist. The other half of Nacos's overloaded 404, told apart
+   * by the body shape alone (`isSpringErrorPage`), and deliberately outside
+   * FALL_THROUGH_KINDS: trying an older API family cannot conjure up a dataId
+   * nobody published.
+   */
+  | 'resource-not-found'
   /** HTTP 410 — Nacos 3.0/3.1 with the API compatibility switch turned off. */
   | 'api-deprecated'
   /** Any other non-2xx, or HTTP 200 whose body code reports a business failure. */
@@ -118,6 +126,11 @@ export function describeFailure(
       return `Nacos rejected ${target.pathname} as a deprecated API (HTTP 410). This server is Nacos 3.0/3.1 with the v1/v2 compatibility switch turned off.`;
     case 'not-found':
       return `Nacos has no endpoint at ${target.pathname} (HTTP 404).`;
+    // Same status, opposite meaning, so the two sentences have to be
+    // unmistakable: this one is the server saying the thing asked for is not
+    // there, and no other API version or address would change that.
+    case 'resource-not-found':
+      return `Nacos has no such resource at ${target.pathname} (HTTP ${status})${detail ? `: ${detail}` : '.'}`;
     case 'forbidden':
       return `Nacos denied the request to ${target.pathname} (HTTP 403)${detail ? `: ${detail}` : '. The credential may be expired, or the account may lack permission for this API.'}`;
     case 'gateway-auth':

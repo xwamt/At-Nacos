@@ -197,6 +197,20 @@ describe('testNacosConnection failure classification', () => {
     expect(result.message).toMatch(/compatibility/i);
   });
 
+  /**
+   * The state probe asks for an endpoint, never for a resource, so this kind
+   * should not reach the connection test at all. It is in the kind union now
+   * that config lookups can raise it, and a kind with no branch here returns
+   * undefined and takes the whole result down -- so the branch exists and is
+   * pinned rather than left to the next widening of the union.
+   */
+  it('reports a resource-not-found from the probe as a server-side failure instead of crashing', async () => {
+    const upstream = 'Nacos has no such resource at /nacos/v1/cs/configs (HTTP 404): config data not exist';
+    const result = expectFailure(await failWith(new NacosApiError('resource-not-found', upstream, 404), 'none'));
+    expect(result).toMatchObject({ reason: 'error', kind: 'resource-not-found', status: 404 });
+    expect(result.message).toContain('config data not exist');
+  });
+
   it('resolves rather than throwing when the probe fails with an unclassified error', async () => {
     const result = expectFailure(await failWith(new Error('AK/SK authentication is not implemented yet.'), 'akSk'));
     expect(result.reason).toBe('error');
