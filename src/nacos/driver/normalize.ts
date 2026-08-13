@@ -126,6 +126,33 @@ export interface NacosConfigDetail extends NacosConfigSummary {
 }
 
 /**
+ * One past version of a configuration.
+ *
+ * `getConfigHistory` answers with a `NacosConfigDetail` rather than with a
+ * fuller version of this, deliberately: the document layer renders both sides
+ * of a diff, and a type of its own for the history side would make it branch
+ * on which side it was rendering.
+ */
+export interface NacosConfigHistoryEntry extends NacosConfigRef {
+  /** The history record's id. Goes back as the `nid` parameter to fetch this version. */
+  id: string;
+  /** `I` inserted / `U` updated / `D` deleted. Already trimmed -- see `normalizeConfigHistoryEntry`. */
+  opType: string;
+  /** Milliseconds, whichever of Nacos's two spellings and two types the server used. */
+  modifiedAt?: number;
+  srcIp?: string;
+  srcUser?: string;
+  appName?: string;
+}
+
+/** One client currently holding a copy of a configuration. */
+export interface NacosConfigListener {
+  ip: string;
+  /** What that client last received. A value other than the config's current md5 means it is behind. */
+  md5: string;
+}
+
+/**
  * One entry of a config listing, with the content taken out.
  *
  * **`content` is dropped on purpose.** The server sends the whole config body
@@ -171,11 +198,130 @@ export function normalizeConfigDetail(entry: unknown): NacosConfigDetail {
   return {
     ...summary,
     content,
-    createTime: optionalNumber(record.createTime),
-    modifyTime: optionalNumber(record.modifyTime),
+    // The history spellings are read here too, because a history version is
+    // handed back as one of these: without them a past version would render
+    // with no date on it while the current one has both.
+    createTime: optionalEpochMillis(record.createTime, record.createdTime),
+    modifyTime: optionalEpochMillis(record.modifyTime, record.lastModifiedTime),
     createIp: optionalString(record.createIp),
     description: optionalString(record.desc)
   };
+}
+
+/**
+ * One row of a configuration's history, in either version's spelling.
+ *
+ * The row's own field names are **not verified against a real server**: the
+ * 2.3.2 this project tests against holds no history at all, so only the empty
+ * page around them has been measured (§14.8). They come from
+ * `ConfigHistoryInfo` (1.x/2.x) and `ConfigHistoryBasicInfo` (3.x), and both
+ * name pairs are read on every version rather than keyed to a flavor --
+ * guessing wrong about which server sends which would cost a whole column,
+ * and accepting both costs nothing.
+ *
+ * `ref` is the config the history was asked for, and it stands in for a
+ * namespace or group the row does not spell. Unlike a config *listing*, whose
+ * rows span a whole namespace, every row here belongs to one dataId in one
+ * group -- so the fallback cannot name the wrong config, and it matters
+ * because an entry that arrived without its group would address the wrong
+ * document when something later builds a URI from it.
+ */
+export function normalizeConfigHistoryEntry(entry: unknown, ref: NacosConfigRef): NacosConfigHistoryEntry {
+  const record = asConfigRecord(entry);
+  const id = historyRecordId(record.id);
+  if (id === undefined) {
+    // Fetching the version is the one action a history row exists to offer,
+    // and the id is the only thing that can address it. A row that renders
+    // and then does nothing when clicked is worse than a named failure.
+    throw new NacosApiError('invalid-response', `Nacos returned a history entry for ${record.dataId} with no id.`);
+  }
+  return {
+    // The dataId is not defaulted, because `asConfigRecord` is the shape
+    // check as well as the identity one and every config normalizer owes it.
+    namespaceId: firstString(record.namespaceId, record.tenant) ?? ref.namespaceId,
+    group: firstString(record.groupName, record.group) ?? ref.group,
+    dataId: record.dataId,
+    id,
+    // The value is stored in a database `char` column, which pads it: every
+    // version sends `"I "`, `"U "`, `"D "`. Anything downstream comparing
+    // against `'D'` would be wrong on every row without this.
+    opType: typeof record.opType === 'string' ? record.opType.trim() : '',
+    modifiedAt: optionalEpochMillis(record.modifyTime, record.lastModifiedTime),
+    srcIp: optionalString(record.srcIp),
+    srcUser: optionalString(record.srcUser),
+    appName: optionalString(record.appName)
+  };
+}
+
+/** The id is a database `bigint`, so it arrives as a number and goes back out as a query parameter. */
+function historyRecordId(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/**
+ * The clients currently holding a copy of one configuration, keyed by address.
+ *
+ * **`lisentersGroupkeyStatus` is misspelled in Nacos itself** -- confirmed
+ * verbatim on a real 2.3.2 -- so reading the correct spelling alone would
+ * find nothing on every server in existence. The corrected spelling is read
+ * as well, because a typo in a field name is the kind of thing that
+ * eventually gets fixed, and the cost of covering that is one alternative.
+ *
+ * An empty map is the ordinary answer, not a failure: it is what a config
+ * nobody is watching returns, and also -- measured -- what a dataId nobody
+ * ever published returns. Only a response with neither spelling of the map at
+ * all is a shape this cannot read.
+ */
+export function normalizeConfigListeners(payload: unknown, endpoint: string): NacosConfigListener[] {
+  const data = unwrapData<unknown>(payload);
+  const status = listenerStatusIn(data);
+  if (status === undefined) {
+    throw new NacosApiError(
+      'invalid-response',
+      `Nacos returned no listener status for ${endpoint}: the response carried ${describePayload(data)}.`
+    );
+  }
+  return Object.entries(stringMap(status)).map(([ip, md5]) => ({ ip, md5 }));
+}
+
+function listenerStatusIn(data: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(data)) {
+    return undefined;
+  }
+  const status = data.lisentersGroupkeyStatus ?? data.listenersGroupkeyStatus;
+  return isRecord(status) ? status : undefined;
+}
+
+/**
+ * Nacos's two spellings of a timestamp, read as one number of milliseconds.
+ *
+ * 1.x/2.x are documented to serialize the history timestamps as ISO strings
+ * (`createdTime` / `lastModifiedTime`); 3.x renamed the fields
+ * (`createTime` / `modifyTime`) and sends milliseconds. Both types are
+ * accepted under both names because the pairing is research rather than a
+ * measurement, and a caller should never have to know which it got.
+ *
+ * **An unparseable value yields undefined, never NaN.** `NaN` is a number, so
+ * it passes every `typeof` check between here and the view and then surfaces
+ * as "Invalid Date" -- a value that looks like a timestamp, is not one, and
+ * says nothing about where it came from.
+ */
+function optionalEpochMillis(...candidates: unknown[]): number | undefined {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return candidate;
+    }
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      const parsed = Date.parse(candidate);
+      if (!Number.isNaN(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -250,6 +396,46 @@ export interface NacosInstance {
   ephemeral: boolean;
   instanceId?: string;
   metadata: Record<string, string>;
+}
+
+/** One cluster a service is divided into, with the health check configured for it. */
+export interface NacosServiceCluster {
+  name: string;
+  /** `TCP` | `HTTP` | `MYSQL` | `NONE`, and absent when the service named none. */
+  healthCheckerType?: string;
+  metadata: Record<string, string>;
+}
+
+/**
+ * One service's own configuration, as opposed to a row of a listing.
+ *
+ * Carries no instance counts: those belong to the listing, which is the
+ * endpoint that computes them.
+ */
+export interface NacosServiceDetail extends NacosServiceRef {
+  /** The fraction of healthy instances below which Nacos starts returning unhealthy ones too. */
+  protectThreshold: number;
+  metadata: Record<string, string>;
+  /** Absent on 1.x, which does not report it. */
+  ephemeral?: boolean;
+  clusters: NacosServiceCluster[];
+}
+
+/**
+ * One client watching a service for changes.
+ *
+ * Extends the service ref because the server names the service in every row,
+ * and it names it with the group folded in -- so something has to take that
+ * apart, and the place that does may as well keep the result.
+ */
+export interface NacosSubscriber extends NacosServiceRef {
+  ip: string;
+  /** **0 for a gRPC subscriber**, which has no callback port. Not a missing value. */
+  port: number;
+  /** The client's own identification, e.g. `Nacos-Java-Client:v2.3.2`. */
+  agent?: string;
+  app?: string;
+  cluster?: string;
 }
 
 /** One JRaft group a server node takes part in, flattened out of `extendInfo.raftMetaData`. */
@@ -414,6 +600,137 @@ function instanceArrayIn(data: unknown): unknown[] | undefined {
     return data.hosts;
   }
   return Array.isArray(data.pageItems) ? data.pageItems : undefined;
+}
+
+/**
+ * One service's configuration, in either of the two shapes §6.7 lists --
+ * both of them measured on a real 2.3.2, which serves each from its own
+ * endpoint.
+ *
+ * 1.x answers with a `clusters` **array** and calls the service `name`;
+ * 2.x/3.x answer with a `clusterMap` **object** and call it `serviceName`,
+ * and 2.x alone spells the namespace `namespace`. Whichever the server sent
+ * is read, so a driver does not restate its own version here.
+ *
+ * `ref` supplies what a response leaves out. It cannot redirect the answer at
+ * a different service: every field it stands in for is one the server did not
+ * send.
+ */
+export function normalizeServiceDetail(payload: unknown, ref: NacosServiceRef): NacosServiceDetail {
+  const data = unwrapData<unknown>(payload);
+  if (!isRecord(data)) {
+    throw new NacosApiError(
+      'invalid-response',
+      `Nacos returned no service detail for ${ref.serviceName}: the response carried ${describePayload(data)}.`
+    );
+  }
+  const named = firstString(data.name, data.serviceName);
+  const grouped =
+    named === undefined || named.length === 0
+      ? { group: ref.group, serviceName: ref.serviceName }
+      : splitGroupedServiceName(named, firstString(data.groupName, data.group) ?? ref.group);
+  return {
+    namespaceId: firstString(data.namespaceId, data.namespace) ?? ref.namespaceId,
+    group: grouped.group,
+    serviceName: grouped.serviceName,
+    protectThreshold: optionalNumber(data.protectThreshold) ?? 0,
+    metadata: stringMap(data.metadata),
+    ephemeral: typeof data.ephemeral === 'boolean' ? data.ephemeral : undefined,
+    clusters: normalizeServiceClusters(data.clusters ?? data.clusterMap)
+  };
+}
+
+/**
+ * A service with no cluster of its own is a real state and reads as an empty
+ * list, not as a broken response -- which is also what a response carrying
+ * neither field gives, since neither shape can express "this server does not
+ * report clusters".
+ */
+function normalizeServiceClusters(value: unknown): NacosServiceCluster[] {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeServiceCluster(entry, undefined));
+  }
+  if (isRecord(value)) {
+    return Object.entries(value).map(([name, entry]) => normalizeServiceCluster(entry, name));
+  }
+  return [];
+}
+
+/** In the map form the cluster's name is the key rather than a field, so the key wins. */
+function normalizeServiceCluster(entry: unknown, keyedName: string | undefined): NacosServiceCluster {
+  const record = isRecord(entry) ? entry : {};
+  const healthChecker = isRecord(record.healthChecker) ? record.healthChecker : undefined;
+  return {
+    name: keyedName ?? firstString(record.clusterName, record.name) ?? '',
+    healthCheckerType: optionalString(healthChecker?.type),
+    metadata: stringMap(record.metadata)
+  };
+}
+
+/**
+ * The clients watching one service, in either of the two top-level shapes.
+ *
+ * v1/v2 answer `{"subscribers":[...],"count":N}` -- measured on a real 2.3.2,
+ * where it is emphatically **not** the `pageItems` the 3.x research
+ * describes. Both are read here, because which one arrives is a fact about
+ * the endpoint and not something a caller should have to know.
+ *
+ * An empty list is the ordinary answer: it is what a service nobody watches
+ * returns, and -- measured -- also what a service that does not exist
+ * returns. That is the opposite of how a missing *configuration* is reported
+ * (§14.2 ⓪) and the same rule the instance listing already follows
+ * (§14.5 ⑤).
+ */
+export function normalizeSubscriberList(payload: unknown, endpoint: string, ref: NacosServiceRef): NacosSubscriber[] {
+  const data = unwrapData<unknown>(payload);
+  const entries = subscriberArrayIn(data);
+  if (entries === undefined) {
+    throw new NacosApiError(
+      'invalid-response',
+      `Nacos returned no subscribers for ${endpoint}: the response carried ${describePayload(data)}.`
+    );
+  }
+  return entries.map((entry) => normalizeSubscriber(entry, ref));
+}
+
+function subscriberArrayIn(data: unknown): unknown[] | undefined {
+  if (!isRecord(data)) {
+    return undefined;
+  }
+  if (Array.isArray(data.subscribers)) {
+    return data.subscribers;
+  }
+  return Array.isArray(data.pageItems) ? data.pageItems : undefined;
+}
+
+/**
+ * One subscriber, whose `serviceName` carries the `GROUP@@` prefix exactly as
+ * an instance's does -- so it is split the same way, at the **first**
+ * separator, and never with Nacos's own `split()[1]`.
+ *
+ * The address is the identity, and only the ip half of it: `port` is 0 for
+ * every gRPC subscriber on a real 2.3.2, so a check that required a port
+ * would reject the ordinary case.
+ */
+function normalizeSubscriber(entry: unknown, ref: NacosServiceRef): NacosSubscriber {
+  if (!isRecord(entry) || typeof entry.ip !== 'string' || entry.ip.length === 0) {
+    throw new NacosApiError('invalid-response', 'Nacos returned a subscriber with no address.');
+  }
+  const named = firstString(entry.serviceName);
+  const grouped =
+    named === undefined || named.length === 0
+      ? { group: ref.group, serviceName: ref.serviceName }
+      : splitGroupedServiceName(named, ref.group);
+  return {
+    namespaceId: firstString(entry.namespaceId, entry.namespace) ?? ref.namespaceId,
+    group: grouped.group,
+    serviceName: grouped.serviceName,
+    ip: entry.ip,
+    port: optionalNumber(entry.port) ?? 0,
+    agent: optionalString(entry.agent),
+    app: optionalString(entry.app),
+    cluster: optionalString(entry.cluster)
+  };
 }
 
 /**

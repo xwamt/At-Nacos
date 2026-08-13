@@ -1,6 +1,8 @@
 import type { NacosCapabilityResolver, NacosChainAdvice } from './NacosCapabilityResolver';
 import type { NacosHttpClient } from './NacosHttpClient';
 import type {
+  NacosConfigHistoryListQuery,
+  NacosConfigHistoryQuery,
   NacosConfigListQuery,
   NacosDriver,
   NacosInstanceQuery,
@@ -13,12 +15,17 @@ import { V3ConsoleDriver } from './driver/V3ConsoleDriver';
 import type {
   NacosClusterNode,
   NacosConfigDetail,
+  NacosConfigHistoryEntry,
+  NacosConfigListener,
   NacosConfigRef,
   NacosConfigSummary,
   NacosInstance,
   NacosNamespace,
   NacosServerMetrics,
+  NacosServiceDetail,
+  NacosServiceRef,
   NacosServiceSummary,
+  NacosSubscriber,
   Paged
 } from './driver/normalize';
 import type { NacosServerState } from './probe/probeServerState';
@@ -134,12 +141,39 @@ export class NacosClient {
     return this.resolver.run('config-detail', (driver) => driver.getConfig(ref));
   }
 
+  /**
+   * The history listing and one history version are two capabilities rather
+   * than one, for the reason `configs` and `config-detail` are: on 1.x/2.x
+   * they are two query forms of one path, so a server that stops serving one
+   * has said nothing about the other, and a shared cache entry would let a
+   * fall-through on either evict the winner the other had found.
+   */
+  listConfigHistory(query: NacosConfigHistoryListQuery): Promise<Paged<NacosConfigHistoryEntry>> {
+    return this.resolver.run('config-history', (driver) => driver.listConfigHistory(query));
+  }
+
+  getConfigHistory(query: NacosConfigHistoryQuery): Promise<NacosConfigDetail> {
+    return this.resolver.run('config-history-detail', (driver) => driver.getConfigHistory(query));
+  }
+
+  listConfigListeners(ref: NacosConfigRef): Promise<NacosConfigListener[]> {
+    return this.resolver.run('config-listeners', (driver) => driver.listConfigListeners(ref));
+  }
+
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {
     return this.resolver.run('services', (driver) => driver.listServices(query));
   }
 
+  getService(ref: NacosServiceRef): Promise<NacosServiceDetail> {
+    return this.resolver.run('service-detail', (driver) => driver.getService(ref));
+  }
+
   listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]> {
     return this.resolver.run('instances', (driver) => driver.listInstances(query));
+  }
+
+  listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]> {
+    return this.resolver.run('subscribers', (driver) => driver.listSubscribers(ref));
   }
 
   /**

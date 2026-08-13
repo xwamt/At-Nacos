@@ -18,8 +18,13 @@ export type NacosCapability =
   | 'namespaces'
   | 'configs'
   | 'config-detail'
+  | 'config-history'
+  | 'config-history-detail'
+  | 'config-listeners'
   | 'services'
+  | 'service-detail'
   | 'instances'
+  | 'subscribers'
   | 'cluster-nodes'
   | 'server-metrics';
 

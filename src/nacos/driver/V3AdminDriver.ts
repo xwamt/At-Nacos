@@ -4,21 +4,36 @@ import {
   fetchConfigPage,
   fetchNamespaces,
   type NacosApiFlavor,
+  type NacosConfigHistoryListQuery,
+  type NacosConfigHistoryQuery,
   type NacosConfigListQuery,
   type NacosDriver,
   type NacosInstanceQuery,
   type NacosServiceListQuery
 } from './NacosDriver';
-import { fetchClusterNodes, fetchInstances, fetchServerMetrics, fetchServicePage } from './naming';
+import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners } from './history';
+import {
+  fetchClusterNodes,
+  fetchInstances,
+  fetchServerMetrics,
+  fetchServiceDetail,
+  fetchServicePage,
+  fetchSubscribers
+} from './naming';
 import type {
   NacosClusterNode,
   NacosConfigDetail,
+  NacosConfigHistoryEntry,
+  NacosConfigListener,
   NacosConfigRef,
   NacosConfigSummary,
   NacosInstance,
   NacosNamespace,
   NacosServerMetrics,
+  NacosServiceDetail,
+  NacosServiceRef,
   NacosServiceSummary,
+  NacosSubscriber,
   Paged
 } from './normalize';
 
@@ -37,6 +52,35 @@ const NAMESPACE_LIST_PATH = '/v3/admin/core/namespace/list';
  */
 const CONFIG_LIST_PATH = '/v3/admin/cs/config/list';
 const CONFIG_DETAIL_PATH = '/v3/admin/cs/config';
+
+/**
+ * 3.x split the history in two as well, so there is no `search=accurate`
+ * here either: the listing has a path of its own rather than being a query
+ * form on the detail's.
+ */
+const CONFIG_HISTORY_LIST_PATH = '/v3/admin/cs/history/list';
+const CONFIG_HISTORY_DETAIL_PATH = '/v3/admin/cs/history';
+
+/**
+ * The only reader in this driver that **needs WRITE permission**: 3.x
+ * classifies the admin listener endpoint as a write, and only the console's
+ * version of it settles for READ (§9). So an ordinary account gets a 403
+ * here even where the rest of this driver works -- which falls through to
+ * `V3ConsoleDriver`, and that is the whole reason the fallback matters for
+ * this one capability.
+ */
+const CONFIG_LISTENER_PATH = '/v3/admin/cs/config/listener';
+
+const SERVICE_DETAIL_PATH = '/v3/admin/ns/service';
+const SUBSCRIBERS_PATH = '/v3/admin/ns/service/subscribers';
+
+/**
+ * The 3.x subscriber listings page where v1's does not, so they are the only
+ * ones that have to ask for a page. 100 is this project's own ceiling (§10);
+ * a service watched by more clients than that would be truncated here, which
+ * is the price of an interface where subscribers are a list.
+ */
+const FIRST_SUBSCRIBER_PAGE = { query: { pageNo: '1', pageSize: '100' } };
 
 /**
  * 3.x folded the catalog into the standard listing -- `ServiceControllerV3`
@@ -69,12 +113,32 @@ export class V3AdminDriver implements NacosDriver {
     return fetchConfigDetail(this.http, this.flavor, CONFIG_DETAIL_PATH, ref);
   }
 
+  listConfigHistory(query: NacosConfigHistoryListQuery): Promise<Paged<NacosConfigHistoryEntry>> {
+    return fetchConfigHistoryPage(this.http, this.flavor, CONFIG_HISTORY_LIST_PATH, query);
+  }
+
+  getConfigHistory(query: NacosConfigHistoryQuery): Promise<NacosConfigDetail> {
+    return fetchConfigHistoryDetail(this.http, this.flavor, CONFIG_HISTORY_DETAIL_PATH, query);
+  }
+
+  listConfigListeners(ref: NacosConfigRef): Promise<NacosConfigListener[]> {
+    return fetchConfigListeners(this.http, this.flavor, CONFIG_LISTENER_PATH, ref);
+  }
+
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {
     return fetchServicePage(this.http, SERVICE_LIST_PATH, query);
   }
 
+  getService(ref: NacosServiceRef): Promise<NacosServiceDetail> {
+    return fetchServiceDetail(this.http, this.flavor, SERVICE_DETAIL_PATH, ref);
+  }
+
   listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]> {
     return fetchInstances(this.http, this.flavor, INSTANCE_LIST_PATH, query);
+  }
+
+  listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]> {
+    return fetchSubscribers(this.http, this.flavor, SUBSCRIBERS_PATH, ref, FIRST_SUBSCRIBER_PAGE);
   }
 
   listClusterNodes(): Promise<NacosClusterNode[]> {

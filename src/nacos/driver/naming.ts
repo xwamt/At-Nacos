@@ -9,14 +9,19 @@ import {
   normalizeInstanceList,
   normalizePaged,
   normalizeServerMetrics,
+  normalizeServiceDetail,
   normalizeServiceSummary,
+  normalizeSubscriberList,
   unwrapData,
   unwrapDataArray,
   type NacosClusterNode,
   type NacosInstance,
   type NacosServerMetrics,
+  type NacosServiceDetail,
+  type NacosServiceRef,
   type NacosServiceScope,
   type NacosServiceSummary,
+  type NacosSubscriber,
   type Paged
 } from './normalize';
 
@@ -188,15 +193,65 @@ export async function fetchInstances(
 
 function instanceParams(flavor: NacosApiFlavor, query: NacosInstanceQuery): Record<string, string> {
   const cluster = query.cluster === undefined ? {} : { [clusterParamName(flavor)]: query.cluster };
+  return { ...serviceIdentityParams(flavor, query), ...cluster };
+}
+
+/**
+ * Which service the request is about, in the dialect the endpoint family
+ * reads.
+ *
+ * v1 has no group parameter on its instance endpoint at all -- the group
+ * travels inside `serviceName` as `GROUP@@name` -- and its service detail and
+ * subscriber endpoints read that same spelling. Measured on a real 2.3.2: a
+ * grouped name **wins over** a contradicting `groupName` sent beside it on
+ * both of them, so the grouped form cannot be defeated by a stray parameter,
+ * while a bare name resolves to `DEFAULT_GROUP@@name` and finds nothing.
+ *
+ * v2 onward takes the two apart, and sending a grouped name *there* makes the
+ * server compose the group in twice.
+ */
+function serviceIdentityParams(flavor: NacosApiFlavor, ref: NacosServiceRef): Record<string, string> {
   if (flavor === 'v1') {
-    return { namespaceId: query.namespaceId, serviceName: groupedServiceName(query), ...cluster };
+    return { namespaceId: ref.namespaceId, serviceName: groupedServiceName(ref) };
   }
-  return {
-    namespaceId: query.namespaceId,
-    groupName: query.group,
-    serviceName: query.serviceName,
-    ...cluster
-  };
+  return { namespaceId: ref.namespaceId, groupName: ref.group, serviceName: ref.serviceName };
+}
+
+/** One service's own configuration: its clusters, its metadata and its protect threshold. */
+export async function fetchServiceDetail(
+  http: Pick<NacosHttpClient, 'requestJson'>,
+  endpointFlavor: NacosApiFlavor,
+  path: string,
+  ref: NacosServiceRef,
+  options?: NacosRequestOptions
+): Promise<NacosServiceDetail> {
+  const payload = await http.requestJson<unknown>('GET', path, {
+    ...options,
+    query: { ...options?.query, ...serviceIdentityParams(endpointFlavor, ref) }
+  });
+  return normalizeServiceDetail(payload, ref);
+}
+
+/**
+ * The clients watching one service.
+ *
+ * No paging is sent here. Only the 3.x listings page -- the v1 endpoint's own
+ * `pageSize` defaults to 1000, so sending this project's ceiling of 100 would
+ * *lower* what a real server already answers with -- and the drivers that do
+ * page pass their page through `options.query`.
+ */
+export async function fetchSubscribers(
+  http: Pick<NacosHttpClient, 'requestJson'>,
+  endpointFlavor: NacosApiFlavor,
+  path: string,
+  ref: NacosServiceRef,
+  options?: NacosRequestOptions
+): Promise<NacosSubscriber[]> {
+  const payload = await http.requestJson<unknown>('GET', path, {
+    ...options,
+    query: { ...options?.query, ...serviceIdentityParams(endpointFlavor, ref) }
+  });
+  return normalizeSubscriberList(payload, path, ref);
 }
 
 /** The servers of the cluster. No parameters on any version: a node list is a node list. */

@@ -4,21 +4,36 @@ import {
   fetchConfigPage,
   fetchNamespaces,
   type NacosApiFlavor,
+  type NacosConfigHistoryListQuery,
+  type NacosConfigHistoryQuery,
   type NacosConfigListQuery,
   type NacosDriver,
   type NacosInstanceQuery,
   type NacosServiceListQuery
 } from './NacosDriver';
-import { fetchClusterNodes, fetchInstances, fetchServicePage, missingCapability } from './naming';
+import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners } from './history';
+import {
+  fetchClusterNodes,
+  fetchInstances,
+  fetchServiceDetail,
+  fetchServicePage,
+  fetchSubscribers,
+  missingCapability
+} from './naming';
 import type {
   NacosClusterNode,
   NacosConfigDetail,
+  NacosConfigHistoryEntry,
+  NacosConfigListener,
   NacosConfigRef,
   NacosConfigSummary,
   NacosInstance,
   NacosNamespace,
   NacosServerMetrics,
+  NacosServiceDetail,
+  NacosServiceRef,
   NacosServiceSummary,
+  NacosSubscriber,
   Paged
 } from './normalize';
 
@@ -35,8 +50,16 @@ const NAMESPACE_LIST_PATH = '/v3/console/core/namespace/list';
 const CONFIG_LIST_PATH = '/v3/console/cs/config/list';
 const CONFIG_DETAIL_PATH = '/v3/console/cs/config';
 
+const CONFIG_HISTORY_LIST_PATH = '/v3/console/cs/history/list';
+const CONFIG_HISTORY_DETAIL_PATH = '/v3/console/cs/history';
+
+/** The one that only asks for READ where the admin API's asks for WRITE (§9). */
+const CONFIG_LISTENER_PATH = '/v3/console/cs/config/listener';
+
 const SERVICE_LIST_PATH = '/v3/console/ns/service/list';
+const SERVICE_DETAIL_PATH = '/v3/console/ns/service';
 const INSTANCE_LIST_PATH = '/v3/console/ns/instance/list';
+const SUBSCRIBERS_PATH = '/v3/console/ns/service/subscribers';
 
 /** `nodes`, where the admin API says `node/list`. The console module spells its own paths. */
 const CLUSTER_NODES_PATH = '/v3/console/core/cluster/nodes';
@@ -50,6 +73,12 @@ const CLUSTER_NODES_PATH = '/v3/console/core/cluster/nodes';
  * instances are a list.
  */
 const FIRST_INSTANCE_PAGE = { pageNo: '1', pageSize: '100' };
+
+/**
+ * The subscriber listing pages on 3.x too -- v1's does not -- so the same
+ * page is asked for, for the same reason and at the same ceiling.
+ */
+const FIRST_SUBSCRIBER_PAGE = { pageNo: '1', pageSize: '100' };
 
 export class V3ConsoleDriver implements NacosDriver {
   readonly flavor: NacosApiFlavor = 'v3-console';
@@ -71,14 +100,37 @@ export class V3ConsoleDriver implements NacosDriver {
     return fetchConfigDetail(this.http, this.flavor, CONFIG_DETAIL_PATH, ref, this.onConsoleOrigin());
   }
 
+  listConfigHistory(query: NacosConfigHistoryListQuery): Promise<Paged<NacosConfigHistoryEntry>> {
+    return fetchConfigHistoryPage(this.http, this.flavor, CONFIG_HISTORY_LIST_PATH, query, this.onConsoleOrigin());
+  }
+
+  getConfigHistory(query: NacosConfigHistoryQuery): Promise<NacosConfigDetail> {
+    return fetchConfigHistoryDetail(this.http, this.flavor, CONFIG_HISTORY_DETAIL_PATH, query, this.onConsoleOrigin());
+  }
+
+  listConfigListeners(ref: NacosConfigRef): Promise<NacosConfigListener[]> {
+    return fetchConfigListeners(this.http, this.flavor, CONFIG_LISTENER_PATH, ref, this.onConsoleOrigin());
+  }
+
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {
     return fetchServicePage(this.http, SERVICE_LIST_PATH, query, this.onConsoleOrigin());
+  }
+
+  getService(ref: NacosServiceRef): Promise<NacosServiceDetail> {
+    return fetchServiceDetail(this.http, this.flavor, SERVICE_DETAIL_PATH, ref, this.onConsoleOrigin());
   }
 
   listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]> {
     return fetchInstances(this.http, this.flavor, INSTANCE_LIST_PATH, query, {
       ...this.onConsoleOrigin(),
       query: FIRST_INSTANCE_PAGE
+    });
+  }
+
+  listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]> {
+    return fetchSubscribers(this.http, this.flavor, SUBSCRIBERS_PATH, ref, {
+      ...this.onConsoleOrigin(),
+      query: FIRST_SUBSCRIBER_PAGE
     });
   }
 

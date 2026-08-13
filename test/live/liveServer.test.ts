@@ -486,6 +486,263 @@ describeLive('a real Nacos server, through the cluster status panel', () => {
   });
 });
 
+/**
+ * M4's five capabilities on the same server, and the sharpest split this
+ * suite has between what a real server can settle and what it cannot.
+ *
+ * The subscribers and the service detail are **verified**: this server has
+ * thirteen services, each with a client watching it, and both endpoints
+ * answer with real rows. The history and the listeners are **not**: nothing
+ * here has ever been republished and nothing is long-polling, so both come
+ * back empty on every configuration in every namespace. An empty answer still
+ * proves the request reached the right endpoint under the right parameter
+ * names -- a wrong namespace parameter answers empty too, but a wrong *path*
+ * or a wrong envelope does not -- so what stays unverified is exactly the
+ * field names of a populated row (§14.8).
+ */
+describeLive('a real Nacos server, its history and who is using it', () => {
+  it(
+    'answers a configuration with no history with an empty page rather than a failure',
+    async () => {
+      const { client, namespaceId, config } = await findLiveConfig();
+
+      const page = await client.listConfigHistory({
+        namespaceId,
+        group: config.group,
+        dataId: config.dataId,
+        pageNo: 1,
+        pageSize: 100
+      });
+
+      // The assertion that matters is that this did not throw. Empty is the
+      // ordinary state of a configuration nobody has republished, and a
+      // client that reported it as an error would be wrong about most
+      // configurations on most servers.
+      expect(Array.isArray(page.items)).toBe(true);
+      expect(page.items.length).toBe(page.totalCount);
+      console.log(
+        `  ${namespaceId}/${config.group}/${config.dataId}: ${page.totalCount} history entries ` +
+          `(page ${page.pageNumber} of ${page.pagesAvailable})`
+      );
+      if (page.items.length === 0) {
+        console.log('    empty -- this server has never republished a config, so no row shape is verified here');
+      }
+      for (const entry of page.items) {
+        console.log(
+          `    id=${entry.id} opType=${JSON.stringify(entry.opType)} ` +
+            `modifiedAt=${entry.modifiedAt ?? '(none)'} srcIp=${entry.srcIp ?? '?'} srcUser=${entry.srcUser ?? '?'}`
+        );
+      }
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  /**
+   * The one history behaviour this server *can* settle: a `nid` nobody wrote
+   * answers **HTTP 200 with an empty body** on the v1 path, which is the same
+   * absence `?show=all` reports for a missing config (§14.2 ⓪) and not the
+   * 404 the research predicted. It has to read as "no such version" rather
+   * than walk the driver chain looking for an API family that could conjure
+   * one up.
+   */
+  it('says a history version that was never written is missing, rather than blaming the API version', async () => {
+    const { client, namespaceId, config } = await findLiveConfig();
+
+    const error = (await client
+      .getConfigHistory({ namespaceId, group: config.group, dataId: config.dataId, nid: '99999999' })
+      .catch((thrown: unknown) => thrown)) as NacosApiError;
+
+    expect(error.kind).toBe('resource-not-found');
+    expect(error.shouldFallThrough()).toBe(false);
+    console.log(`  missing nid -> kind=${error.kind} status=${error.status ?? '(none)'}: ${error.message}`);
+  });
+
+  it(
+    'answers a configuration nobody is watching with no listeners rather than a failure',
+    async () => {
+      const { client, namespaceId, config } = await findLiveConfig();
+
+      const listeners = await client.listConfigListeners({
+        namespaceId,
+        group: config.group,
+        dataId: config.dataId
+      });
+
+      // Reaching here at all is the assertion: the misspelled
+      // `lisentersGroupkeyStatus` was found and read as a map. A response
+      // whose key had been renamed would have raised `invalid-response`
+      // instead of answering an empty list.
+      expect(Array.isArray(listeners)).toBe(true);
+      console.log(`  ${namespaceId}/${config.group}/${config.dataId}: ${listeners.length} listener(s)`);
+      if (listeners.length === 0) {
+        console.log('    empty -- nothing is long-polling this server, so no listener row is verified here');
+      }
+      for (const listener of listeners) {
+        console.log(`    ${listener.ip} md5=${listener.md5}`);
+      }
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  it(
+    'reads a service detail, whose clusters are shaped differently on every version',
+    async () => {
+      const { client, populated } = await browseServices();
+      const service = populated.page.items[0];
+      expect(service, 'no service to read a detail for').toBeDefined();
+
+      const detail = await client.getService({
+        namespaceId: service?.namespaceId ?? '',
+        group: service?.group ?? '',
+        serviceName: service?.serviceName ?? ''
+      });
+
+      // The identity must come back intact. v1 resolves a *bare* service name
+      // to `DEFAULT_GROUP@@name` and answers HTTP 500 "service not found", so
+      // a detail that arrived at all is proof the grouped spelling went out.
+      expect(detail.serviceName).toBe(service?.serviceName);
+      expect(detail.group).toBe(service?.group);
+      expect(detail.serviceName).not.toContain('@@');
+      expect(detail.clusters.length, 'a registered service reported no cluster at all').toBeGreaterThan(0);
+
+      console.log(
+        `  ${detail.namespaceId}/${detail.group}/${detail.serviceName}: ` +
+          `protectThreshold=${detail.protectThreshold} ephemeral=${detail.ephemeral ?? '(not reported)'} ` +
+          `metadata=${JSON.stringify(detail.metadata)}`
+      );
+      for (const cluster of detail.clusters) {
+        console.log(
+          `    cluster ${cluster.name.padEnd(12)} healthChecker=${cluster.healthCheckerType ?? '(none)'} ` +
+            `metadata=${JSON.stringify(cluster.metadata)}`
+        );
+      }
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  /**
+   * The one M4 capability with real data behind it, and the one whose
+   * top-level shape the research had wrong: this server answers
+   * `{"subscribers":[...],"count":N}`, not the `pageItems` page 3.x is
+   * documented to send.
+   */
+  it(
+    'lists the subscribers of a service, with the group prefix taken off each one',
+    async () => {
+      const { client, populated } = await browseServices();
+
+      const found = await Promise.all(
+        populated.page.items.map(async (service) => ({
+          service,
+          subscribers: await client.listSubscribers({
+            namespaceId: service.namespaceId,
+            group: service.group,
+            serviceName: service.serviceName
+          })
+        }))
+      );
+
+      const watched = found.filter((entry) => entry.subscribers.length > 0);
+      expect(watched.length, 'no service on this server has a subscriber; nothing to verify').toBeGreaterThan(0);
+      for (const { service, subscribers } of watched) {
+        for (const subscriber of subscribers) {
+          expect(subscriber.ip.length).toBeGreaterThan(0);
+          // The server sends `cl-intimfy@@cl-auth-offline` here, exactly as
+          // it does on an instance. A separator surviving to this point would
+          // mean a panel renders a Nacos protocol detail as a service name.
+          expect(subscriber.serviceName).not.toContain('@@');
+          expect(subscriber.serviceName).toBe(service.serviceName);
+          expect(subscriber.group).toBe(service.group);
+        }
+      }
+
+      console.log(`  ${watched.length} of ${found.length} services in ${populated.namespaceId} have subscribers:`);
+      for (const { service, subscribers } of watched) {
+        for (const subscriber of subscribers) {
+          console.log(
+            `    ${service.group}/${service.serviceName.padEnd(32)} <- ${subscriber.ip}:${subscriber.port} ` +
+              `agent=${subscriber.agent ?? '?'} app=${subscriber.app ?? '?'} ` +
+              `cluster=${subscriber.cluster ?? '(none)'}`
+          );
+        }
+      }
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  /**
+   * A gRPC subscriber has no callback port and reports 0. Anything treating
+   * that as "the port is missing" would hide the ordinary case, since every
+   * subscriber on a 2.x server connects over gRPC.
+   */
+  it(
+    'keeps a subscriber port of zero, which is what every gRPC client reports',
+    async () => {
+      const { client, populated } = await browseServices();
+      const service = populated.page.items[0];
+
+      const subscribers = await client.listSubscribers({
+        namespaceId: service?.namespaceId ?? '',
+        group: service?.group ?? '',
+        serviceName: service?.serviceName ?? ''
+      });
+
+      expect(subscribers.length, 'the first service has no subscriber to inspect').toBeGreaterThan(0);
+      for (const subscriber of subscribers) {
+        expect(typeof subscriber.port).toBe('number');
+      }
+      console.log(
+        `  ${service?.serviceName}: ` +
+          subscribers.map((subscriber) => `${subscriber.ip}:${subscriber.port}`).join(', ')
+      );
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  /**
+   * A service nobody registered, asked the same question. It answers
+   * `{"subscribers":[],"count":0}` under HTTP 200 -- indistinguishable from a
+   * service that exists and is unwatched, and not a failure either way.
+   */
+  it('answers the subscribers of a service nobody registered with an empty list', async () => {
+    const client = await connectLive();
+
+    const subscribers = await client.listSubscribers({
+      namespaceId: '',
+      group: 'DEFAULT_GROUP',
+      serviceName: 'at-nacos-no-such-service-please-do-not-register'
+    });
+
+    expect(subscribers).toEqual([]);
+    console.log('  a service nobody registered -> 0 subscribers, no error');
+  });
+});
+
+/** One configuration of the live server, whichever namespace has one. Shared: each probe costs a round trip. */
+interface BrowsedConfig {
+  client: NacosClient;
+  namespaceId: string;
+  config: NacosConfigSummary;
+}
+
+let browsedConfig: Promise<BrowsedConfig> | undefined;
+
+function findLiveConfig(): Promise<BrowsedConfig> {
+  browsedConfig ??= (async () => {
+    const client = await connectLive();
+    const namespaces = await client.listNamespaces();
+    for (const namespace of namespaces) {
+      const page = await client.listConfigs({ namespaceId: namespace.namespaceId, pageNo: 1, pageSize: 100 });
+      const config = page.items[0];
+      if (config) {
+        return { client, namespaceId: namespace.namespaceId, config };
+      }
+    }
+    throw new Error('no namespace on this server holds a configuration; nothing to ask about');
+  })();
+  return browsedConfig;
+}
+
 /** One namespace of the live server and the services in it, whichever namespace has any. */
 interface BrowsedServices {
   client: NacosClient;

@@ -4,28 +4,38 @@ import {
   fetchConfigPage,
   fetchNamespaces,
   type NacosApiFlavor,
+  type NacosConfigHistoryListQuery,
+  type NacosConfigHistoryQuery,
   type NacosConfigListQuery,
   type NacosDriver,
   type NacosInstanceQuery,
   type NacosServiceListQuery
 } from './NacosDriver';
+import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners } from './history';
 import {
   fetchCatalogServices,
   fetchClusterNodes,
   fetchInstances,
   fetchServerMetrics,
+  fetchServiceDetail,
   fetchServiceNames,
+  fetchSubscribers,
   listServicesPreferringCounts
 } from './naming';
 import type {
   NacosClusterNode,
   NacosConfigDetail,
+  NacosConfigHistoryEntry,
+  NacosConfigListener,
   NacosConfigRef,
   NacosConfigSummary,
   NacosInstance,
   NacosNamespace,
   NacosServerMetrics,
+  NacosServiceDetail,
+  NacosServiceRef,
   NacosServiceSummary,
+  NacosSubscriber,
   Paged
 } from './normalize';
 
@@ -51,6 +61,24 @@ const CONFIG_PATH = '/v1/cs/configs';
  * `type`, and `type` is what picks the editor's language mode. §6.8.
  */
 const SHOW_ALL = { query: { show: 'all' } };
+
+/**
+ * And a third capability on one more shared path: the history listing and one
+ * history version are told apart by `search=accurate` against `nid`, exactly
+ * as the config listing and the config detail are.
+ */
+const CONFIG_HISTORY_PATH = '/v1/cs/history';
+const SEARCH_ACCURATE = { query: { search: 'accurate' } };
+
+/**
+ * `configs/listener`, plural -- not `/v1/cs/listener`, which is the same
+ * question asked the other way round (the configs one client holds, rather
+ * than the clients holding one config).
+ */
+const CONFIG_LISTENER_PATH = '/v1/cs/configs/listener';
+
+const SERVICE_DETAIL_PATH = '/v1/ns/service';
+const SUBSCRIBERS_PATH = '/v1/ns/service/subscribers';
 
 /**
  * The two service listings 1.x has, in the order they are worth asking in.
@@ -94,6 +122,18 @@ export class V1Driver implements NacosDriver {
     return fetchConfigDetail(this.http, this.flavor, CONFIG_PATH, ref, SHOW_ALL);
   }
 
+  listConfigHistory(query: NacosConfigHistoryListQuery): Promise<Paged<NacosConfigHistoryEntry>> {
+    return fetchConfigHistoryPage(this.http, this.flavor, CONFIG_HISTORY_PATH, query, SEARCH_ACCURATE);
+  }
+
+  getConfigHistory(query: NacosConfigHistoryQuery): Promise<NacosConfigDetail> {
+    return fetchConfigHistoryDetail(this.http, this.flavor, CONFIG_HISTORY_PATH, query);
+  }
+
+  listConfigListeners(ref: NacosConfigRef): Promise<NacosConfigListener[]> {
+    return fetchConfigListeners(this.http, this.flavor, CONFIG_LISTENER_PATH, ref);
+  }
+
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {
     return listServicesPreferringCounts(
       () => fetchCatalogServices(this.http, CATALOG_SERVICES_PATH, query),
@@ -101,8 +141,16 @@ export class V1Driver implements NacosDriver {
     );
   }
 
+  getService(ref: NacosServiceRef): Promise<NacosServiceDetail> {
+    return fetchServiceDetail(this.http, this.flavor, SERVICE_DETAIL_PATH, ref);
+  }
+
   listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]> {
     return fetchInstances(this.http, this.flavor, INSTANCE_LIST_PATH, query);
+  }
+
+  listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]> {
+    return fetchSubscribers(this.http, this.flavor, SUBSCRIBERS_PATH, ref);
   }
 
   listClusterNodes(): Promise<NacosClusterNode[]> {

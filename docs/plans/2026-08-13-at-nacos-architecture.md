@@ -682,6 +682,39 @@ Task 1 把 `test/live` 走到了 `NacosClient`，这一组走的是 `ServiceTree
 
 这些是 M1 整体评审确认过的、有意留到后续里程碑的问题。它们不是缺陷清单里的遗漏，但**开始 M2 之前应当各自有个决定**。
 
+### 14.8 M4 Task 1 五个能力的真机验证（Nacos 2.3.2，2026-08-14）
+
+这一组把 `test/live` 从 19 条加到 26 条。与前几次不同，本轮**一半的能力在这台服务器上验不了**，而验得了的那一半推翻了计划里的三条路径。
+
+**① v2 根本没有订阅者接口，也没有监听者接口。** 实测 `GET /v2/ns/service/subscribers` 与 `GET /v2/cs/config/listener` 都是 **HTTP 404 + Spring 错误页**——不是 410、不是 501，就是没有这个 controller。§9 把 2.x 这两行记作「同左」（即用 v1 路径），这是对的，但读起来像是「v2 也有一份」。`V2Driver` 因此在这两个能力上回到 v1 路径，订阅者还要连带回到 v1 的命名方言（分组写进 `serviceName`）。
+
+**② `/v2/cs/history/list` 存在，但它要的是 `group`——v1 的拼法。**
+
+```
+GET /v2/cs/history/list?dataId=...&groupName=cl-intimfy&namespaceId=cl-parent
+  → 400 {"code":10000,"message":"parameter missing",
+         "data":"Required request parameter 'group' for method parameter type String is not present"}
+GET /v2/cs/history/list?dataId=...&group=cl-intimfy&namespaceId=cl-parent
+  → 200 {"code":0,"message":"success","data":{"totalCount":0,...}}
+```
+
+`namespaceId` 与 `tenant` 都不是必填（省略也返回 200），所以**它到底读哪一个，这台服务器无法分辨**——历史全空，两种拼法都返回 0 条。这是第三种方言：v1 的 `group` 配 v2 的 `namespaceId`。§6.1 的两个映射函数是成对使用的（半个方言会被静默丢弃），引入一个半 v1 半 v2 的组合会破坏那条约定，而 v1 路径在同一台服务器上答的是同样的行。**所以 `V2Driver` 的历史也走 v1 路径**，与它的配置能力一致。`/v2/cs/history` 详情同理。
+
+**③ 「历史版本不存在」是 HTTP 200 + 空 body，与 §14.2 ⓪ 的配置详情一模一样。** v1 上 `GET /v1/cs/history?nid=999999&...` 返回零字节；v2 上 `GET /v2/cs/history?nid=999999&...` 返回 `{"code":0,"message":"success","data":null}`。两条都被 `fetchConfigDetail` 已有的判据接住（2xx 但解包后为空 = 资源不存在），所以 `getConfigHistory` 直接复用它而不是另写一条读取路径——这也是 live 里唯一一条**历史相关且真机可验**的断言。
+
+**④ v1 的服务详情与订阅者都认 `groupName`，但分组名写进 `serviceName` 时以后者为准。** 实测：`serviceName=cl-intimfy@@cl-auth-offline&groupName=DEFAULT_GROUP` 仍然解析成 `cl-intimfy@@cl-auth-offline` 并正常返回；而 `serviceName=cl-auth-offline`（不带分组）无论带不带 `groupName=DEFAULT_GROUP` 都解析成 `DEFAULT_GROUP@@cl-auth-offline`，答 **HTTP 500** `caused: service not found, ...;`（v2 同样情况是 HTTP 400 `{"code":21008,"message":"service not exist"}`）。两者都归类为 `api-error`，不触发降级——正确，因为换一个 API 版本变不出一个没注册的服务。结论：driver 只发拼好的分组名，且这个选择不会被顺带传去的 `groupName` 推翻。
+
+**⑤ 服务详情的两种形状与 §6.7 完全一致**，两边都是真机原文：v1 是 `clusters` 数组 + `name` + `namespaceId`，v2 是 `clusterMap` 对象 + `serviceName` + `namespace`。v2 的 `selector` 里有两个重名的 `type` 键（`"type":"NoneSelector","type":"none"`），`JSON.parse` 取后者；本轮没有读 `selector`，记一笔备查。
+
+**⑥ 订阅者的顶层形状确认为 `{subscribers, count}`，而且这台服务器上到处都是。** 12 个服务全部有订阅者，其中 `cl-merchant-server-offline` 有两个（`192.168.99.92` 与 `192.168.66.124`）——所以多行分支也有了真机覆盖，不只是单条。`port` 全是 0（gRPC 订阅者没有回调端口），`cluster` 全是空串，`serviceName` 全带 `cl-intimfy@@` 前缀。v1 接口对 `pageNo`/`pageSize` 是可选的（源码默认 1000），所以 driver 在 v1/v2 上**不发分页**——发本项目的 100 反而会把服务端已经给的东西砍掉；只有 3.x 的分页形态需要显式要一页。
+
+**M4 Task 1 仍未覆盖的：**
+
+27. **历史条目与监听者条目的字段名。** 这台服务器上没有任何配置被重新发布过，也没有任何客户端在长轮询，所以两个接口在**每个命名空间的每条配置上**都返回空。验到的是分页信封（v1 裸 `Page`、v2 包装）、拼错的 `lisentersGroupkeyStatus` 键、以及「空不是失败」这三件事；**没有验到的是一行真实数据长什么样**——`opType` 的尾随空格、`createdTime`/`lastModifiedTime` 是 ISO 字符串还是毫秒、`id` 是数字还是字符串，全部来自 `ConfigHistoryInfo` 的源码而非实测。归一化因此对两套字段名、两种时间类型都收，并且 `Date.parse` 失败留 `undefined` 而不是 `NaN`——这不是兜底，而是在拿不到实测依据时唯一站得住的写法。**M5 发布配置后会产生历史记录，届时必须回来补验这一条。**
+28. **`/v2/cs/history/list` 读的是 `namespaceId` 还是 `tenant`。** 见 ② ——历史全空，无法分辨。目前不影响任何代码路径（v2 走 v1 路径），但如果将来有人把 v2 的历史换回它自己的路径，这一条会先咬人。
+29. **3.x 的五条路径与它们的响应形状。** `/v3/{admin,console}/cs/history/list`、`/v3/{admin,console}/cs/history`、`/v3/{admin,console}/cs/config/listener`、`/v3/{admin,console}/ns/service`、`/v3/{admin,console}/ns/service/subscribers`，全部照 §9 与调研写成，没有 3.x 环境跑过。风险最高的是订阅者：3.x 按调研是 `data.pageItems[]`，与这台服务器给的 `{subscribers, count}` 不同，归一化两种都收，猜错顶多是「仍然能解析」。
+30. **admin 监听者接口需要 WRITE 权限这条降级。** §9 说 `/v3/admin/cs/config/listener` 要 WRITE 而 console 版只要 READ，也就是说这是唯一一个「管理员账号也可能被拒、普通账号必须走 console」的读能力。只有夹具覆盖。
+
 ### 16.1 错误文案没有本地化
 
 `t()` 的覆盖是完整的——`src/` 里 54 处 `t()` 字面量全部在 zh-cn 包里有键。但出问题时用户读到的那些句子从来不经过 `t()`：`testNacosConnection` 里 `describeConnectionFailure` 的十二个分支、`describeForbidden`，以及 `ErrorTreeItem` 渲染的每一条 `NacosApiError` 消息。中文用户会看到一个完全汉化的界面，直到出错，然后是一段英文。

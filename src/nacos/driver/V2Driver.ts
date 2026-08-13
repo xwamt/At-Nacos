@@ -4,28 +4,38 @@ import {
   fetchConfigPage,
   fetchNamespaces,
   type NacosApiFlavor,
+  type NacosConfigHistoryListQuery,
+  type NacosConfigHistoryQuery,
   type NacosConfigListQuery,
   type NacosDriver,
   type NacosInstanceQuery,
   type NacosServiceListQuery
 } from './NacosDriver';
+import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners } from './history';
 import {
   fetchCatalogServices,
   fetchClusterNodes,
   fetchInstances,
   fetchServerMetrics,
+  fetchServiceDetail,
   fetchServiceNames,
+  fetchSubscribers,
   listServicesPreferringCounts
 } from './naming';
 import type {
   NacosClusterNode,
   NacosConfigDetail,
+  NacosConfigHistoryEntry,
+  NacosConfigListener,
   NacosConfigRef,
   NacosConfigSummary,
   NacosInstance,
   NacosNamespace,
   NacosServerMetrics,
+  NacosServiceDetail,
+  NacosServiceRef,
   NacosServiceSummary,
+  NacosSubscriber,
   Paged
 } from './normalize';
 
@@ -61,6 +71,38 @@ const CONFIG_ENDPOINT_FLAVOR: NacosApiFlavor = 'v1';
 const SHOW_ALL = { query: { show: 'all' } };
 
 /**
+ * The history stays on the v1 paths too, and this one is a measurement
+ * rather than an inheritance.
+ *
+ * `/v2/cs/history/list` and `/v2/cs/history` **do** exist on a real 2.3.2 --
+ * and both demand **`group`**, the v1 spelling, while taking `namespaceId`,
+ * the v2 one. (`{"code":10000,"message":"parameter missing","data":"Required
+ * request parameter 'group' ... is not present"}` for a request that says
+ * `groupName`.) That is a third dialect, half in each, and the two parameter
+ * names in this codebase are chosen together on purpose: a request that mixes
+ * them has one half dropped in silence rather than refused. The v1 endpoints
+ * answer the same rows in a dialect that is already covered, so they are what
+ * this driver asks.
+ */
+const CONFIG_HISTORY_PATH = '/v1/cs/history';
+const SEARCH_ACCURATE = { query: { search: 'accurate' } };
+
+/** Measured on a real 2.3.2: `/v2/cs/config/listener` does not exist -- HTTP 404, Spring's own error page. */
+const CONFIG_LISTENER_PATH = '/v1/cs/configs/listener';
+
+/** v2 does have its own service detail, and it is the shape §6.7 describes: `clusterMap` and `serviceName`. */
+const SERVICE_DETAIL_PATH = '/v2/ns/service';
+
+/**
+ * And measured the same way: `/v2/ns/service/subscribers` does not exist
+ * either. This is the one naming capability where v2 has to reach back to a
+ * v1 path -- so it also has to ask in the v1 naming dialect, where the group
+ * travels inside the service name.
+ */
+const SUBSCRIBERS_PATH = '/v1/ns/service/subscribers';
+const SUBSCRIBERS_ENDPOINT_FLAVOR: NacosApiFlavor = 'v1';
+
+/**
  * v2 never got a catalog of its own, so the counts come from v1's -- the same
  * server serves both, and `/v2/ns/service/list` reports nothing but names
  * (`{"code":0,"data":{"count":N,"services":[...]}}`, measured). The fallback
@@ -93,6 +135,18 @@ export class V2Driver implements NacosDriver {
     return fetchConfigDetail(this.http, CONFIG_ENDPOINT_FLAVOR, CONFIG_PATH, ref, SHOW_ALL);
   }
 
+  listConfigHistory(query: NacosConfigHistoryListQuery): Promise<Paged<NacosConfigHistoryEntry>> {
+    return fetchConfigHistoryPage(this.http, CONFIG_ENDPOINT_FLAVOR, CONFIG_HISTORY_PATH, query, SEARCH_ACCURATE);
+  }
+
+  getConfigHistory(query: NacosConfigHistoryQuery): Promise<NacosConfigDetail> {
+    return fetchConfigHistoryDetail(this.http, CONFIG_ENDPOINT_FLAVOR, CONFIG_HISTORY_PATH, query);
+  }
+
+  listConfigListeners(ref: NacosConfigRef): Promise<NacosConfigListener[]> {
+    return fetchConfigListeners(this.http, CONFIG_ENDPOINT_FLAVOR, CONFIG_LISTENER_PATH, ref);
+  }
+
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {
     return listServicesPreferringCounts(
       () => fetchCatalogServices(this.http, CATALOG_SERVICES_PATH, query),
@@ -100,8 +154,16 @@ export class V2Driver implements NacosDriver {
     );
   }
 
+  getService(ref: NacosServiceRef): Promise<NacosServiceDetail> {
+    return fetchServiceDetail(this.http, this.flavor, SERVICE_DETAIL_PATH, ref);
+  }
+
   listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]> {
     return fetchInstances(this.http, this.flavor, INSTANCE_LIST_PATH, query);
+  }
+
+  listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]> {
+    return fetchSubscribers(this.http, SUBSCRIBERS_ENDPOINT_FLAVOR, SUBSCRIBERS_PATH, ref);
   }
 
   listClusterNodes(): Promise<NacosClusterNode[]> {

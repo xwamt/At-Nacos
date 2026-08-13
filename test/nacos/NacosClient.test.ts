@@ -285,6 +285,108 @@ describe('NacosClient', () => {
     expect(resolver.snapshot()).toEqual({ 'server-metrics': 'v2' });
   });
 
+  it('lists a config history through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => ({
+      totalCount: 1,
+      pageNumber: 1,
+      pagesAvailable: 1,
+      pageItems: [{ id: 203, dataId: 'a.yml', group: 'g', tenant: 'uat', opType: 'U ' }]
+    }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    const page = await new NacosClient(resolver, serverState(2)).listConfigHistory({
+      namespaceId: 'uat',
+      group: 'g',
+      dataId: 'a.yml',
+      pageNo: 1,
+      pageSize: 100
+    });
+    expect(page.items.map((item) => item.id)).toEqual(['203']);
+    expect(resolver.snapshot()).toEqual({ 'config-history': 'v2' });
+  });
+
+  /**
+   * A separate cache entry from the listing, for the reason `config-detail`
+   * is separate from `configs`: a server can serve one and not the other, and
+   * sharing an entry would let a fall-through on either evict the winner the
+   * other had already found.
+   */
+  it('fetches one history version through the resolver, under a capability of its own', async () => {
+    const http = recordingHttp(() => ({ dataId: 'a.yml', group: 'g', tenant: 'uat', content: 'a: 1' }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    await expect(
+      new NacosClient(resolver, serverState(2)).getConfigHistory({
+        namespaceId: 'uat',
+        group: 'g',
+        dataId: 'a.yml',
+        nid: '203'
+      })
+    ).resolves.toMatchObject({ content: 'a: 1' });
+    expect(resolver.snapshot()).toEqual({ 'config-history-detail': 'v2' });
+  });
+
+  it('reads the config listeners through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => ({ collectStatus: 200, lisentersGroupkeyStatus: { '10.0.0.7': 'md5' } }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    const listeners = await new NacosClient(resolver, serverState(2)).listConfigListeners({
+      namespaceId: 'uat',
+      group: 'g',
+      dataId: 'a.yml'
+    });
+    expect(listeners).toEqual([{ ip: '10.0.0.7', md5: 'md5' }]);
+    expect(resolver.snapshot()).toEqual({ 'config-listeners': 'v2' });
+  });
+
+  it('reads a service detail through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => ({ code: 0, data: { namespace: 'uat', serviceName: 's', groupName: 'g' } }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    const detail = await new NacosClient(resolver, serverState(2)).getService({
+      namespaceId: 'uat',
+      group: 'g',
+      serviceName: 's'
+    });
+    expect(detail).toMatchObject({ namespaceId: 'uat', group: 'g', serviceName: 's' });
+    expect(resolver.snapshot()).toEqual({ 'service-detail': 'v2' });
+  });
+
+  it('lists subscribers through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => ({ subscribers: [{ ip: '10.0.0.7', port: 0 }], count: 1 }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    const subscribers = await new NacosClient(resolver, serverState(2)).listSubscribers({
+      namespaceId: 'uat',
+      group: 'g',
+      serviceName: 's'
+    });
+    expect(subscribers.map((subscriber) => subscriber.ip)).toEqual(['10.0.0.7']);
+    expect(resolver.snapshot()).toEqual({ subscribers: 'v2' });
+  });
+
+  /**
+   * Three of v2's five new endpoints do not exist on a real 2.3.2 --
+   * `/v2/ns/service/subscribers` and `/v2/cs/config/listener` answer 404, and
+   * `/v2/cs/history/list` demands the v1 spelling of `group`. So the v2
+   * driver reaches the v1 paths itself, and the v1 driver is never tried:
+   * the capability cache must not be taught a flavor decision that has
+   * nothing to do with the server's version.
+   */
+  it('serves the v1-only capabilities from the v2 driver without walking the chain', async () => {
+    const http = recordingHttp(() => ({ subscribers: [], count: 0 }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    await new NacosClient(resolver, serverState(2)).listSubscribers({
+      namespaceId: 'uat',
+      group: 'g',
+      serviceName: 's'
+    });
+
+    expect(resolver.snapshot()).toEqual({ subscribers: 'v2' });
+    expect(http.calls.map((call) => call.path)).toEqual(['/v1/ns/service/subscribers']);
+  });
+
   /**
    * The catalog fallback is the driver's own business, and this is what that
    * buys: a 2.x server whose catalog is missing still has `services` served
@@ -380,6 +482,11 @@ function stubDriver(flavor: NacosApiFlavor): NacosDriver {
     listServices: unused,
     listInstances: unused,
     listClusterNodes: unused,
-    getServerMetrics: unused
+    getServerMetrics: unused,
+    listConfigHistory: unused,
+    getConfigHistory: unused,
+    listConfigListeners: unused,
+    getService: unused,
+    listSubscribers: unused
   };
 }

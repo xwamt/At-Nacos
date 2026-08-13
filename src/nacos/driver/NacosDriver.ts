@@ -18,13 +18,17 @@ import {
   unwrapDataArray,
   type NacosClusterNode,
   type NacosConfigDetail,
+  type NacosConfigHistoryEntry,
+  type NacosConfigListener,
   type NacosConfigRef,
   type NacosConfigSummary,
   type NacosInstance,
   type NacosNamespace,
   type NacosServerMetrics,
+  type NacosServiceDetail,
   type NacosServiceRef,
   type NacosServiceSummary,
+  type NacosSubscriber,
   type Paged
 } from './normalize';
 
@@ -83,24 +87,55 @@ export interface NacosInstanceQuery extends NacosServiceRef {
 }
 
 /**
- * M1 defined the namespace capability, M2 the two configuration ones, and M3
- * the naming and cluster ones. Later milestones widen this interface as they
- * need to, and every widening has to bring all four implementations along
- * with it -- TypeScript enforces that, which is exactly why the interface is
- * kept narrow.
+ * One page of one configuration's history.
+ *
+ * `pageSize` is the only paging in this interface with a ceiling above it:
+ * the history endpoint clamps to 500 server-side, and the driver clamps to
+ * the same number on the way out (§10).
+ */
+export interface NacosConfigHistoryListQuery extends NacosConfigRef {
+  /** One-based, as Nacos counts. */
+  pageNo: number;
+  pageSize: number;
+}
+
+export interface NacosConfigHistoryQuery extends NacosConfigRef {
+  /** The history record's id, as the listing reported it. Nacos calls the parameter `nid`. */
+  nid: string;
+}
+
+/**
+ * M1 defined the namespace capability, M2 the two configuration ones, M3 the
+ * naming and cluster ones, and M4 a config's history and the two answers to
+ * "who is using this". Later milestones widen this interface as they need to,
+ * and every widening has to bring all four implementations along with it --
+ * TypeScript enforces that, which is exactly why the interface is kept
+ * narrow.
  */
 export interface NacosDriver {
   readonly flavor: NacosApiFlavor;
   listNamespaces(): Promise<NacosNamespace[]>;
   listConfigs(query: NacosConfigListQuery): Promise<Paged<NacosConfigSummary>>;
   getConfig(ref: NacosConfigRef): Promise<NacosConfigDetail>;
+  listConfigHistory(query: NacosConfigHistoryListQuery): Promise<Paged<NacosConfigHistoryEntry>>;
+  /**
+   * One past version, as a `NacosConfigDetail` -- the same type `getConfig`
+   * answers with. That is deliberate: the document layer renders both sides
+   * of a diff, and a separate history type would force it to branch on which
+   * side it was rendering.
+   */
+  getConfigHistory(query: NacosConfigHistoryQuery): Promise<NacosConfigDetail>;
+  listConfigListeners(ref: NacosConfigRef): Promise<NacosConfigListener[]>;
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>>;
+  getService(ref: NacosServiceRef): Promise<NacosServiceDetail>;
   /**
    * Every instance of one service, unpaged. Only 3.x's console API pages
    * this, and it is the driver's business to ask for a page large enough that
    * the difference does not reach here.
    */
   listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]>;
+  /** Every client watching one service, unpaged, for the same reason instances are. */
+  listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]>;
   listClusterNodes(): Promise<NacosClusterNode[]>;
   getServerMetrics(): Promise<NacosServerMetrics>;
 }
