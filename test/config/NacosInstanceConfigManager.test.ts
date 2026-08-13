@@ -119,6 +119,34 @@ describe('NacosInstanceConfigManager', () => {
     expect(secrets.snapshot().size).toBe(0);
   });
 
+  /**
+   * The form promises the password is "kept in VS Code SecretStorage, never in
+   * settings", and an address carrying userinfo is the one way it ends up in
+   * settings anyway. `redactSensitiveText` cannot save it either: there is no
+   * `password=` marker for its pattern to anchor on.
+   */
+  it('writes no credential to globalState for a serverUrl that carries one', async () => {
+    const created = await manager.createInstance({
+      label: 'prod',
+      serverUrl: 'http://admin:hunter2@h:8848/nacos',
+      authMode: 'none'
+    });
+
+    expect(created.serverUrl).toBe('http://h:8848/nacos');
+    expect(JSON.stringify(memento.peek(INSTANCES_KEY))).not.toContain('hunter2');
+    expect(JSON.stringify(memento.peek(INSTANCES_KEY))).not.toContain('admin');
+  });
+
+  /** Retroactive, which refusing the record could not be: the credential is already on disk. */
+  it('strips the credential out of a record an earlier version stored with one', async () => {
+    memento.seed(INSTANCES_KEY, [{ ...storedRecord, serverUrl: 'http://admin:hunter2@h:8848/nacos' }]);
+
+    const listed = await manager.listInstances();
+
+    expect(listed[0]?.serverUrl).toBe('http://h:8848/nacos');
+    expect(JSON.stringify(listed)).not.toContain('hunter2');
+  });
+
   it('rejects a serverUrl the schema cannot normalize', async () => {
     await expect(
       manager.createInstance({ label: 'prod', serverUrl: 'nacos.example.com', authMode: 'none' })

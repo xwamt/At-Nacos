@@ -356,6 +356,57 @@ describe('testNacosConnection console discovery', () => {
   });
 });
 
+/**
+ * The failure sentence is rendered into the Webview, so an address the user
+ * typed with a password in it would be shown back to them -- and it is the
+ * candidate list, not the raw input, that these sentences are built from.
+ */
+describe('testNacosConnection credentials in the address', () => {
+  it('names no credential in the failure message or the candidates it reports', async () => {
+    const result = await testNacosConnection({
+      serverUrl: 'http://admin:hunter2@h:8848/nacos',
+      authMode: 'none',
+      probe: async () => {
+        throw new NacosApiError('forbidden', 'denied', 403);
+      }
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).not.toContain('hunter2');
+    expect(result.message).toContain('http://h:8848/nacos');
+    expect((result as NacosConnectionTestFailure).triedBaseUrls).toEqual(['http://h:8848/nacos']);
+  });
+
+  it('reports the same stripped address for a username-only userinfo', async () => {
+    const result = await testNacosConnection({
+      serverUrl: 'http://admin@h:8848/nacos',
+      authMode: 'none',
+      probe: async () => {
+        throw new NacosApiError('not-found', 'missing', 404);
+      }
+    });
+
+    expect(result.message).not.toContain('admin');
+    expect((result as NacosConnectionTestFailure).triedBaseUrls).toEqual(['http://h:8848/nacos']);
+  });
+
+  it('reports a stripped base URL on success, since that is what the form saves', async () => {
+    const result = await testNacosConnection({
+      serverUrl: 'http://admin:hunter2@h:8848/nacos',
+      authMode: 'none',
+      probe: async () => ({
+        version: '2.2.3',
+        majorVersion: 2,
+        startupMode: 'standalone' as const,
+        authEnabled: false,
+        raw: {}
+      })
+    });
+
+    expect(result).toMatchObject({ ok: true, baseUrl: 'http://h:8848/nacos' });
+  });
+});
+
 describe('testNacosConnection against a real server', () => {
   it('reads the version from a real /v1/console/server/state body', async () => {
     server = await startTestHttpServer(nacos2(STATE_2_2_3));

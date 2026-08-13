@@ -32,6 +32,36 @@ describe('parseNacosInstanceConfig', () => {
     expect(parsed.serverUrl).toBe('http://h:8848/nacos');
   });
 
+  /**
+   * `http://admin:hunter2@host:8848/nacos` passes the scheme check, and the
+   * record is written to globalState in plaintext -- the one place the form
+   * promises credentials never go. Stripped here rather than refused because
+   * refusing makes `listInstances` throw on a record an earlier build already
+   * wrote, which blanks the whole instance list with no way to repair it; the
+   * transform runs on read too, so such a record stops leaking the moment this
+   * version loads it.
+   */
+  it('strips credentials out of the serverUrl instead of storing them', () => {
+    const parsed = parseNacosInstanceConfig({ ...base, serverUrl: 'http://admin:hunter2@h:8848/nacos' });
+    expect(parsed.serverUrl).toBe('http://h:8848/nacos');
+  });
+
+  it('strips a username-only userinfo from the serverUrl as well', () => {
+    const parsed = parseNacosInstanceConfig({ ...base, serverUrl: 'http://admin@h:8848/nacos' });
+    expect(parsed.serverUrl).toBe('http://h:8848/nacos');
+  });
+
+  it('strips credentials out of the consoleUrl too', () => {
+    const parsed = parseNacosInstanceConfig({ ...base, consoleUrl: 'https://admin:hunter2@h:8080' });
+    expect(parsed.consoleUrl).toBe('https://h:8080');
+  });
+
+  /** The delimiter is the last `@` of the authority, and a path may hold one of its own. */
+  it('leaves an @ that is part of the path alone', () => {
+    const parsed = parseNacosInstanceConfig({ ...base, serverUrl: 'http://h:8848/nacos@edge' });
+    expect(parsed.serverUrl).toBe('http://h:8848/nacos@edge');
+  });
+
   it('rejects a serverUrl without an http(s) scheme', () => {
     expect(() => parseNacosInstanceConfig({ ...base, serverUrl: 'nacos.example.com' })).toThrow();
   });

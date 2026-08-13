@@ -2,6 +2,7 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import type { TLSSocket } from 'node:tls';
 import { asRedactedLog, type AtNacosLog } from '../utils/logger';
+import { stripUrlCredentials } from '../utils/url';
 import { classifyHttpStatus, describeFailure, NacosApiError, toNetworkOrTlsError } from './NacosApiError';
 import type { NacosCertVerifier } from './NacosCertTrustStore';
 import { isRecord } from './jsonGuards';
@@ -72,6 +73,12 @@ const SUCCESS_CODES: ReadonlySet<number> = new Set([0, 200]);
  * can be carried onto a sub-path anyway, so removing them loses nothing that
  * could have worked.
  *
+ * Userinfo goes for a different reason: it is a credential, and this is the
+ * funnel every request passes through, so removing it here is what keeps it
+ * off the wire as an accidental `Authorization: Basic` and out of every
+ * message assembled from a base URL. `src/config/schema.ts` removes it from
+ * what gets stored, which is the other half.
+ *
  * This lives here, at the one place every request funnels through, rather than
  * in the address parsing further up: an instance's stored `serverUrl` is
  * handed to this constructor directly, without passing `candidateBaseUrls`
@@ -82,7 +89,7 @@ const SUCCESS_CODES: ReadonlySet<number> = new Set([0, 200]);
  * otherwise returned exactly as it was written.
  */
 export function normalizeBaseUrl(input: string): string {
-  return input.trim().replace(/[?#][\s\S]*$/, '').replace(/\/+$/, '');
+  return stripUrlCredentials(input.trim().replace(/[?#][\s\S]*$/, '')).replace(/\/+$/, '');
 }
 
 /**

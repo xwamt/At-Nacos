@@ -109,6 +109,22 @@ describe('atNacos instance commands', () => {
     });
   });
 
+  /** The quick pick shows the stored address, and an address is not a place to keep a password. */
+  it('shows no credential in the pick description of an instance stored with one in its address', async () => {
+    const showQuickPick = vi.spyOn(vscode.window, 'showQuickPick');
+    activate(
+      extensionContext({
+        [INSTANCES_KEY]: [storedInstance({ serverUrl: 'http://admin:hunter2@nacos.example.com:8848/nacos' })]
+      })
+    );
+
+    await run('atNacos.manageInstances');
+
+    expect(showQuickPick.mock.calls[0]?.[0]).toEqual([
+      expect.objectContaining({ description: 'http://nacos.example.com:8848/nacos' })
+    ]);
+  });
+
   it('does nothing when the instance pick is dismissed', async () => {
     vi.spyOn(vscode.window, 'showQuickPick').mockResolvedValue(undefined);
     const createWebviewPanel = vi.spyOn(vscode.window, 'createWebviewPanel');

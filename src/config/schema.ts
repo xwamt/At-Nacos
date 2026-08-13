@@ -1,13 +1,33 @@
 import { z } from 'zod';
+import { stripUrlCredentials } from '../utils/url';
 
 export const NACOS_AUTH_MODES = ['none', 'userPassword', 'customHeader', 'akSk'] as const;
 export type NacosAuthMode = (typeof NACOS_AUTH_MODES)[number];
 
+/**
+ * Userinfo is dropped rather than refused, which is the difference between a
+ * record this version can repair and one it can only reject.
+ *
+ * `http://admin:hunter2@host:8848/nacos` passes every other check here, and
+ * whatever this schema accepts is what `NacosInstanceConfigManager` writes to
+ * globalState -- in plaintext, in the one place the form promises credentials
+ * never go. Refusing it at this layer would not undo that: `listInstances`
+ * parses on the way out too, so a record an earlier build already wrote would
+ * start throwing, and `listInstances` throwing replaces the entire instance
+ * list with a single error node that no button in the product can clear. The
+ * transform runs on read as well, so stripping instead sanitizes the stored
+ * record the moment this version loads it, and the next save rewrites it
+ * clean.
+ *
+ * A user who really did mean HTTP Basic -- a proxy in front of Nacos -- has
+ * the "Custom headers" authentication mode, which is what the gateway-401
+ * message already tells them to reach for.
+ */
 const httpUrlSchema = z
   .string()
   .trim()
   .min(1)
-  .transform((value) => value.replace(/\/+$/, ''))
+  .transform((value) => stripUrlCredentials(value).replace(/\/+$/, ''))
   .refine((value) => /^https?:\/\//i.test(value), 'URL must start with http:// or https://');
 
 export const nacosInstanceConfigSchema = z

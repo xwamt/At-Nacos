@@ -196,6 +196,39 @@ describe('NacosHttpClient URL building', () => {
     expect(server.requests[0]?.url).toBe('/nacos/v1/console/server/state');
   });
 
+  /**
+   * Node turns userinfo into a real `Authorization: Basic` header, which a
+   * strategy-supplied `authorization` then silently suppresses -- so it
+   * half-works, undesigned, and which half depends on the authentication mode.
+   * Removing it here removes both the header and the credential from every
+   * message built out of a base URL.
+   */
+  it('sends no Basic credential for a base URL that carries userinfo', async () => {
+    server = await startTestHttpServer((_request, response) => response.end('{}'));
+    const origin = new URL(server.origin);
+    const client = new NacosHttpClient({
+      baseUrl: `${origin.protocol}//admin:hunter2@${origin.host}/nacos`
+    });
+
+    await client.requestJson('GET', '/v1/console/server/state');
+
+    expect(server.requests[0]?.url).toBe('/nacos/v1/console/server/state');
+    expect(server.requests[0]?.headers.authorization).toBeUndefined();
+  });
+
+  it('sends no Basic credential for a baseUrlOverride that carries userinfo either', async () => {
+    server = await startTestHttpServer((_request, response) => response.end('{}'));
+    secondServer = await startTestHttpServer((_request, response) => response.end('{}'));
+    const override = new URL(secondServer.origin);
+    const client = new NacosHttpClient({ baseUrl: server.origin });
+
+    await client.requestJson('GET', '/v3/console/core/namespace/list', {
+      baseUrlOverride: `${override.protocol}//admin:hunter2@${override.host}`
+    });
+
+    expect(secondServer.requests[0]?.headers.authorization).toBeUndefined();
+  });
+
   it('drops a query string on baseUrlOverride too', async () => {
     server = await startTestHttpServer((_request, response) => response.end('{}'));
     secondServer = await startTestHttpServer((_request, response) => response.end('{}'));

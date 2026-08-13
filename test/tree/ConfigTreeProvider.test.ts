@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import type { NacosInstanceConfig } from '../../src/config/schema';
+import { parseNacosInstanceConfig, type NacosInstanceConfig } from '../../src/config/schema';
 import type { NacosNamespace } from '../../src/nacos/driver/normalize';
 import { ConfigTreeProvider } from '../../src/tree/ConfigTreeProvider';
 import type { NacosTreeClient } from '../../src/tree/NacosTreeBase';
@@ -83,6 +83,23 @@ describe('ConfigTreeProvider root level', () => {
     const [root] = await provider.getChildren();
 
     expect(root.tooltip).toBe('http://10.0.0.9:8848/nacos');
+  });
+
+  /**
+   * The tooltip is the stored address verbatim, so it is only ever as clean as
+   * the store. `parseNacosInstanceConfig` is what every instance reaching the
+   * tree has been through, which is why the fixture goes through it here.
+   */
+  it('shows no credential in the tooltip of an instance whose address was typed with one', async () => {
+    const stored = parseNacosInstanceConfig({
+      ...instance(),
+      serverUrl: 'http://admin:hunter2@nacos.example.com:8848/nacos'
+    });
+    const provider = providerFor(stubClient([]), stored);
+
+    const [root] = await provider.getChildren();
+
+    expect(root.tooltip).toBe('http://nacos.example.com:8848/nacos');
   });
 
   it('marks a read-only instance in its contextValue so M5 menus can hide write commands', async () => {
