@@ -329,9 +329,11 @@ export function attachCertVerification(
   request.on('socket', (socket) => {
     const tlsSocket = socket as TLSSocket;
     const verify = (): void => {
+      const restartClock = pauseInactivityTimeout(tlsSocket);
       const fingerprint256 = tlsSocket.getPeerCertificate()?.fingerprint256;
       verifyCertFingerprint(certVerifier, host, port, fingerprint256)
         .then((verifyError) => {
+          restartClock();
           if (verifyError) {
             hooks.onRejected(verifyError);
             return;
@@ -339,6 +341,7 @@ export function attachCertVerification(
           hooks.onVerified();
         })
         .catch((error: unknown) => {
+          restartClock();
           hooks.onRejected(
             new NacosApiError(
               'tls',
@@ -354,6 +357,43 @@ export function attachCertVerification(
     }
     tlsSocket.once('secureConnect', verify);
   });
+}
+
+/**
+ * Stops the socket's inactivity clock for as long as the verifier is
+ * deciding, and hands back the call that restarts it.
+ *
+ * A `ClientRequest`'s `timeout` is a socket-inactivity timeout and it is
+ * already armed by the time the handshake completes -- while the verifier
+ * this client is built around is an interactive modal asking a person to
+ * compare a SHA-256 fingerprint, and for a certificate that has *changed*, to
+ * go and confirm the new one with whoever administers the server. Nobody does
+ * that inside the 15 second default. Left running, the timer destroys the
+ * request mid-prompt and the user is told "Could not reach h:8848 (The
+ * request to Nacos timed out). Check the host and port", none of which is
+ * true, and their eventual Trust click lands on a dead request.
+ *
+ * Restarting re-arms the full deadline rather than resuming what was left of
+ * it, which is the honest reading: the deadline exists to bound how long the
+ * *server* may stay silent, and the server has not been asked anything yet --
+ * the request body is written only after the verdict.
+ *
+ * A socket torn down while the prompt was open gets nothing back. Arming a
+ * timer on a destroyed handle would either throw or fire against a socket
+ * that can no longer produce the request's own error, and that error is what
+ * settles the promise.
+ */
+function pauseInactivityTimeout(socket: TLSSocket): () => void {
+  const deadlineMs = socket.timeout;
+  if (!deadlineMs) {
+    return () => undefined;
+  }
+  socket.setTimeout(0);
+  return () => {
+    if (!socket.destroyed) {
+      socket.setTimeout(deadlineMs);
+    }
+  };
 }
 
 /**

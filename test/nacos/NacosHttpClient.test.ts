@@ -668,6 +668,159 @@ describe('NacosHttpClient TLS trust-on-first-use', () => {
   });
 });
 
+/**
+ * The verifier is a modal asking a human to compare a SHA-256 fingerprint --
+ * and for a certificate that has *changed*, to go and confirm the new one with
+ * whoever administers the server. The socket is idle for all of it, and the
+ * request's inactivity timeout is already armed.
+ */
+describe('NacosHttpClient timeout across the certificate prompt', () => {
+  it('does not time out while the verifier is still deciding', async () => {
+    tlsServer = await startTestHttpsServer((_request, response) => {
+      response.setHeader('content-type', 'application/json');
+      response.end('{"code":0}');
+    });
+    const client = new NacosHttpClient({
+      baseUrl: tlsServer.origin,
+      // Far shorter than the verifier takes, and far shorter than anyone
+      // reading a fingerprint prompt.
+      timeoutMs: 80,
+      certVerifier: {
+        verify: async () => {
+          await delay(400);
+          return true;
+        }
+      }
+    });
+
+    await expect(client.requestJson('GET', '/v3/admin/core/state')).resolves.toMatchObject({ code: 0 });
+    expect(tlsServer.requests).toHaveLength(1);
+  });
+
+  it('does not time out while the verifier is deciding against the certificate either', async () => {
+    tlsServer = await startTestHttpsServer((_request, response) => response.end('{}'));
+    const client = new NacosHttpClient({
+      baseUrl: tlsServer.origin,
+      timeoutMs: 80,
+      certVerifier: {
+        verify: async () => {
+          await delay(400);
+          return false;
+        }
+      }
+    });
+
+    const error = await client.requestJson('GET', '/x').catch((e: unknown) => e);
+
+    // A rejected certificate, not "the request to Nacos timed out": the user
+    // said no, and that is what they have to be told.
+    expect((error as NacosApiError).kind).toBe('tls');
+    expect((error as NacosApiError).message).toMatch(/rejected by the certificate verifier/);
+  });
+
+  /** Stopping the clock for the human must not stop it for the server. */
+  it('still times out a server that takes the request and then goes silent', async () => {
+    tlsServer = await startTestHttpsServer(() => {
+      // Never responds.
+    });
+    const client = new NacosHttpClient({
+      baseUrl: tlsServer.origin,
+      timeoutMs: 120,
+      certVerifier: {
+        verify: async () => {
+          await delay(200);
+          return true;
+        }
+      }
+    });
+
+    const error = await client.requestJson('GET', '/x').catch((e: unknown) => e);
+
+    expect((error as NacosApiError).kind).toBe('network');
+    expect((error as NacosApiError).message).toMatch(/timed out/i);
+    // The prompt window bought the request its full deadline back, so the
+    // failure is the server's silence and not the wait for the verdict.
+    expect(tlsServer.requests).toHaveLength(1);
+  });
+
+  /** Nothing is left to re-arm, and arming a timer on a dead handle would be worse than not. */
+  it('reports a socket torn down while the prompt was open as a connection failure', async () => {
+    tlsServer = await startTestHttpsServer((_request, response) => response.end('{}'));
+    const client = new NacosHttpClient({
+      baseUrl: tlsServer.origin,
+      timeoutMs: 5000,
+      certVerifier: {
+        verify: async () => {
+          await delay(200);
+          return true;
+        }
+      }
+    });
+
+    const pending = client.requestJson('GET', '/x');
+    // Long enough for the handshake to finish and the verifier to be waiting.
+    await delay(60);
+    await tlsServer.close();
+    tlsServer = undefined;
+
+    const error = await pending.catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(NacosApiError);
+    expect((error as NacosApiError).kind).toBe('network');
+    // Long after the verdict, so the restore ran against the dead socket too.
+    await delay(200);
+  });
+
+  /** The check runs per request, so the second one on a kept-alive socket can prompt too. */
+  it('does not time out while the verifier decides on a socket taken from the pool', async () => {
+    tlsServer = await startTestHttpsServer((_request, response) => {
+      response.setHeader('content-type', 'application/json');
+      response.end('{"code":0}');
+    });
+    let slow = false;
+    const client = new NacosHttpClient({
+      baseUrl: tlsServer.origin,
+      timeoutMs: 80,
+      certVerifier: {
+        verify: async () => {
+          if (slow) {
+            await delay(400);
+          }
+          return true;
+        }
+      }
+    });
+
+    await expect(client.requestJson('GET', '/first')).resolves.toMatchObject({ code: 0 });
+    slow = true;
+
+    await expect(client.requestJson('GET', '/second')).resolves.toMatchObject({ code: 0 });
+  });
+
+  it('leaves the timeout armed for the request that follows on a pooled socket', async () => {
+    let slow = false;
+    tlsServer = await startTestHttpsServer((request, response) => {
+      if (slow) {
+        return;
+      }
+      response.setHeader('content-type', 'application/json');
+      response.end('{"code":0}');
+    });
+    const client = new NacosHttpClient({
+      baseUrl: tlsServer.origin,
+      timeoutMs: 120,
+      certVerifier: { verify: async () => true }
+    });
+
+    await expect(client.requestJson('GET', '/first')).resolves.toMatchObject({ code: 0 });
+    slow = true;
+    const error = await client.requestJson('GET', '/second').catch((e: unknown) => e);
+
+    expect((error as NacosApiError).kind).toBe('network');
+    expect((error as NacosApiError).message).toMatch(/timed out/i);
+  });
+});
+
 describe('verifyCertFingerprint', () => {
   it('resolves undefined (trusted) when the verifier approves the fingerprint', async () => {
     const verifier: NacosCertVerifier = { verify: async () => true };
