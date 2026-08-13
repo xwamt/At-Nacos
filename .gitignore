@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+
+# Build and test output
+dist/
+out/
+coverage/
+.vscode-test/
+*.tsbuildinfo
+
+# Packaged extensions
+*.vsix
+.package-work/
+
+# Local workspace / agent state
+.worktrees/
+.superpowers/
+.agents/
+.kiro/
+.kilo/
+.tmp/
+.tmp-*/
+.ssh-terminal-manager/
+.cache/
+
+# Local docs and ops notes (not for public repo)
+docs/brand/
+docs/superpowers/
+docs/reviews/
+ops/
+
+# Editor and OS files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.example.json
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and diagnostics
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local secrets and machine-specific config
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local
+*.pem
+*.key
+*.p12
+*.pfx
+ATmcp.json
+
+# Binary planning/export artifacts
+*.docx

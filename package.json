@@ -1,0 +1,44 @@
+{
+  "name": "at-nacos",
+  "displayName": "AT Nacos",
+  "description": "Browse Nacos configurations, services, and cluster status inside VS Code, with Agent (MCP) integration via AT Series.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "nacos",
+    "config",
+    "service-discovery",
+    "microservices",
+    "mcp",
+    "at-series"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@at-series/mcp-hub": "file:../at-series-mcp-hub/packages/mcp-hub",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
