@@ -216,7 +216,7 @@ function renderListenerSection(snapshot: ConfigListenersSnapshot | undefined): s
     );
   }
   if (snapshot.listeners.length > 0) {
-    parts.push(renderStalenessSummary(snapshot), renderListenerTable(snapshot));
+    parts.push(...[renderStalenessSummary(snapshot), renderListenerTable(snapshot)].filter((part) => part !== ''));
   } else if (!snapshot.listenersError) {
     // Not a failure: a configuration nobody is long-polling answers exactly
     // this, and so does one nobody has ever published (§14.8 ㉗).
@@ -237,12 +237,20 @@ function renderListenerSection(snapshot: ConfigListenersSnapshot | undefined): s
  * A table of md5s answers the question only for someone willing to compare
  * thirty-two hex digits by eye, and the thing an operator came here to find
  * out -- did my publish reach everyone -- is a count.
+ *
+ * Nothing at all when the read that would have answered it already failed:
+ * the error above says why in more detail, and two sentences about one
+ * missing md5 read as two separate problems.
  */
 function renderStalenessSummary(snapshot: ConfigListenersSnapshot): string {
   if (snapshot.currentMd5 === undefined) {
-    return note(
-      t('The current md5 of this configuration is unknown, so AT Nacos cannot say which of these clients is behind.')
-    );
+    return snapshot.configError
+      ? ''
+      : note(
+          t(
+            'The current md5 of this configuration is unknown, so AT Nacos cannot say which of these clients is behind.'
+          )
+        );
   }
   const behind = snapshot.listeners.filter(
     (entry) => listenerState(entry, snapshot.currentMd5) === 'behind'

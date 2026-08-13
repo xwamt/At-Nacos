@@ -2,6 +2,11 @@ import * as vscode from 'vscode';
 import { NacosInstanceConfigManager } from './config/NacosInstanceConfigManager';
 import type { NacosInstanceConfig } from './config/schema';
 import { NACOS_CONFIG_SCHEME } from './document/configUri';
+import {
+  compareConfigAcrossEnvironments,
+  diffWithPreviousVersion,
+  openConfigVersionDiff
+} from './document/diffConfig';
 import { NacosConfigDocumentProvider } from './document/NacosConfigDocumentProvider';
 import { openConfigDocument } from './document/openConfigDocument';
 import { t } from './i18n/t';
@@ -21,15 +26,20 @@ import {
   LOAD_MORE_CONFIGS_COMMAND,
   LOAD_MORE_SERVICES_COMMAND,
   OPEN_CONFIG_COMMAND,
+  type ConfigTreeItem,
   type NacosTreeItem,
-  type NamespaceTreeItem
+  type NamespaceTreeItem,
+  type ServiceTreeItem
 } from './tree/NacosTreeItems';
 import { ServiceTreeProvider } from './tree/ServiceTreeProvider';
 import { formatError } from './utils/errors';
 import { createRedactedLog, type AtNacosLog } from './utils/logger';
 import { ClusterStatusPanel } from './webview/ClusterStatusPanel';
+import { ConfigHistoryPanel } from './webview/ConfigHistoryPanel';
+import { ConfigListenersPanel } from './webview/ConfigListenersPanel';
 import { NacosInstanceFormPanel } from './webview/NacosInstanceFormPanel';
 import { disposeOpenPanels } from './webview/openPanels';
+import { ServiceSubscribersPanel } from './webview/ServiceSubscribersPanel';
 
 /** What `deactivate` awaits. Replaced on every `activate`; see the doc on `cleanup`. */
 let extensionCleanup: { dispose(): Promise<void> } | undefined;
@@ -325,6 +335,149 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  /**
+   * A client for whichever instance a node came from, read back by id rather
+   * than taken from the node.
+   *
+   * A panel outlives the tree node it was opened from: the node holds the
+   * instance as it was when the tree last drew, and an address or a password
+   * edited since then would leave every Refresh talking to the old server.
+   * The document provider re-reads for the same reason.
+   */
+  const connectToInstance = async (instanceId: string, label: string): Promise<NacosClient> => {
+    const instance = await configManager.getInstance(instanceId);
+    if (!instance) {
+      throw new Error(
+        t('The Nacos instance {label} is no longer configured. It was probably deleted while this view stayed open.', {
+          label
+        })
+      );
+    }
+    return createNacosClient(configManager, instance, certTrustStore, log);
+  };
+
+  /** One wording for both ways an earlier version is reached: the history panel's row, and the command. */
+  const reportDiffFailure = async (dataId: string, command: string, run: () => Promise<void>): Promise<void> => {
+    try {
+      await run();
+    } catch (error) {
+      const message = formatError(error);
+      log.error(`${command}: ${message}`);
+      await vscode.window.showErrorMessage(
+        t('Could not compare {dataId} with an earlier version: {message}', { dataId, message })
+      );
+    }
+  };
+
+  /**
+   * The five commands a tree node carries, each reported the same way.
+   *
+   * They arrive with the node as their only argument and are contributed with
+   * `"when": "false"` in the palette, so there is no invocation without one.
+   * Each reports its own failure: a menu item that does nothing and says
+   * nothing is indistinguishable from a dead node.
+   */
+  const showConfigHistoryCommand = vscode.commands.registerCommand(
+    'atNacos.showConfigHistory',
+    async (item: ConfigTreeItem) => {
+      try {
+        await ConfigHistoryPanel.open(context, {
+          instance: { id: item.instance.id, label: item.instance.label },
+          // The summary the node holds, which is the ref M2 builds the
+          // current version's address from -- so the right-hand side of a
+          // diff is the same buffer as the tab a click on the node opens.
+          ref: item.config,
+          connect: () => connectToInstance(item.instance.id, item.instance.label),
+          // Reported here rather than in the panel, which owns no channel and
+          // no notification: clicking Compare and getting nothing at all is
+          // the one outcome worse than an error message.
+          openDiff: (entry) =>
+            reportDiffFailure(item.config.dataId, 'showConfigHistory', () =>
+              openConfigVersionDiff(item.instance.id, item.config, entry)
+            )
+        });
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`showConfigHistory: ${message}`);
+        await vscode.window.showErrorMessage(
+          t('Could not open the configuration history panel: {message}', { message })
+        );
+      }
+    }
+  );
+
+  const diffWithPreviousCommand = vscode.commands.registerCommand(
+    'atNacos.diffWithPrevious',
+    (item: ConfigTreeItem) =>
+      reportDiffFailure(item.config.dataId, 'diffWithPrevious', () =>
+        diffWithPreviousVersion({
+          instanceId: item.instance.id,
+          ref: item.config,
+          connect: () => connectToInstance(item.instance.id, item.instance.label)
+        })
+      )
+  );
+
+  const compareAcrossEnvironmentsCommand = vscode.commands.registerCommand(
+    'atNacos.compareAcrossEnvironments',
+    async (item: ConfigTreeItem) => {
+      try {
+        await compareConfigAcrossEnvironments({
+          source: { instance: { id: item.instance.id, label: item.instance.label }, ref: item.config },
+          listInstances: () => configManager.listInstances(),
+          // The instance the pick answered with, rather than one read back by
+          // id: `listInstances` produced it a moment ago, and there is no
+          // panel here to outlive it.
+          connect: (instance) => createNacosClient(configManager, instance, certTrustStore, log)
+        });
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`compareAcrossEnvironments: ${message}`);
+        await vscode.window.showErrorMessage(
+          t('Could not compare {dataId} across environments: {message}', { dataId: item.config.dataId, message })
+        );
+      }
+    }
+  );
+
+  const showConfigListenersCommand = vscode.commands.registerCommand(
+    'atNacos.showConfigListeners',
+    async (item: ConfigTreeItem) => {
+      try {
+        await ConfigListenersPanel.open(context, {
+          instance: { id: item.instance.id, label: item.instance.label },
+          ref: item.config,
+          connect: () => connectToInstance(item.instance.id, item.instance.label)
+        });
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`showConfigListeners: ${message}`);
+        await vscode.window.showErrorMessage(
+          t('Could not open the configuration listeners panel: {message}', { message })
+        );
+      }
+    }
+  );
+
+  const showServiceSubscribersCommand = vscode.commands.registerCommand(
+    'atNacos.showServiceSubscribers',
+    async (item: ServiceTreeItem) => {
+      try {
+        await ServiceSubscribersPanel.open(context, {
+          instance: { id: item.instance.id, label: item.instance.label },
+          ref: item.service,
+          connect: () => connectToInstance(item.instance.id, item.instance.label)
+        });
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`showServiceSubscribers: ${message}`);
+        await vscode.window.showErrorMessage(
+          t('Could not open the service subscribers panel: {message}', { message })
+        );
+      }
+    }
+  );
+
   // VS Code awaits the promise `deactivate()` returns. It does NOT await the
   // `dispose()` of anything in `context.subscriptions` -- it calls each one and
   // moves on. Nothing in this milestone needs that guarantee: the channel, the
@@ -371,7 +524,12 @@ export function activate(context: vscode.ExtensionContext): void {
     openConfigCommand,
     loadMoreConfigsCommand,
     loadMoreServicesCommand,
-    openClusterStatusCommand
+    openClusterStatusCommand,
+    showConfigHistoryCommand,
+    diffWithPreviousCommand,
+    compareAcrossEnvironmentsCommand,
+    showConfigListenersCommand,
+    showServiceSubscribersCommand
   );
 }
 

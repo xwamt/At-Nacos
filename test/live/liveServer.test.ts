@@ -14,9 +14,12 @@
  * server. Without them the instance is treated as `authMode: 'none'`, which is
  * the default Nacos 1.x/2.x deployment.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as vscode from 'vscode';
 import { createNacosClient } from '../../src/extension';
 import type { NacosInstanceConfig } from '../../src/config/schema';
+import { buildConfigHistoryUri, buildConfigUri } from '../../src/document/configUri';
+import { compareConfigAcrossEnvironments, diffWithPreviousVersion } from '../../src/document/diffConfig';
 import { NacosConfigDocumentProvider } from '../../src/document/NacosConfigDocumentProvider';
 import { openConfigDocument } from '../../src/document/openConfigDocument';
 import type { NacosApiError } from '../../src/nacos/NacosApiError';
@@ -37,6 +40,9 @@ import {
 import { ServiceTreeProvider } from '../../src/tree/ServiceTreeProvider';
 import { noopLog } from '../../src/utils/logger';
 import { loadClusterStatus, renderClusterStatus } from '../../src/webview/ClusterStatusPanel';
+import { loadConfigHistory, renderConfigHistory } from '../../src/webview/ConfigHistoryPanel';
+import { loadConfigListeners, renderConfigListeners } from '../../src/webview/ConfigListenersPanel';
+import { loadServiceSubscribers, renderServiceSubscribers } from '../../src/webview/ServiceSubscribersPanel';
 
 const liveUrl = process.env.AT_NACOS_LIVE_URL;
 const username = process.env.AT_NACOS_LIVE_USERNAME;
@@ -717,6 +723,351 @@ describeLive('a real Nacos server, its history and who is using it', () => {
     console.log('  a service nobody registered -> 0 subscribers, no error');
   });
 });
+
+/**
+ * M4's panels and its three diff entry points, against the same server.
+ *
+ * The split here is the same one §14.8 recorded and is worth restating,
+ * because it decides what these tests can mean. **Cross-environment
+ * comparison and service subscribers are verified**: two namespaces of this
+ * server hold the same configuration under the same group with different
+ * content, and every service in `cl-parent-offline` has at least one
+ * subscriber. **The history and listener row rendering is not**: both
+ * endpoints answer empty on every configuration here, so what these tests
+ * prove about them is that empty is not a failure and that the empty state is
+ * the one that renders.
+ */
+describeLive('a real Nacos server, through the M4 panels and diffs', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it(
+    'renders the history panel of a live configuration, whose history is empty',
+    async () => {
+      const { namespaceId, config } = await findLiveConfig();
+      const ref = { namespaceId, group: config.group, dataId: config.dataId };
+
+      const snapshot = await loadConfigHistory(connectLive, ref);
+      const body = renderConfigHistory({ instanceLabel: 'live', ref, snapshot }).body;
+
+      expect(snapshot.error, 'reading the history failed').toBeUndefined();
+      expect(body).toContain(config.dataId);
+      // Empty is the ordinary state here, so the note is what has to render --
+      // a table header with no rows would say nothing about why.
+      if (snapshot.entries.length === 0) {
+        expect(body).toContain('no history');
+      } else {
+        expect(body).toContain('class="version-row"');
+      }
+      console.log(
+        `  ${namespaceId}/${config.group}/${config.dataId}: ${snapshot.totalCount} version(s), ` +
+          `${body.length} bytes of panel body`
+      );
+      for (const entry of snapshot.entries) {
+        console.log(`    id=${entry.id} opType=${JSON.stringify(entry.opType)} modifiedAt=${entry.modifiedAt ?? '?'}`);
+      }
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  /**
+   * The one history path this server *can* settle end to end: a `nid` nobody
+   * wrote comes back as HTTP 200 with an empty body, which the driver reads as
+   * `resource-not-found`, and the document provider turns into a sentence
+   * about the *version* rather than about the configuration.
+   */
+  it(
+    'answers a history address for a version that was never written with readable prose',
+    async () => {
+      const { namespaceId, config } = await findLiveConfig();
+      const uri = buildConfigHistoryUri(
+        'live',
+        { namespaceId, group: config.group, dataId: config.dataId },
+        '99999999'
+      );
+
+      const content = await liveDocumentProvider().provideTextDocumentContent(uri);
+
+      expect(content).toContain('99999999');
+      expect(content).not.toContain('no longer exists in group');
+      console.log(`  ${uri.toString()}\n    -> ${content}`);
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  it(
+    'says a configuration with no history has no previous version, instead of opening an empty diff',
+    async () => {
+      const { namespaceId, config } = await findLiveConfig();
+      const executeCommand = vi.spyOn(vscode.commands, 'executeCommand').mockResolvedValue(undefined);
+      const showInformationMessage = vi.spyOn(vscode.window, 'showInformationMessage');
+
+      await diffWithPreviousVersion({
+        instanceId: 'live',
+        ref: { namespaceId, group: config.group, dataId: config.dataId },
+        connect: connectLive
+      });
+
+      const diffs = executeCommand.mock.calls.filter((call) => call[0] === 'vscode.diff');
+      expect(diffs, 'this server grew a history row; the empty-history branch is no longer what ran').toHaveLength(0);
+      const said = String(vi.mocked(showInformationMessage).mock.calls[0]?.[0]);
+      expect(said).toContain(config.dataId);
+      console.log(`  ${config.dataId} -> ${said}`);
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  it(
+    'renders the listener panel of a live configuration, with the current md5 read from the server',
+    async () => {
+      const { namespaceId, config } = await findLiveConfig();
+      const ref = { namespaceId, group: config.group, dataId: config.dataId };
+
+      const snapshot = await loadConfigListeners(connectLive, ref);
+      const body = renderConfigListeners({ instanceLabel: 'live', ref, snapshot }).body;
+
+      expect(snapshot.listenersError, 'reading the listeners failed').toBeUndefined();
+      expect(snapshot.configError, 'reading the configuration failed').toBeUndefined();
+      // The md5 is the left-hand side of every staleness comparison this panel
+      // makes. Without it the table can only say "cannot be compared", so a
+      // server that reports one is what makes the feature possible at all.
+      expect(snapshot.currentMd5, 'this server reports no md5, so no listener could ever be judged').toBeDefined();
+      // The configuration body is fetched for that one field and must not
+      // reach the snapshot: it holds this deployment's redis password.
+      expect(JSON.stringify(snapshot)).not.toContain('password');
+      console.log(
+        `  ${namespaceId}/${config.group}/${config.dataId}: ${snapshot.listeners.length} listener(s), ` +
+          `current md5=${snapshot.currentMd5}`
+      );
+      for (const listener of snapshot.listeners) {
+        console.log(`    ${listener.ip} md5=${listener.md5}`);
+      }
+      if (snapshot.listeners.length === 0) {
+        expect(body).toContain('no client');
+        console.log('    empty -- nothing is long-polling this server, so no listener row is rendered here');
+      }
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  it(
+    'renders the subscriber panel of a live service, one row per real subscriber',
+    async () => {
+      const { client, populated } = await browseServices();
+      const found = await Promise.all(
+        populated.page.items.map(async (service) => ({
+          service,
+          snapshot: await loadServiceSubscribers(async () => client, {
+            namespaceId: service.namespaceId,
+            group: service.group,
+            serviceName: service.serviceName
+          })
+        }))
+      );
+      const watched = found.filter((entry) => entry.snapshot.subscribers.length > 0);
+      expect(watched.length, 'no service on this server has a subscriber to render').toBeGreaterThan(0);
+
+      for (const { service, snapshot } of watched) {
+        const ref = { namespaceId: service.namespaceId, group: service.group, serviceName: service.serviceName };
+        const body = renderServiceSubscribers({ instanceLabel: 'live', ref, snapshot }).body;
+        expect(snapshot.error).toBeUndefined();
+        expect(body.match(/class="subscriber-row"/g) ?? []).toHaveLength(snapshot.subscribers.length);
+        for (const subscriber of snapshot.subscribers) {
+          expect(body).toContain(subscriber.ip);
+        }
+        // Every subscriber here is a gRPC client and reports port 0, which is
+        // an answer rather than a gap -- `ip:0` in the address column would
+        // read as a port nobody can connect to.
+        expect(body).not.toContain('undefined');
+      }
+
+      // The multi-row branch, which the research had no evidence for: at least
+      // one service on this server is watched by more than one client.
+      const manyRows = watched.find((entry) => entry.snapshot.subscribers.length > 1);
+      expect(manyRows, 'no service has two subscribers, so the multi-row branch is fixture-only after all').toBeDefined();
+
+      console.log(`  ${watched.length} of ${found.length} services in ${populated.namespaceId} have subscribers:`);
+      for (const { service, snapshot } of watched) {
+        console.log(
+          `    ${service.serviceName.padEnd(32)} ${snapshot.subscribers.length} row(s): ` +
+            snapshot.subscribers.map((entry) => `${entry.ip} port=${entry.port} agent=${entry.agent ?? '?'}`).join(' | ')
+        );
+      }
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  /**
+   * The whole cross-environment path, end to end: the namespace pick, the
+   * probe that decides whether the target holds this configuration, and the
+   * two addresses handed to `vscode.diff` -- then both of those addresses
+   * resolved through the content provider, which is the only thing that
+   * proves the editor would show two real, different files.
+   */
+  it(
+    'diffs one configuration across two namespaces of this server',
+    async () => {
+      const { source, targetNamespaceId, differs } = await findComparableConfig();
+      const executeCommand = vi.spyOn(vscode.commands, 'executeCommand').mockResolvedValue(undefined);
+      // Answered by namespace id rather than by position, so this test means
+      // the same thing whatever order the server lists namespaces in.
+      vi.spyOn(vscode.window, 'showQuickPick').mockImplementation((async (
+        items: readonly { description?: string }[] | Thenable<readonly { description?: string }[]>
+      ) => (await items).find((choice) => choice.description === targetNamespaceId)) as never);
+
+      await compareConfigAcrossEnvironments({
+        source: { instance: { id: 'live', label: 'live' }, ref: source.ref },
+        listInstances: async () => [liveInstance()],
+        connect: () => connectLive()
+      });
+
+      const diff = executeCommand.mock.calls.find((call) => call[0] === 'vscode.diff');
+      expect(diff, 'no diff was opened').toBeDefined();
+      const [, left, right, title] = diff as [string, vscode.Uri, vscode.Uri, string];
+      expect(left.toString()).toBe(buildConfigUri('live', source.ref).toString());
+      expect(left.toString()).not.toBe(right.toString());
+
+      const provider = liveDocumentProvider();
+      const [leftContent, rightContent] = await Promise.all([
+        provider.provideTextDocumentContent(left),
+        provider.provideTextDocumentContent(right)
+      ]);
+      expect(leftContent.length).toBeGreaterThan(0);
+      expect(rightContent.length).toBeGreaterThan(0);
+      // The provider answers every failure with prose instead of rejecting, so
+      // a length check alone would pass for two error messages.
+      for (const content of [leftContent, rightContent]) {
+        expect(content).not.toMatch(/AT Nacos|no longer exists|no longer configured/);
+      }
+      // The claim worth making, and the one a pair of identical copies could
+      // not support: two environments measured to hold different content
+      // arrive at the editor as two different texts. It is the whole address
+      // round trip -- build, parse, refetch -- that this closes over, so a
+      // URI that lost its namespace on the way back would fail here.
+      expect(
+        differs && leftContent === rightContent,
+        'the two namespaces hold different content, but the same text came back for both addresses'
+      ).toBe(false);
+      expect(
+        differs,
+        'no pair of namespaces on this server holds different content, so the diff shows nothing either way'
+      ).toBe(true);
+
+      console.log(
+        `  ${title}\n` +
+          `    left  ${left.toString()} (${leftContent.length} bytes)\n` +
+          `    right ${right.toString()} (${rightContent.length} bytes)\n` +
+          `    the two sides ${leftContent === rightContent ? 'are identical' : 'differ'}`
+      );
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  /**
+   * The other half of the same command, and the reason `resource-not-found`
+   * exists as a kind of its own: a dataId nobody published in the target
+   * namespace has to read as "not there" rather than as a server that could
+   * not be reached, and it must not open a diff with a blank right-hand pane.
+   */
+  it(
+    'says the target namespace has no such configuration, rather than opening a blank side',
+    async () => {
+      const { source, targetNamespaceId } = await findComparableConfig();
+      const executeCommand = vi.spyOn(vscode.commands, 'executeCommand').mockResolvedValue(undefined);
+      const showInformationMessage = vi.spyOn(vscode.window, 'showInformationMessage');
+      vi.spyOn(vscode.window, 'showQuickPick').mockImplementation((async (
+        items: readonly { description?: string }[] | Thenable<readonly { description?: string }[]>
+      ) => (await items).find((choice) => choice.description === targetNamespaceId)) as never);
+
+      await compareConfigAcrossEnvironments({
+        source: {
+          instance: { id: 'live', label: 'live' },
+          ref: { ...source.ref, dataId: 'at-nacos-no-such-config-please-do-not-create.yml' }
+        },
+        listInstances: async () => [liveInstance()],
+        connect: () => connectLive()
+      });
+
+      expect(executeCommand.mock.calls.filter((call) => call[0] === 'vscode.diff')).toHaveLength(0);
+      const said = String(vi.mocked(showInformationMessage).mock.calls[0]?.[0]);
+      expect(said).toContain('at-nacos-no-such-config-please-do-not-create.yml');
+      expect(said).toContain(targetNamespaceId);
+      console.log(`  ${said}`);
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+});
+
+/** One configuration this server holds in two namespaces, which is what makes a cross-environment diff possible. */
+interface ComparableConfig {
+  source: { namespaceId: string; ref: NacosConfigSummary };
+  targetNamespaceId: string;
+  /** Whether the two copies were measured to hold different content. */
+  differs: boolean;
+}
+
+/**
+ * How many duplicate pairs are worth two requests each to tell apart. The
+ * first differing pair ends the search, and on this server that is the first
+ * pair looked at.
+ */
+const MAX_CONTENT_COMPARISONS = 12;
+
+let comparableConfig: Promise<ComparableConfig> | undefined;
+
+/**
+ * Two namespaces holding the same group and dataId, found rather than named.
+ * This server has eleven namespaces holding `application-dev.yml` under
+ * `cl-intimfy`, but a suite hard-coded to a pair of namespace names would
+ * mean nothing on anyone else's server.
+ *
+ * **A pair whose content differs is preferred, and that preference is the
+ * point.** The first duplicate offered here in listing order can be
+ * `sentinel-cl-gateway`, which is byte-identical in every namespace --
+ * diffing that proves two buffers were opened and nothing about whether a
+ * difference would show.
+ *
+ * Choosing on content costs two requests per candidate, which it should not
+ * have to: the listing has an `md5` field. **On this server that field is
+ * `null` on every row, under `search=accurate` as well** -- only the detail
+ * endpoint fills it in (§14.9). So `NacosConfigSummary.md5` cannot be used to
+ * tell two copies apart, here or anywhere the same build is deployed.
+ */
+function findComparableConfig(): Promise<ComparableConfig> {
+  comparableConfig ??= (async () => {
+    const client = await connectLive();
+    const namespaces = await client.listNamespaces();
+    const seen = new Map<string, { namespaceId: string; ref: NacosConfigSummary }>();
+    let identical: ComparableConfig | undefined;
+    let compared = 0;
+    for (const namespace of namespaces) {
+      const page = await client.listConfigs({ namespaceId: namespace.namespaceId, pageNo: 1, pageSize: 100 });
+      for (const config of page.items) {
+        const key = `${config.group}\u0000${config.dataId}`;
+        const first = seen.get(key);
+        if (!first) {
+          seen.set(key, { namespaceId: namespace.namespaceId, ref: config });
+          continue;
+        }
+        identical ??= { source: first, targetNamespaceId: namespace.namespaceId, differs: false };
+        if (compared >= MAX_CONTENT_COMPARISONS) {
+          continue;
+        }
+        compared += 1;
+        const [before, after] = await Promise.all([client.getConfig(first.ref), client.getConfig(config)]);
+        if (before.content !== after.content) {
+          return { source: first, targetNamespaceId: namespace.namespaceId, differs: true };
+        }
+      }
+    }
+    if (identical) {
+      return identical;
+    }
+    throw new Error('no configuration on this server exists in two namespaces; nothing to compare across environments');
+  })();
+  return comparableConfig;
+}
 
 /** One configuration of the live server, whichever namespace has one. Shared: each probe costs a round trip. */
 interface BrowsedConfig {

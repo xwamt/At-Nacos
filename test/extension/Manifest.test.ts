@@ -1,7 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NacosInstanceConfig } from '../../src/config/schema';
 import { activate, deactivate } from '../../src/extension';
+import {
+  ConfigTreeItem,
+  GroupTreeItem,
+  ServiceInstanceTreeItem,
+  ServiceTreeItem
+} from '../../src/tree/NacosTreeItems';
 import {
   commands as fixtureCommands,
   window as fixtureWindow,
@@ -123,7 +130,16 @@ describe('package.json contributions', () => {
    * `undefined` and either paging command to page a namespace that was not
    * named. `when: false` is the only way a contributed command stays out of it.
    */
-  it.each([['atNacos.openConfig'], ['atNacos.loadMoreConfigs'], ['atNacos.loadMoreServices']])(
+  it.each([
+    ['atNacos.openConfig'],
+    ['atNacos.loadMoreConfigs'],
+    ['atNacos.loadMoreServices'],
+    ['atNacos.showConfigHistory'],
+    ['atNacos.diffWithPrevious'],
+    ['atNacos.compareAcrossEnvironments'],
+    ['atNacos.showConfigListeners'],
+    ['atNacos.showServiceSubscribers']
+  ])(
     'hides %s from the command palette, since only a tree node can supply its arguments',
     (command) => {
       expect((menus.commandPalette ?? []).filter((item) => item.command === command).map((item) => item.when)).toEqual([
@@ -136,6 +152,109 @@ describe('package.json contributions', () => {
   it('writes no commandPalette entry that leaves a command visible', () => {
     for (const item of menus.commandPalette ?? []) {
       expect(item.when, item.command).toBe('false');
+    }
+  });
+
+  /**
+   * The `when` clause of a node menu, as the regular expression VS Code
+   * compiles it into. Asserting on the clause as text would pass for a
+   * pattern that matches nothing.
+   */
+  function contextValuePattern(when: string | undefined): RegExp {
+    const written = /^viewItem =~ \/(.+)\/$/.exec(when ?? '');
+    expect(written, when).not.toBeNull();
+    return new RegExp(written?.[1] ?? '$^');
+  }
+
+  function nodeMenu(command: string): { command: string; when?: string; group?: string } {
+    const items = (menus['view/item/context'] ?? []).filter((item) => item.command === command);
+    expect(items, command).toHaveLength(1);
+    return items[0] as { command: string; when?: string; group?: string };
+  }
+
+  function instance(readOnly: boolean): NacosInstanceConfig {
+    return {
+      id: 'instance-1',
+      label: 'prod',
+      serverUrl: 'http://nacos.example.com:8848/nacos',
+      authMode: 'none',
+      readOnly,
+      allowBackgroundAccess: false,
+      createdAt: 0,
+      updatedAt: 0
+    };
+  }
+
+  function configNodeValue(readOnly: boolean): string {
+    return String(
+      new ConfigTreeItem('config', instance(readOnly), 'uat', {
+        namespaceId: 'uat',
+        group: 'cl-intimfy',
+        dataId: 'application-uat.yml'
+      }).contextValue
+    );
+  }
+
+  function serviceNodeValue(readOnly: boolean): string {
+    return String(
+      new ServiceTreeItem('service', instance(readOnly), 'uat', {
+        namespaceId: 'uat',
+        group: 'cl-intimfy',
+        serviceName: 'cl-auth'
+      }).contextValue
+    );
+  }
+
+  /**
+   * Every one of these is a read, so it belongs on a read-only instance's
+   * nodes too -- which carry a `.readonly` suffix that a `==` comparison
+   * would miss.
+   */
+  it.each([
+    ['atNacos.showConfigHistory'],
+    ['atNacos.diffWithPrevious'],
+    ['atNacos.compareAcrossEnvironments'],
+    ['atNacos.showConfigListeners']
+  ])('offers %s on a configuration node of a writable and of a read-only instance', (command) => {
+    const pattern = contextValuePattern(nodeMenu(command).when);
+
+    expect(pattern.test(configNodeValue(false)), configNodeValue(false)).toBe(true);
+    expect(pattern.test(configNodeValue(true)), configNodeValue(true)).toBe(true);
+    expect(pattern.test(serviceNodeValue(false))).toBe(false);
+    expect(pattern.test(String(new GroupTreeItem('config', instance(false), 'uat', 'g', 1).contextValue))).toBe(false);
+  });
+
+  /**
+   * The trap in the service clause: `atNacos.serviceInstance` starts with
+   * `atNacos.service`, and a prefix match would put a subscriber panel on
+   * every registered instance node under it.
+   */
+  it('offers the subscriber panel on a service node and on nothing under it', () => {
+    const pattern = contextValuePattern(nodeMenu('atNacos.showServiceSubscribers').when);
+    const serviceInstanceValue = String(
+      new ServiceInstanceTreeItem(
+        'service',
+        instance(false),
+        { namespaceId: 'uat', group: 'cl-intimfy', serviceName: 'cl-auth' },
+        { ip: '10.0.0.1', port: 8080, healthy: true, enabled: true, weight: 1, clusterName: 'DEFAULT', ephemeral: true, metadata: {} }
+      ).contextValue
+    );
+
+    expect(pattern.test(serviceNodeValue(false))).toBe(true);
+    expect(pattern.test(serviceNodeValue(true))).toBe(true);
+    expect(pattern.test(serviceInstanceValue), serviceInstanceValue).toBe(false);
+    expect(pattern.test(configNodeValue(false))).toBe(false);
+  });
+
+  /** A node menu with no group is appended to whatever came before it, in registration order. */
+  it('groups the configuration node actions together', () => {
+    for (const command of [
+      'atNacos.showConfigHistory',
+      'atNacos.diffWithPrevious',
+      'atNacos.compareAcrossEnvironments',
+      'atNacos.showConfigListeners'
+    ]) {
+      expect(nodeMenu(command).group, command).toMatch(/^atNacos\.inspect@\d$/);
     }
   });
 

@@ -14,6 +14,11 @@
   "atNacos.command.loadMoreConfigs.title": "AT Nacos: Load More Configurations",
   "atNacos.command.loadMoreServices.title": "AT Nacos: Load More Services",
   "atNacos.command.openClusterStatus.title": "AT Nacos: Show Cluster Status",
+  "atNacos.command.showConfigHistory.title": "AT Nacos: Show Configuration History",
+  "atNacos.command.diffWithPrevious.title": "AT Nacos: Compare with Previous Version",
+  "atNacos.command.compareAcrossEnvironments.title": "AT Nacos: Compare Across Environments",
+  "atNacos.command.showConfigListeners.title": "AT Nacos: Show Configuration Listeners",
+  "atNacos.command.showServiceSubscribers.title": "AT Nacos: Show Service Subscribers",
   "atNacos.welcome.configs": "No Nacos instance is configured yet.\n[Add Instance](command:atNacos.addInstance)",
   "atNacos.welcome.services": "No Nacos instance is configured yet. Add one to browse its registered services.\n[Add Instance](command:atNacos.addInstance)"
 }

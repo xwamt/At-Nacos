@@ -28,7 +28,7 @@ describe('atNacos extension lifecycle', () => {
     vi.restoreAllMocks();
   });
 
-  it('registers the instance, refresh, filter, configuration, service and cluster commands', () => {
+  it('registers the instance, refresh, filter, configuration, service, cluster and inspection commands', () => {
     // That this is exactly what the manifest contributes is asserted in
     // Manifest.test.ts, against package.json rather than against a copy of it.
     activate(extensionContext());
@@ -36,6 +36,8 @@ describe('atNacos extension lifecycle', () => {
     expect([...fixtureCommands.__getRegisteredCommands().keys()].sort()).toEqual([
       'atNacos.addInstance',
       'atNacos.clearConfigFilter',
+      'atNacos.compareAcrossEnvironments',
+      'atNacos.diffWithPrevious',
       'atNacos.filterConfigs',
       'atNacos.loadMoreConfigs',
       'atNacos.loadMoreServices',
@@ -43,7 +45,10 @@ describe('atNacos extension lifecycle', () => {
       'atNacos.openClusterStatus',
       'atNacos.openConfig',
       'atNacos.refreshConfigs',
-      'atNacos.refreshServices'
+      'atNacos.refreshServices',
+      'atNacos.showConfigHistory',
+      'atNacos.showConfigListeners',
+      'atNacos.showServiceSubscribers'
     ]);
   });
 
@@ -63,14 +68,14 @@ describe('atNacos extension lifecycle', () => {
   });
 
   it('hands every disposable it created to context.subscriptions', () => {
-    // The channel, the ten commands, the two views, the document provider
+    // The channel, the fifteen commands, the two views, the document provider
     // and its registration. Anything left out survives a window reload and
     // leaks a listener into the next activation.
     const context = extensionContext();
 
     activate(context);
 
-    expect(context.subscriptions).toHaveLength(15);
+    expect(context.subscriptions).toHaveLength(20);
     for (const subscription of context.subscriptions) {
       expect(typeof subscription.dispose).toBe('function');
     }

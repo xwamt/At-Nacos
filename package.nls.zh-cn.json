@@ -14,6 +14,11 @@
   "atNacos.command.loadMoreConfigs.title": "AT Nacos: 加载更多配置",
   "atNacos.command.loadMoreServices.title": "AT Nacos: 加载更多服务",
   "atNacos.command.openClusterStatus.title": "AT Nacos: 查看集群状态",
+  "atNacos.command.showConfigHistory.title": "AT Nacos: 查看历史版本",
+  "atNacos.command.diffWithPrevious.title": "AT Nacos: 与上一版本对比",
+  "atNacos.command.compareAcrossEnvironments.title": "AT Nacos: 跨环境对比",
+  "atNacos.command.showConfigListeners.title": "AT Nacos: 查看配置监听者",
+  "atNacos.command.showServiceSubscribers.title": "AT Nacos: 查看服务订阅者",
   "atNacos.welcome.configs": "尚未配置任何 Nacos 实例。\n[添加实例](command:atNacos.addInstance)",
   "atNacos.welcome.services": "尚未配置任何 Nacos 实例。添加后即可浏览其中注册的服务。\n[添加实例](command:atNacos.addInstance)"
 }

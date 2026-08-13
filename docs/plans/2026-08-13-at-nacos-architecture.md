@@ -715,6 +715,49 @@ GET /v2/cs/history/list?dataId=...&group=cl-intimfy&namespaceId=cl-parent
 29. **3.x 的五条路径与它们的响应形状。** `/v3/{admin,console}/cs/history/list`、`/v3/{admin,console}/cs/history`、`/v3/{admin,console}/cs/config/listener`、`/v3/{admin,console}/ns/service`、`/v3/{admin,console}/ns/service/subscribers`，全部照 §9 与调研写成，没有 3.x 环境跑过。风险最高的是订阅者：3.x 按调研是 `data.pageItems[]`，与这台服务器给的 `{subscribers, count}` 不同，归一化两种都收，猜错顶多是「仍然能解析」。
 30. **admin 监听者接口需要 WRITE 权限这条降级。** §9 说 `/v3/admin/cs/config/listener` 要 WRITE 而 console 版只要 READ，也就是说这是唯一一个「管理员账号也可能被拒、普通账号必须走 console」的读能力。只有夹具覆盖。
 
+### 14.9 M4 Task 2–3 历史 URI、diff 与两个面板的真机验证（Nacos 2.3.2，2026-08-14）
+
+Task 1 把五个能力做到了 `NacosClient`，这一组把它们做成用户能点的东西：历史面板、监听者面板、订阅者面板，以及三个 diff 入口。`test/live` 从 26 条加到 33 条。**这一轮验到的与验不到的，界线和 §14.8 一样锋利，而且是同一条线**：有真实数据的能验，没有的不能。
+
+**① 跨环境对比是真的通了，而且两侧内容确实不同。** 命令走完整条路——列命名空间 → 选目标 → 探测目标是否有这条配置 → `vscode.diff`——然后测试再把交给 `vscode.diff` 的那两个 URI 分别喂回文档提供器：
+
+```
+sentinel-cl-gateway: live / cl-parent compared with live / damon
+  left  nacos:/live/cl-parent/cl-intimfy/sentinel-cl-gateway (858 bytes)
+  right nacos:/live/damon/cl-intimfy/sentinel-cl-gateway (677 bytes)
+  the two sides differ
+```
+
+这一条闭合的是整个地址往返：**构造 → 解析 → 重新取内容**。一个在回程上把命名空间丢掉的 URI 会让两侧变成同一段文本，这里就会红。
+
+**② 修正：配置列表里的 `md5` 在这台服务器上恒为 `null`，`search=accurate` 也一样。** 实测 `/v1/cs/configs?search=accurate&...` 每一行都是 `"md5": null`（`id`、`type`、`content` 都有值），只有详情接口 `?show=all` 填了真的 md5。所以 **`NacosConfigSummary.md5` 不能用来判断两份副本是否相同**——live 里挑「内容不同的一对命名空间」原本想用列表的 md5 免掉请求，结果只能改成取两次详情比内容。
+
+这条同时解释了监听者面板为什么必须自己取一次详情：它判断「某个客户端是否落后」要拿配置当前的 md5，而树节点手上那个 summary 的 md5 是空的。取详情的代价是把配置正文（含这套部署的 redis 密码）读进内存，所以 `loadConfigListeners` **只把 md5 放进快照**，live 里有一条断言直接对快照做 `not.toContain('password')`。
+
+**③ 「历史版本不存在」这条路径端到端跑通了，而且说的是版本不在而不是配置不在。**
+
+```
+nacos:/live/cl-parent/cl-intimfy/application-dev.yml?nid=99999999
+  -> Version 99999999 of application-dev.yml is no longer on the server.
+     Nacos keeps a configuration's history for a limited time and prunes what is older.
+```
+
+Nacos 默认只保留 30 天历史，所以「面板开着过了个周末，点某一版时它已经被清了」是真实场景。这里如果沿用配置那句「已不存在」，用户会去找一次没发生过的删除。
+
+**④ 订阅者面板在真机上是满的，多行分支也有了。** `cl-parent-offline` 的 12 个服务全部渲染出行；`cl-merchant-server-offline` 渲染出两行（`192.168.99.92` 与 `192.168.66.124`）。端口全是 0——这是答案不是缺失，所以那一列写「none」而不是走 "not reported" 的样式，地址列也不写 `ip:0`。
+
+**⑤ 历史与监听者两个面板，真机上只验到空态。** 两个接口在这台服务器上对每条配置都返回空，所以跑到的是「Nacos 没有返回任何历史版本 / 任何持有该配置的客户端」这两句话，以及「空不是失败」。**行的渲染——`opType` 的三种译法、时间列、来源 IP/用户、md5 落后徽章与那句「N 个客户端中有 M 个仍持有旧版本」——全部只有夹具覆盖。** M5 发布配置之后历史会长出来，监听者要有客户端长轮询才会有。
+
+**M4 Task 2–3 仍未覆盖的：**
+
+31. **历史行与监听者行的渲染。** 承 §14.8 ㉗。夹具照 `ConfigHistoryInfo` 与 `lisentersGroupkeyStatus` 写成，真机上两张表都没有一行。**M5 之后必须回来补。**
+32. **历史分页的顺序假设。** 「与上一版对比」只取第 1 页第 1 条，依据是 Nacos 的 `order by nid desc`（最新在前）；这台服务器一条历史都没有，所以顺序无从验证。若某个版本改成升序，这个命令会去比最老的那一版。
+33. **「历史行存的是改动前的内容」这一条。** `insertConfigHistoryAtomic` 在更新时写的是旧值，所以最近一条历史 = 上一个版本——这是「与上一版对比」成立的前提，来自源码而非实测。
+34. **`?nid=` 这个 query 在真正的 `Uri.parse` 上的往返。** vitest 用的是 `test-fixtures/vscode.ts` 的 `Uri`，它不做百分号编码；真实的 `vscode.Uri.toString()` 会把 query 编码、`parse()` 再解码回来。往返在两侧都成立（编码一次、解码一次），但只有扩展宿主里才验得到。
+35. **三个新面板从未在扩展宿主里渲染过。** 承 §14.7 ㉓。断言的是 HTML 字符串：CSP 是否真的放行了两个新 bundle、`.listener-behind` 那个红徽章在深浅主题下的观感、历史面板每行那个「与当前版本对比」按钮点下去的一个来回，都没有在真的 VS Code 窗口里看过。
+36. **右键菜单本身。** `when` 子句是按 `viewItem` 的正则写的，`Manifest.test.ts` 把它编译出来对着真实节点的 contextValue 做了断言（含 `.readonly` 变体，以及 `atNacos.serviceInstance` 不能被 `^atNacos\.service\b` 命中这一条），但没有人在真的树上右键点过。
+37. **同一条配置同时开着历史面板与监听者面板时的 key 隔离**，只有单测覆盖（两个面板 key 前缀不同）。真机上没有同时开过。
+
 ### 16.1 错误文案没有本地化
 
 `t()` 的覆盖是完整的——`src/` 里 54 处 `t()` 字面量全部在 zh-cn 包里有键。但出问题时用户读到的那些句子从来不经过 `t()`：`testNacosConnection` 里 `describeConnectionFailure` 的十二个分支、`describeForbidden`，以及 `ErrorTreeItem` 渲染的每一条 `NacosApiError` 消息。中文用户会看到一个完全汉化的界面，直到出错，然后是一段英文。

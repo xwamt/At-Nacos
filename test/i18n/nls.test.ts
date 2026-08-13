@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -59,6 +59,83 @@ describe('l10n runtime bundle', () => {
       expect(translation.trim(), source).not.toBe('');
     }
   });
+});
+
+/**
+ * Every `t('...')` in the extension source.
+ *
+ * The lookbehind is what keeps `format(`, `assert(` and `.at(` out; the `s`
+ * flag is what finds the call that was wrapped across lines because its
+ * source string is a paragraph. Only single-quoted literals are matched,
+ * which is the whole of what this codebase writes -- a template literal
+ * cannot be a translation key anyway, since the bundle is keyed by the source
+ * text itself.
+ */
+const T_CALL = /(?<![\w.])t\(\s*'((?:[^'\\]|\\.)*)'/gs;
+
+function sourceFilesIn(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      return sourceFilesIn(path);
+    }
+    return entry.isFile() && entry.name.endsWith('.ts') ? [path] : [];
+  });
+}
+
+function translationKeysIn(source: string): string[] {
+  return [...source.matchAll(T_CALL)].map((match) => unescapeLiteral(match[1]));
+}
+
+/**
+ * A single-quoted TypeScript literal as the string it denotes -- `\n` really
+ * is a newline in the bundle's key, and several of these span paragraphs.
+ *
+ * Read as JSON rather than by substituting escape by escape, so that every
+ * sequence TypeScript understands is handled the same way TypeScript handles
+ * it. Two adjustments make the literal valid JSON: `\'` is legal in
+ * TypeScript and not in JSON, and a bare `"` is legal in a single-quoted
+ * literal and has to be escaped once it is inside double quotes.
+ */
+function unescapeLiteral(raw: string): string {
+  return JSON.parse(`"${raw.replaceAll("\\'", "'").replace(/(?<!\\)"/g, '\\"')}"`) as string;
+}
+
+describe('every string the extension translates at runtime', () => {
+  const sources = sourceFilesIn(resolve(process.cwd(), 'src'));
+  const keys = new Map<string, string>();
+  for (const path of sources) {
+    for (const key of translationKeysIn(readFileSync(path, 'utf8'))) {
+      keys.set(key, path);
+    }
+  }
+
+  /**
+   * Each module has a localization test of its own, and each of those can
+   * only see the strings its own code reaches. `src/extension.ts` had none at
+   * all until M4 -- its command failure messages went through `t()` and
+   * nothing checked they were in the bundle, so a zh-cn user would have read
+   * them in English and no test would have noticed.
+   */
+  it('reads a plausible number of them out of the source', () => {
+    expect(keys.size).toBeGreaterThan(50);
+  });
+
+  it('has a zh-cn translation for every one', () => {
+    for (const [key, path] of keys) {
+      expect(Object.keys(bundle), `${path}: ${JSON.stringify(key)}`).toContain(key);
+    }
+  });
+
+  /**
+   * The other direction -- a bundle entry nothing asks for any more -- is
+   * deliberately *not* checked here, and cannot be from the source text
+   * alone: several strings reach `t()` without ever appearing next to it.
+   * `buildWebviewStrings` is handed an object of them, and the instance
+   * form's auth-mode labels live in a lookup table. A scan that had to be
+   * taught each of those indirections would be a test maintained against the
+   * shape of the code rather than against its behaviour.
+   */
 });
 
 /**

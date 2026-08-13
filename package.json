@@ -93,6 +93,26 @@
         "command": "atNacos.openClusterStatus",
         "title": "%atNacos.command.openClusterStatus.title%",
         "icon": "$(server)"
+      },
+      {
+        "command": "atNacos.showConfigHistory",
+        "title": "%atNacos.command.showConfigHistory.title%"
+      },
+      {
+        "command": "atNacos.diffWithPrevious",
+        "title": "%atNacos.command.diffWithPrevious.title%"
+      },
+      {
+        "command": "atNacos.compareAcrossEnvironments",
+        "title": "%atNacos.command.compareAcrossEnvironments.title%"
+      },
+      {
+        "command": "atNacos.showConfigListeners",
+        "title": "%atNacos.command.showConfigListeners.title%"
+      },
+      {
+        "command": "atNacos.showServiceSubscribers",
+        "title": "%atNacos.command.showServiceSubscribers.title%"
       }
     ],
     "menus": {
@@ -108,6 +128,53 @@
         {
           "command": "atNacos.loadMoreServices",
           "when": "false"
+        },
+        {
+          "command": "atNacos.showConfigHistory",
+          "when": "false"
+        },
+        {
+          "command": "atNacos.diffWithPrevious",
+          "when": "false"
+        },
+        {
+          "command": "atNacos.compareAcrossEnvironments",
+          "when": "false"
+        },
+        {
+          "command": "atNacos.showConfigListeners",
+          "when": "false"
+        },
+        {
+          "command": "atNacos.showServiceSubscribers",
+          "when": "false"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "atNacos.showConfigHistory",
+          "when": "viewItem =~ /^atNacos\\.config\\b/",
+          "group": "atNacos.inspect@1"
+        },
+        {
+          "command": "atNacos.diffWithPrevious",
+          "when": "viewItem =~ /^atNacos\\.config\\b/",
+          "group": "atNacos.inspect@2"
+        },
+        {
+          "command": "atNacos.compareAcrossEnvironments",
+          "when": "viewItem =~ /^atNacos\\.config\\b/",
+          "group": "atNacos.inspect@3"
+        },
+        {
+          "command": "atNacos.showConfigListeners",
+          "when": "viewItem =~ /^atNacos\\.config\\b/",
+          "group": "atNacos.inspect@4"
+        },
+        {
+          "command": "atNacos.showServiceSubscribers",
+          "when": "viewItem =~ /^atNacos\\.service\\b/",
+          "group": "atNacos.inspect@1"
         }
       ],
       "view/title": [

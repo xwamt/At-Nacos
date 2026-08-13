@@ -109,6 +109,16 @@ describe('renderConfigListeners, the listener table', () => {
     expect(body).toContain('HTTP 403');
   });
 
+  /**
+   * One missing md5, one sentence. The error above already says the
+   * configuration could not be read, and adding "so the md5 is unknown" under
+   * it reads as a second, separate problem.
+   */
+  it('says the md5 is unknown only when nothing else already explained why', () => {
+    expect(bodyOf({ listeners: [listener()], configError: 'HTTP 403' })).not.toContain('current md5');
+    expect(bodyOf({ listeners: [listener()] })).toContain('current md5');
+  });
+
   it('counts how many clients are behind, so the answer is readable without reading the table', () => {
     const body = bodyOf(
       snapshot({
