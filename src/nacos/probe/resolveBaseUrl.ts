@@ -1,12 +1,16 @@
 import { NacosApiError } from '../NacosApiError';
-import type { NacosHttpClient } from '../NacosHttpClient';
+import { normalizeBaseUrl, type NacosHttpClient } from '../NacosHttpClient';
 
 /**
  * 按顺序要试的 base URL。`/nacos` 不是绝对的：K8s Ingress 和部分 Docker
  * 镜像把服务开在根路径上。
+ *
+ * `normalizeBaseUrl` 在这里再走一遍，不是因为 HTTP client 那边不做——那边
+ * 做了——而是因为候选本身会被回显：连接测试把探通的那个候选当作要保存的
+ * `serverUrl`，带着 `#/login` 存进配置只会让人以为自己填对了。
  */
 export function candidateBaseUrls(input: string): string[] {
-  const trimmed = input.trim().replace(/\/+$/, '');
+  const trimmed = normalizeBaseUrl(input);
   let url: URL;
   try {
     url = new URL(trimmed);

@@ -52,6 +52,27 @@ describe('candidateBaseUrls', () => {
   });
 
   /**
+   * A candidate is used as a base URL, and relative resolution against
+   * `http://h:8848/nacos?x=1/` throws the context path away -- the request
+   * lands on `/v1/...`. The explicit-path branch hands back what the user
+   * typed, so the query and fragment have to come off before it does.
+   */
+  it('drops a query string, which would otherwise erase the context path', () => {
+    expect(candidateBaseUrls('http://h:8848/nacos?x=1')).toEqual(['http://h:8848/nacos']);
+    expect(candidateBaseUrls('http://h:8848?x=1')).toEqual(['http://h:8848/nacos', 'http://h:8848']);
+  });
+
+  /** Copying the console URL out of a browser address bar produces exactly this. */
+  it('drops a fragment', () => {
+    expect(candidateBaseUrls('http://h:8848/nacos#frag')).toEqual(['http://h:8848/nacos']);
+    expect(candidateBaseUrls('http://h:8848/nacos/#/login')).toEqual(['http://h:8848/nacos']);
+  });
+
+  it('drops a fragment that itself contains a question mark', () => {
+    expect(candidateBaseUrls('http://h:8848/nacos#/login?redirect=/x')).toEqual(['http://h:8848/nacos']);
+  });
+
+  /**
    * Only the origin-derived candidates get normalized, because the explicit
    * branch exists precisely to hand back what the user typed. Both forms are
    * accepted downstream: the HTTP client re-parses every base URL anyway.

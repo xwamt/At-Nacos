@@ -174,6 +174,44 @@ describe('NacosHttpClient URL building', () => {
     expect(server.requests[0]?.url).toBe('/nacos/v1/console/server/state');
   });
 
+  /**
+   * A base URL is only ever a base: relative resolution against
+   * `http://host/nacos?x=1/` drops the context path entirely and sends the
+   * request to `/v1/...`. Nothing downstream can recover from that, so the
+   * query and the fragment are removed where every caller passes through --
+   * including the ones that hand a stored `serverUrl` straight to the client.
+   */
+  it('drops a query string on the base URL, which would otherwise erase the context path', async () => {
+    server = await startTestHttpServer((_request, response) => response.end('{}'));
+    const client = new NacosHttpClient({ baseUrl: `${server.origin}/nacos?x=1` });
+    await client.requestJson('GET', '/v1/console/server/state');
+    expect(server.requests[0]?.url).toBe('/nacos/v1/console/server/state');
+  });
+
+  /** What a user gets by copying the console URL out of a browser address bar. */
+  it('drops a fragment on the base URL', async () => {
+    server = await startTestHttpServer((_request, response) => response.end('{}'));
+    const client = new NacosHttpClient({ baseUrl: `${server.origin}/nacos/#/login` });
+    await client.requestJson('GET', '/v1/console/server/state');
+    expect(server.requests[0]?.url).toBe('/nacos/v1/console/server/state');
+  });
+
+  it('drops a query string on baseUrlOverride too', async () => {
+    server = await startTestHttpServer((_request, response) => response.end('{}'));
+    secondServer = await startTestHttpServer((_request, response) => response.end('{}'));
+    const client = new NacosHttpClient({ baseUrl: server.origin });
+    await client.requestJson('GET', '/v3/console/x', { baseUrlOverride: `${secondServer.origin}/console?y=2` });
+    expect(secondServer.requests[0]?.url).toBe('/console/v3/console/x');
+  });
+
+  /** Per-request query parameters are unaffected; only the base URL is normalized. */
+  it('still sends the query parameters the caller asked for', async () => {
+    server = await startTestHttpServer((_request, response) => response.end('{}'));
+    const client = new NacosHttpClient({ baseUrl: `${server.origin}/nacos?x=1` });
+    await client.requestJson('GET', '/v1/cs/configs', { query: { dataId: 'app.properties' } });
+    expect(server.requests[0]?.url).toBe('/nacos/v1/cs/configs?dataId=app.properties');
+  });
+
   it('omits a query parameter whose value is undefined rather than sending the string "undefined"', async () => {
     server = await startTestHttpServer((_request, response) => response.end('{}'));
     const client = new NacosHttpClient({ baseUrl: server.origin });

@@ -64,6 +64,28 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const SUCCESS_CODES: ReadonlySet<number> = new Set([0, 200]);
 
 /**
+ * Reduces an address to the part that can serve as a base for relative paths.
+ *
+ * A base URL exists to be extended, and `new URL('v3/x', 'http://h/nacos?q=1/')`
+ * resolves to `http://h/v3/x` -- the context path is gone and the request
+ * silently lands somewhere the API is not. A fragment does the same. Neither
+ * can be carried onto a sub-path anyway, so removing them loses nothing that
+ * could have worked.
+ *
+ * This lives here, at the one place every request funnels through, rather than
+ * in the address parsing further up: an instance's stored `serverUrl` is
+ * handed to this constructor directly, without passing `candidateBaseUrls`
+ * first, so a URL saved with a fragment would break every request the tree
+ * makes while the connection test that vetted it reported success.
+ *
+ * The cut is textual rather than a `URL` round trip so that an address is
+ * otherwise returned exactly as it was written.
+ */
+export function normalizeBaseUrl(input: string): string {
+  return input.trim().replace(/[?#][\s\S]*$/, '').replace(/\/+$/, '');
+}
+
+/**
  * Thin wrapper around node:http/node:https carrying the trickiest, most
  * security-sensitive logic in this client. When no certVerifier is supplied
  * this behaves exactly like a normal https client (Node's default chain
@@ -83,7 +105,7 @@ export class NacosHttpClient {
   private readonly log: AtNacosLog;
 
   constructor(private readonly options: NacosHttpClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.baseUrl = normalizeBaseUrl(options.baseUrl);
     this.log = asRedactedLog(options.log);
   }
 
@@ -141,7 +163,7 @@ export class NacosHttpClient {
   }
 
   private buildUrl(path: string, options: NacosRequestOptions): URL {
-    const base = (options.baseUrlOverride ?? this.baseUrl).replace(/\/+$/, '');
+    const base = normalizeBaseUrl(options.baseUrlOverride ?? this.baseUrl);
     // The leading slash has to go: as an absolute path it would replace the
     // context path (`/nacos`) that the base URL carries rather than extend it.
     const target = new URL(path.replace(/^\/+/, ''), `${base}/`);
