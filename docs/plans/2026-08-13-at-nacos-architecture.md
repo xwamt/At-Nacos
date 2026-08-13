@@ -522,7 +522,28 @@ at-nacos-series/
 | 2.x 根路径响应（原 §14-11 的 2.x 半边） | 返回 `text/html` 的控制台页面，不匹配 3.x 的 console 提示句。`parseConsoleHint` 不会误判。 |
 | `standalone_mode` → `startup_mode` 改名分界（原 §14-9） | 2.3.2 **已经**是 `startup_mode`。结合已知的 2.2.3 用 `standalone_mode`，分界收窄到 2.2.3 与 2.3.2 之间。两个键都读的策略是对的。 |
 
-### 14.2 真机上发现的、调研没预见到的两件事
+### 14.2 真机上发现的、调研没预见到的四件事
+
+**⓪ 「配置不存在」在 `?show=all` 上根本不是 404，而是 HTTP 200 + 空 body。**（M2 Task 3 的 live 测试抓到，推翻了 §5.5 原本的修法。）
+
+```
+GET /v1/cs/configs?show=all&dataId=<不存在>&group=X&tenant=Y
+  → HTTP 200, Content-Type: application/json, Content-Length: 0
+
+GET /v1/cs/configs?dataId=<不存在>&group=X&tenant=Y      （纯文本形式）
+  → HTTP 404, Content-Type: application/json
+    config data not exist
+```
+
+两者是**不同的 controller 方法**。`?show=all` 返回 `ConfigAllInfo`，Spring 把 null 序列化成零字节；纯文本形式才走那条 404 路径。而我们必须用 `?show=all`——纯文本形式不给 `type`，拿不到语法高亮的依据。
+
+所以判据是：**2xx 但解包后为空（空 body，或 3.x 的 `data: null`）即为资源不存在**。404 + Spring 错误页仍然表示端点不存在（该 fall through），404 + 非错误页 body 仍然表示资源不存在——这两条对纯文本形式和其它版本仍然成立，都保留着。
+
+**①' 传错命名空间参数名是静默失败。** 实测 `tenant=cl-parent` 返回 12 条，`namespaceId=cl-parent` 返回 `totalCount 0`、不报错。看起来就是「这个命名空间是空的」。这就是为什么 `V2Driver` 必须用 v1 的方言提问，以及为什么参数名映射要集中在 `namespaceParamName` 而不能散落。
+
+**①'' `md5` 在两种搜索模式下都是 null。** 只有 `type` 随模式变化。
+
+#### 14.2（续）调研没预见到的另两件
 
 **① `type` 字段只在 `search=accurate` 下被填充，`search=blur` 下是 `null`。**（原 §14-7 的答案，但比预期复杂。）
 
@@ -567,6 +588,26 @@ v1 的列表接口**没有**排除内容的参数。这对 M2 有三个直接后
 11. **用户名密码登录的完整链路。** 已验证环境 `auth_enabled=false`，所以 `UserPasswordStrategy`、token 缓存与刷新、403 重登重试、以及 `withAuth` 的整条重试路径都只有本地夹具覆盖，从未打过真的 `/v1/auth/login`。
 12. **TLS TOFU。** 没有 HTTPS 实例，指纹信任、变更告警、以及 M1 刚修的「提示框打开期间停表」都未经真机验证。
 
+### 14.4 M2 组装后的端到端验证（Nacos 2.3.2，2026-08-14）
+
+M2 Task 7 把 `test/live` 从驱动层抬到了 UI 层：这一组驱动的是 `ConfigTreeProvider` 与 `openConfigDocument` / `NacosConfigDocumentProvider` 本身，而不是它们底下的 `NacosClient`。驱动层的结论上面已经记过，这里只记新的。
+
+**① 从实例节点一路展开到编辑器是通的。** `cl-parent` 命名空间展开出 1 个分组 `cl-intimfy` 与 12 个 dataId；打开 `application-dev.yml` 得到 `nacos:/live/cl-parent/cl-intimfy/application-dev.yml`，`provideTextDocumentContent` 沿这个地址取回 1448 字节，language mode 为 `yaml`。URI 里没有任何凭据——「路径里放实例 id 而不是实例地址」这条设计在真机上成立。
+
+**② 一个命名空间的配置常常全落在同一个分组里。** 真机上 12 条配置同属 `cl-intimfy`。「分组由已加载的页面推导」这个取舍在这种分布下几乎没有代价，但也意味着它在真机上从未被压力测试过（见下）。
+
+**③ `type: text` 是真实存在的取值，不是理论上的。** `sentinel-cl-gateway` 的 `type` 就是 `text`，而它的 dataId 没有后缀，最终落到 `plaintext`。`configLanguage` 里 `text → plaintext` 这一行现在有真机依据。
+
+**④ 过滤态下的语法高亮走的确实是后缀回退。** 过滤 `application-dev` 后树从 12 条收窄到 1 条，该条目的 `type` 为 `null`（§14.2 ① 在树自己的 blur 路径上复现了一次），而打开它得到的 language mode 仍是 `yaml`——此时唯一的依据就是 dataId 后缀。M2 里唯一一条「回退即主路径」的链路，现在有真机覆盖。
+
+**这一组没有推翻任何假设。** 与前几次不同，服务端这次的行为与计划里写的完全一致。
+
+**M2 在真机上仍未覆盖的**——这几条不需要别的 Nacos 版本，只是这台服务器上没有相应的数据：
+
+13. **分页与 Load more。** 这台服务器上最大的命名空间只有 15 条配置，远低于每页 100 条，所以 `LoadMoreTreeItem` 在真机上从未出现过：翻第二页、增量合并、「新分组随下一页出现」、以及 `atNacos.loadMoreConfigs` 的失败提示，全部只有夹具覆盖。需要一个配置数超过 100 的命名空间。
+14. **非 ASCII 的 dataId。** 这台服务器上一个都没有，所以 URI 的中文编解码往返只有单测覆盖，标签页标题的实际渲染也没有在扩展宿主里看过（见 §16.6）。
+15. **虚拟文档的失败文案。** 「实例已被删除」与「配置已在服务端被删除」两条分支都只有夹具覆盖；后者要在标签页开着的时候去服务端删掉一条配置才能触发。
+
 ## 16. 已知延后项（M1 完成时记录）
 
 这些是 M1 整体评审确认过的、有意留到后续里程碑的问题。它们不是缺陷清单里的遗漏，但**开始 M2 之前应当各自有个决定**。
@@ -602,6 +643,22 @@ manager 的那条行为实际上不可达——唯一的生产调用方总是显
 ### 16.5 无法取消信任一张证书
 
 `NacosCertTrustStore.forget()` 存在且有测试，但没有任何命令或 UI 调用它。用户一旦信任了一张证书，除了手工编辑 `globalState` 之外没有反悔的办法。
+
+### 16.6 非 ASCII dataId 的标签页标题是百分号编码（M2 完成时记录）
+
+`buildConfigUri` 对每个路径段做 `encodeURIComponent`，这是必需的：dataId 合法地含 `/`，不编码就会把路径切成五段，`parseConfigUri` 的四段规则随之失效。代价是 `vscode.Uri.from({ path })` 把传进去的字符串**原样**当作已解码的 path 存下来，于是 `uri.path` 里躺着的就是 `%E8%AE%A2...`，而标签页标题取的正是它。dataId 为 `订单服务.yaml` 的配置，标签页会写成 `%E8%AE%A2%E5%8D%95%E6%9C%8D%E5%8A%A1.yaml`。对一个面向中文用户的插件，这不是理论代价。
+
+**`contributes.resourceLabelFormatters` 修不了这一条。** 读 VS Code 源码确认（`src/vs/workbench/services/label/common/labelService.ts`、`src/vs/workbench/common/editor/resourceEditorInput.ts`）：
+
+- 标签页标题这条链路确实经过 formatter：`AbstractResourceEditorInput.getName()` → `labelService.getUriBasenameLabel(resource)` → `basename(formatUri(...))`。
+- 但 `formatUri` 的模板只认五个 token（`labelMatchingRegexp`）：`${scheme}` / `${authority}` / `${authoritySuffix}` / `${path}` / `${query.KEY}`。其中 `case 'path'` 直接返回 `resource.path`，整个文件没有任何一处 `decodeURI*`。
+
+也就是说 `label: "${path}"` 拿到的就是我们自己写进去的那串编码，加不加这条 contribution 结果一模一样。所以 M2 **没有**加它：一条什么都不做的 contribution 比不加更糟，它会让下一个人以为这里已经处理过。
+
+真正走得通的有两条，都不是 manifest 改动，因此都留待专门决定：
+
+1. **`${query.dataId}` + 在 URI 上挂一个 JSON query。** `formatUri` 会对 `resource.query` 做 `JSON.parse` 再取键，所以这条确实能显示出原文。但它等于把 dataId 在文档主键里写两遍、纯为显示；两份一旦不一致，同一条配置就会开出两个 buffer。而且 dataId 含 `/` 时 `basename` 仍会把前缀切掉。
+2. **只编码会破坏路径结构的字符**（`%` 与 `/`），其余原样进 path。`uri.path` 于是是 `/inst/uat/cl-intimfy/订单服务.yaml`，标签页不需要任何 contribution 就是对的，含 `/` 的 dataId 退化成 `com%2Fexample%2Fservice.yml`。这是更干净的解，但它改的是 `configUri.ts` 的编码约定，会改变每一个已打开文档的身份（VS Code 按 `uri.toString()` 认文档），应当单独决定而不是顺手带过。
 
 ## 15. 参考
 
