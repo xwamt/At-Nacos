@@ -3,10 +3,19 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { parseNacosInstanceConfig, type NacosInstanceConfig } from '../../src/config/schema';
-import type { NacosNamespace } from '../../src/nacos/driver/normalize';
-import { ConfigTreeProvider } from '../../src/tree/ConfigTreeProvider';
-import type { NacosTreeClient } from '../../src/tree/NacosTreeBase';
-import { ErrorTreeItem, InstanceTreeItem, NamespaceTreeItem } from '../../src/tree/NacosTreeItems';
+import { openConfigDocument } from '../../src/document/openConfigDocument';
+import type { NacosConfigListQuery } from '../../src/nacos/driver/NacosDriver';
+import type { NacosConfigSummary, NacosNamespace, Paged } from '../../src/nacos/driver/normalize';
+import { ConfigTreeProvider, type NacosConfigTreeClient } from '../../src/tree/ConfigTreeProvider';
+import {
+  ConfigTreeItem,
+  ErrorTreeItem,
+  GroupTreeItem,
+  InstanceTreeItem,
+  LoadMoreTreeItem,
+  NamespaceTreeItem,
+  type NacosTreeItem
+} from '../../src/tree/NacosTreeItems';
 
 function instance(overrides: Partial<NacosInstanceConfig> = {}): NacosInstanceConfig {
   return {
@@ -26,7 +35,11 @@ function namespace(overrides: Partial<NacosNamespace> = {}): NacosNamespace {
   return { namespaceId: 'ns-staging', displayName: 'Staging', type: 2, ...overrides };
 }
 
-function stubClient(namespaces: NacosNamespace[], majorVersion = 3): NacosTreeClient {
+function emptyPage(): Paged<NacosConfigSummary> {
+  return { items: [], totalCount: 0, pageNumber: 1, pagesAvailable: 1 };
+}
+
+function stubClient(namespaces: NacosNamespace[], majorVersion = 3): NacosConfigTreeClient {
   return {
     state: {
       version: `${majorVersion}.0.0`,
@@ -35,18 +48,69 @@ function stubClient(namespaces: NacosNamespace[], majorVersion = 3): NacosTreeCl
       authEnabled: false,
       raw: {}
     },
-    listNamespaces: async () => namespaces
+    listNamespaces: async () => namespaces,
+    listConfigs: async () => emptyPage()
+  };
+}
+
+function config(group: string, dataId: string, overrides: Partial<NacosConfigSummary> = {}): NacosConfigSummary {
+  return { namespaceId: 'ns-staging', group, dataId, type: 'yaml', ...overrides };
+}
+
+/**
+ * A listing served from fixed pages, answering whichever page number it was
+ * asked for. `pagesAvailable` is what the tree reads to decide whether to
+ * offer Load more, so it follows the fixture rather than being stated twice.
+ */
+function pagesOf(...pages: NacosConfigSummary[][]) {
+  return (query: NacosConfigListQuery): Paged<NacosConfigSummary> => ({
+    items: pages[query.pageNo - 1] ?? [],
+    totalCount: pages.reduce((sum, page) => sum + page.length, 0),
+    pageNumber: query.pageNo,
+    pagesAvailable: pages.length
+  });
+}
+
+/**
+ * A client that records every config query it was handed. The page number and
+ * the search term are the whole subject of the paging and filtering tests, and
+ * they are visible nowhere else -- the tree items only show the result.
+ */
+function recordingClient(
+  respond: (query: NacosConfigListQuery) => Paged<NacosConfigSummary>,
+  namespaces: NacosNamespace[] = [namespace()]
+) {
+  const queries: NacosConfigListQuery[] = [];
+  return {
+    queries,
+    client: {
+      ...stubClient(namespaces),
+      listConfigs: async (query: NacosConfigListQuery) => {
+        queries.push(query);
+        return respond(query);
+      }
+    } satisfies NacosConfigTreeClient
   };
 }
 
 /** The one instance / one client shape most tests want. */
-function providerFor(client: NacosTreeClient, inst = instance()): ConfigTreeProvider {
+function providerFor(client: NacosConfigTreeClient, inst = instance()): ConfigTreeProvider {
   return new ConfigTreeProvider({ listInstances: async () => [inst] }, async () => client);
 }
 
 async function expandInstance(provider: ConfigTreeProvider, index = 0) {
   const roots = await provider.getChildren();
   return provider.getChildren(roots[index]);
+}
+
+async function expandNamespace(provider: ConfigTreeProvider, index = 0) {
+  const namespaces = await expandInstance(provider);
+  const namespaceItem = namespaces[index] as NamespaceTreeItem;
+  return { namespaceItem, children: await provider.getChildren(namespaceItem) };
+}
+
+function groupsIn(children: NacosTreeItem[]): GroupTreeItem[] {
+  return children.filter((item): item is GroupTreeItem => item instanceof GroupTreeItem);
 }
 
 afterEach(() => {
@@ -192,7 +256,7 @@ describe('ConfigTreeProvider namespace level', () => {
     expect(namespaceItem.contextValue).toBe('atNacos.namespace.readonly');
   });
 
-  it('stops at the namespace level in M1: expanding a namespace yields no children', async () => {
+  it('renders nothing under a namespace that holds no configuration at all', async () => {
     const provider = providerFor(stubClient([namespace()]));
 
     const [namespaceItem] = await expandInstance(provider);
@@ -286,7 +350,7 @@ describe('ConfigTreeProvider failures', () => {
 
   it('renders a failing namespace listing as an error node under the instance', async () => {
     const provider = providerFor({
-      state: stubClient([]).state,
+      ...stubClient([]),
       listNamespaces: async () => {
         throw new Error('Nacos answered 403 for /v3/admin/core/namespace/list');
       }
@@ -341,7 +405,7 @@ describe('ConfigTreeProvider caching and refresh', () => {
     let created = 0;
     const provider = new ConfigTreeProvider({ listInstances: async () => [instance()] }, async () => {
       created += 1;
-      return { state: stubClient([]).state, listNamespaces: () => pending };
+      return { ...stubClient([]), listNamespaces: () => pending };
     });
 
     const [root] = await provider.getChildren();
@@ -565,6 +629,502 @@ describe('ConfigTreeProvider localization', () => {
     expect(sources.length).toBeGreaterThan(0);
     for (const source of sources) {
       expect(Object.keys(bundle), source).toContain(source);
+    }
+  });
+
+  it('routes the labels of the three levels below a namespace through the bundle too', async () => {
+    const bundle = JSON.parse(readFileSync(resolve(process.cwd(), 'l10n/bundle.l10n.zh-cn.json'), 'utf8')) as Record<
+      string,
+      string
+    >;
+    const sources: string[] = [];
+    vi.spyOn(vscode.l10n, 't').mockImplementation((messageOrOptions: string | { message: string }) => {
+      const message = typeof messageOrOptions === 'string' ? messageOrOptions : messageOrOptions.message;
+      sources.push(message);
+      return message;
+    });
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'application-uat.yml')], [config('cl-gateway', 'gateway.yml')]));
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+    await provider.getChildren(children[0]);
+
+    expect(sources.length).toBeGreaterThan(0);
+    for (const source of sources) {
+      expect(Object.keys(bundle), source).toContain(source);
+    }
+  });
+});
+
+describe('ConfigTreeProvider group level', () => {
+  it('expands a namespace into one node per group of the configurations it loaded', async () => {
+    const { client } = recordingClient(
+      pagesOf([
+        config('cl-intimfy', 'application-uat.yml'),
+        config('cl-gateway', 'gateway.yml'),
+        config('cl-intimfy', 'redis.yml')
+      ])
+    );
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+
+    expect(children.every((item) => item instanceof GroupTreeItem)).toBe(true);
+    expect(children.map((item) => item.label)).toEqual(['cl-gateway', 'cl-intimfy']);
+    expect(children.map((item) => item.collapsibleState)).toEqual([
+      vscode.TreeItemCollapsibleState.Collapsed,
+      vscode.TreeItemCollapsibleState.Collapsed
+    ]);
+    expect(children.map((item) => item.contextValue)).toEqual(['atNacos.group', 'atNacos.group']);
+  });
+
+  it('asks for the first page of the namespace it was expanded under, a hundred configurations at a time', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'application-uat.yml')]), [
+      namespace({ namespaceId: 'uat' })
+    ]);
+    const provider = providerFor(client);
+
+    await expandNamespace(provider);
+
+    expect(queries).toEqual([{ namespaceId: 'uat', pageNo: 1, pageSize: 100 }]);
+  });
+
+  it('counts the configurations loaded into each group', async () => {
+    const { client } = recordingClient(
+      pagesOf([
+        config('cl-intimfy', 'application-uat.yml'),
+        config('cl-intimfy', 'redis.yml'),
+        config('cl-gateway', 'gateway.yml')
+      ])
+    );
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+
+    expect(children.map((item) => item.description)).toEqual(['1', '2']);
+  });
+
+  /**
+   * Nacos has no endpoint that lists groups, so the tree can only derive them
+   * from the configurations it has loaded -- and that set grows with every
+   * page. A user who reads the group list as complete would conclude a group
+   * does not exist when it merely has not been paged in yet.
+   */
+  it('says in the group tooltip that the list only covers the pages loaded so far', async () => {
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'application-uat.yml')]));
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+
+    expect(children[0].tooltip).toContain('cl-intimfy');
+    expect(children[0].tooltip).toContain('more groups may appear');
+  });
+
+  it('sorts the groups by name so that a later page does not reshuffle the ones on screen', async () => {
+    const { client } = recordingClient(
+      pagesOf([config('cl-zeta', 'a.yml'), config('cl-alpha', 'b.yml')], [config('cl-mu', 'c.yml')])
+    );
+    const provider = providerFor(client);
+
+    const { namespaceItem } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+    const grown = await provider.getChildren(namespaceItem);
+
+    expect(groupsIn(grown).map((item) => item.label)).toEqual(['cl-alpha', 'cl-mu', 'cl-zeta']);
+  });
+
+  it('carries the read-only suffix down to the group nodes of a read-only instance', async () => {
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'application-uat.yml')]));
+    const provider = providerFor(client, instance({ readOnly: true }));
+
+    const { children } = await expandNamespace(provider);
+
+    expect(children[0].contextValue).toBe('atNacos.group.readonly');
+  });
+});
+
+describe('ConfigTreeProvider configuration level', () => {
+  it('expands a group into one leaf node per dataId in that group', async () => {
+    const { client } = recordingClient(
+      pagesOf([
+        config('cl-intimfy', 'application-uat.yml'),
+        config('cl-gateway', 'gateway.yml'),
+        config('cl-intimfy', 'redis.yml')
+      ])
+    );
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+    const configs = await provider.getChildren(children[1]);
+
+    expect(configs.every((item) => item instanceof ConfigTreeItem)).toBe(true);
+    expect(configs.map((item) => item.label)).toEqual(['application-uat.yml', 'redis.yml']);
+    expect(configs.map((item) => item.collapsibleState)).toEqual([
+      vscode.TreeItemCollapsibleState.None,
+      vscode.TreeItemCollapsibleState.None
+    ]);
+    expect(configs.map((item) => item.contextValue)).toEqual(['atNacos.config', 'atNacos.config']);
+  });
+
+  it('gives a configuration node a command that opens exactly the configuration it stands for', async () => {
+    const target = config('cl-intimfy', 'application-uat.yml', { namespaceId: 'uat' });
+    const { client } = recordingClient(pagesOf([target]), [namespace({ namespaceId: 'uat' })]);
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+    const [configItem] = await provider.getChildren(children[0]);
+
+    expect(configItem.command?.command).toBe('atNacos.openConfig');
+    expect(configItem.command?.arguments).toEqual(['instance-1', target]);
+  });
+
+  /**
+   * The list endpoint sends the whole body of every configuration in the page
+   * and `normalizeConfigSummary` drops it at the boundary; this is the guard
+   * one layer up. A body reaching a hover would put a database password in it.
+   */
+  it('shows the group and the dataId in a configuration tooltip, and never the body', async () => {
+    const withBody = {
+      ...config('cl-intimfy', 'application-uat.yml'),
+      content: 'spring:\n  password: hunter2'
+    } as NacosConfigSummary;
+    const { client } = recordingClient(pagesOf([withBody]));
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+    const [configItem] = await provider.getChildren(children[0]);
+
+    expect(configItem.tooltip).toContain('cl-intimfy');
+    expect(configItem.tooltip).toContain('application-uat.yml');
+    expect(configItem.tooltip).not.toContain('hunter2');
+    expect(String(configItem.label)).not.toContain('hunter2');
+    expect(configItem.description ?? '').not.toContain('hunter2');
+  });
+
+  it('carries the read-only suffix down to the configuration nodes of a read-only instance', async () => {
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'application-uat.yml')]));
+    const provider = providerFor(client, instance({ readOnly: true }));
+
+    const { children } = await expandNamespace(provider);
+    const [configItem] = await provider.getChildren(children[0]);
+
+    expect(configItem.contextValue).toBe('atNacos.config.readonly');
+  });
+
+  it('answers nothing below a configuration node, which is a leaf', async () => {
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'application-uat.yml')]));
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+    const [configItem] = await provider.getChildren(children[0]);
+
+    expect(await provider.getChildren(configItem)).toEqual([]);
+  });
+});
+
+describe('ConfigTreeProvider paging', () => {
+  it('offers a Load more node under the namespace once the listing runs past one page', async () => {
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')], [config('cl-gateway', 'b.yml')]));
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+
+    expect(children[children.length - 1]).toBeInstanceOf(LoadMoreTreeItem);
+    expect(children[children.length - 1].collapsibleState).toBe(vscode.TreeItemCollapsibleState.None);
+  });
+
+  it('offers no Load more node when the namespace fits in a single page', async () => {
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')]));
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+
+    expect(children.some((item) => item instanceof LoadMoreTreeItem)).toBe(false);
+  });
+
+  /** The next page can introduce a group that does not exist yet, so the node cannot belong to one. */
+  it('hangs Load more under the namespace rather than under a group', async () => {
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')], [config('cl-gateway', 'b.yml')]));
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+    const underGroup = await provider.getChildren(groupsIn(children)[0]);
+
+    expect(underGroup.some((item) => item instanceof LoadMoreTreeItem)).toBe(false);
+  });
+
+  it('points the Load more command at the namespace it pages', async () => {
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')], [config('cl-gateway', 'b.yml')]));
+    const provider = providerFor(client);
+
+    const { namespaceItem, children } = await expandNamespace(provider);
+    const loadMoreItem = children[children.length - 1];
+
+    expect(loadMoreItem.command?.command).toBe('atNacos.loadMoreConfigs');
+    expect(loadMoreItem.command?.arguments).toEqual([namespaceItem]);
+  });
+
+  it('asks for the next page only, once per Load more', async () => {
+    const { client, queries } = recordingClient(
+      pagesOf([config('cl-intimfy', 'a.yml')], [config('cl-gateway', 'b.yml')], [config('cl-mu', 'c.yml')])
+    );
+    const provider = providerFor(client);
+
+    const { namespaceItem } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+
+    expect(queries.map((query) => query.pageNo)).toEqual([1, 2]);
+  });
+
+  /**
+   * The point of the whole exercise: Load more has to *add* to what is on
+   * screen. Rebuilding the namespace's children from the second page alone
+   * would drop the first, and the groups the user is reading would vanish.
+   */
+  it('grows the group set on Load more without discarding the pages already loaded', async () => {
+    const { client } = recordingClient(
+      pagesOf(
+        [config('cl-intimfy', 'application-uat.yml'), config('cl-gateway', 'gateway.yml')],
+        [config('cl-intimfy', 'redis.yml'), config('cl-mu', 'mu.yml')]
+      )
+    );
+    const provider = providerFor(client);
+
+    const { namespaceItem, children } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+    const grown = await provider.getChildren(namespaceItem);
+    const intimfy = groupsIn(grown).find((item) => item.label === 'cl-intimfy');
+
+    expect(groupsIn(children).map((item) => item.label)).toEqual(['cl-gateway', 'cl-intimfy']);
+    expect(groupsIn(grown).map((item) => item.label)).toEqual(['cl-gateway', 'cl-intimfy', 'cl-mu']);
+    expect((await provider.getChildren(intimfy)).map((item) => item.label)).toEqual([
+      'application-uat.yml',
+      'redis.yml'
+    ]);
+    expect(grown.some((item) => item instanceof LoadMoreTreeItem)).toBe(false);
+  });
+
+  /**
+   * VS Code keys a node's expanded state on its id. A group that is rebuilt
+   * with a different id after Load more is a different node to the view, so it
+   * redraws collapsed and the user loses the place they were reading.
+   */
+  it('keeps the id of a group stable when a later page adds configurations to it', async () => {
+    const { client } = recordingClient(
+      pagesOf([config('cl-intimfy', 'application-uat.yml')], [config('cl-intimfy', 'redis.yml')])
+    );
+    const provider = providerFor(client);
+
+    const { namespaceItem, children } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+    const grown = await provider.getChildren(namespaceItem);
+
+    expect(groupsIn(grown)[0].id).toBe(groupsIn(children)[0].id);
+  });
+
+  /**
+   * Firing undefined redraws the tree from the root, which collapses every
+   * node the user has open -- including the group they clicked Load more to
+   * add to. The base class makes the emitter protected for exactly this.
+   */
+  it('redraws only the namespace it paged, so the rest of the tree stays expanded', async () => {
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')], [config('cl-gateway', 'b.yml')]));
+    const provider = providerFor(client);
+    const { namespaceItem } = await expandNamespace(provider);
+    const changed: Array<NacosTreeItem | undefined | void> = [];
+    provider.onDidChangeTreeData((element) => changed.push(element));
+
+    await provider.loadMore(namespaceItem);
+
+    expect(changed).toEqual([namespaceItem]);
+  });
+
+  it('renders a configuration only once when a later page repeats it', async () => {
+    const repeated = config('cl-intimfy', 'application-uat.yml');
+    const { client } = recordingClient(pagesOf([repeated], [repeated, config('cl-intimfy', 'redis.yml')]));
+    const provider = providerFor(client);
+
+    const { namespaceItem } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+    const grown = await provider.getChildren(namespaceItem);
+    const configs = await provider.getChildren(groupsIn(grown)[0]);
+
+    expect(configs.map((item) => item.label)).toEqual(['application-uat.yml', 'redis.yml']);
+  });
+
+  it('keeps the pages already loaded when the next page fails', async () => {
+    const { client, queries } = recordingClient((query) => {
+      if (query.pageNo === 2) {
+        throw new Error('connect ETIMEDOUT 10.0.0.9:8848');
+      }
+      return { items: [config('cl-intimfy', 'a.yml')], totalCount: 2, pageNumber: 1, pagesAvailable: 2 };
+    });
+    const provider = providerFor(client);
+
+    const { namespaceItem } = await expandNamespace(provider);
+    await expect(provider.loadMore(namespaceItem)).rejects.toThrow('ETIMEDOUT');
+    const afterFailure = await provider.getChildren(namespaceItem);
+
+    expect(groupsIn(afterFailure).map((item) => item.label)).toEqual(['cl-intimfy']);
+    expect(afterFailure.some((item) => item instanceof LoadMoreTreeItem)).toBe(true);
+    expect(queries.map((query) => query.pageNo)).toEqual([1, 2]);
+  });
+
+  it('serves a second expansion of the same namespace from the page it already loaded', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')]));
+    const provider = providerFor(client);
+
+    const { namespaceItem } = await expandNamespace(provider);
+    await provider.getChildren(namespaceItem);
+
+    expect(queries).toHaveLength(1);
+  });
+
+  it('collapses concurrent expansions of one namespace into a single request', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')]));
+    const provider = providerFor(client);
+
+    const [namespaceItem] = await expandInstance(provider);
+    await Promise.all([provider.getChildren(namespaceItem), provider.getChildren(namespaceItem)]);
+
+    expect(queries).toHaveLength(1);
+  });
+
+  it('drops the loaded pages on refresh() so the next expansion starts at page one again', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')], [config('cl-mu', 'b.yml')]));
+    const provider = providerFor(client);
+
+    const { namespaceItem } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+    provider.refresh();
+    const afterRefresh = await provider.getChildren(namespaceItem);
+
+    expect(queries.map((query) => query.pageNo)).toEqual([1, 2, 1]);
+    expect(groupsIn(afterRefresh).map((item) => item.label)).toEqual(['cl-intimfy']);
+  });
+
+  it('ignores a Load more for a namespace whose pages were dropped, rather than paging past page one', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')], [config('cl-mu', 'b.yml')]));
+    const provider = providerFor(client);
+
+    const { namespaceItem } = await expandNamespace(provider);
+    provider.refresh();
+    await provider.loadMore(namespaceItem);
+
+    expect(queries.map((query) => query.pageNo)).toEqual([1]);
+  });
+});
+
+describe('ConfigTreeProvider configuration failures', () => {
+  it('renders a failing configuration listing as an error node under the namespace', async () => {
+    const { client } = recordingClient(() => {
+      throw new Error('Nacos answered 403 for /v1/cs/configs');
+    });
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+
+    expect(children).toHaveLength(1);
+    expect(children[0]).toBeInstanceOf(ErrorTreeItem);
+    expect(children[0].description).toContain('Nacos answered 403 for /v1/cs/configs');
+  });
+
+  it('keeps one namespace loading when another namespace fails, and attaches the error to the one that failed', async () => {
+    const { client } = recordingClient(
+      (query) => {
+        if (query.namespaceId === 'broken') {
+          throw new Error('host unreachable');
+        }
+        return pagesOf([config('cl-intimfy', 'a.yml')])(query);
+      },
+      [namespace({ namespaceId: 'healthy' }), namespace({ namespaceId: 'broken' })]
+    );
+    const provider = providerFor(client);
+
+    const healthy = await expandNamespace(provider, 0);
+    const broken = await expandNamespace(provider, 1);
+
+    expect(groupsIn(healthy.children).map((item) => item.label)).toEqual(['cl-intimfy']);
+    expect(broken.children).toHaveLength(1);
+    expect(broken.children[0]).toBeInstanceOf(ErrorTreeItem);
+    expect(healthy.children[0].id).not.toBe(broken.children[0].id);
+  });
+
+  it('retries a failed configuration listing instead of replaying the same rejection', async () => {
+    let attempts = 0;
+    const { client } = recordingClient((query) => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error('connect ETIMEDOUT 10.0.0.9:8848');
+      }
+      return pagesOf([config('cl-intimfy', 'a.yml')])(query);
+    });
+    const provider = providerFor(client);
+
+    const { namespaceItem, children } = await expandNamespace(provider);
+    const second = await provider.getChildren(namespaceItem);
+
+    expect(children[0]).toBeInstanceOf(ErrorTreeItem);
+    expect(groupsIn(second).map((item) => item.label)).toEqual(['cl-intimfy']);
+  });
+
+  it('redacts credentials out of the error node it renders under a namespace', async () => {
+    const { client } = recordingClient(() => {
+      throw new Error('GET /v1/cs/configs?username=nacos&password=hunter2 failed');
+    });
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+
+    expect(children[0].description).not.toContain('hunter2');
+    expect(children[0].description).toContain('[REDACTED]');
+  });
+});
+
+describe('ConfigTreeProvider configuration item identity', () => {
+  it('keeps group and configuration ids distinct across two namespaces that share a group name', async () => {
+    const { client } = recordingClient(pagesOf([config('shared', 'application.yml')]), [
+      namespace({ namespaceId: 'uat' }),
+      namespace({ namespaceId: 'prod' })
+    ]);
+    const provider = providerFor(client);
+
+    const uat = await expandNamespace(provider, 0);
+    const prod = await expandNamespace(provider, 1);
+    const [uatConfig] = await provider.getChildren(uat.children[0]);
+    const [prodConfig] = await provider.getChildren(prod.children[0]);
+
+    expect(uat.children[0].id).not.toBe(prod.children[0].id);
+    expect(uatConfig.id).not.toBe(prodConfig.id);
+  });
+
+  /**
+   * A dataId may legally contain a colon, and so may a group name. Joining the
+   * parts raw would give group `a:b` + dataId `c` and group `a` + dataId `b:c`
+   * one id between them, and VS Code renders at most one item per id -- so one
+   * of two real configurations would silently disappear.
+   */
+  it('keeps configuration ids distinct when a colon in a name could be read as the separator', async () => {
+    const { client } = recordingClient(pagesOf([config('a:b', 'c'), config('a', 'b:c')]));
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+    const [first] = await provider.getChildren(children[0]);
+    const [second] = await provider.getChildren(children[1]);
+
+    expect(children[0].id).not.toBe(children[1].id);
+    expect(first.id).not.toBe(second.id);
+  });
+
+  it('scopes every node it adds to the configuration view, so the service tree cannot collide with it', async () => {
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')], [config('cl-mu', 'b.yml')]));
+    const provider = providerFor(client);
+
+    const { children } = await expandNamespace(provider);
+    const configs = await provider.getChildren(children[0]);
+
+    for (const item of [...children, ...configs]) {
+      expect(String(item.id), String(item.label)).toMatch(/^atNacos\.config\./);
     }
   });
 });

@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as vscode from 'vscode';
 import type { NacosInstanceConfig } from '../../src/config/schema';
 import type { NacosNamespace } from '../../src/nacos/driver/normalize';
-import { ConfigTreeProvider } from '../../src/tree/ConfigTreeProvider';
-import type { NacosTreeClient } from '../../src/tree/NacosTreeBase';
+import { ConfigTreeProvider, type NacosConfigTreeClient } from '../../src/tree/ConfigTreeProvider';
 import { ErrorTreeItem, InstanceTreeItem, NamespaceTreeItem } from '../../src/tree/NacosTreeItems';
 import { ServiceTreeProvider } from '../../src/tree/ServiceTreeProvider';
 
@@ -21,7 +20,12 @@ function instance(overrides: Partial<NacosInstanceConfig> = {}): NacosInstanceCo
   };
 }
 
-function stubClient(namespaces: NacosNamespace[], majorVersion = 1): NacosTreeClient {
+/**
+ * Wide enough for both trees, because the assertions below run the same stub
+ * through each of them. The service tree never calls `listConfigs`; the
+ * configuration tree needs it from M2 on.
+ */
+function stubClient(namespaces: NacosNamespace[], majorVersion = 1): NacosConfigTreeClient {
   return {
     state: {
       version: `${majorVersion}.0.0`,
@@ -30,7 +34,8 @@ function stubClient(namespaces: NacosNamespace[], majorVersion = 1): NacosTreeCl
       authEnabled: false,
       raw: {}
     },
-    listNamespaces: async () => namespaces
+    listNamespaces: async () => namespaces,
+    listConfigs: async () => ({ items: [], totalCount: 0, pageNumber: 1, pagesAvailable: 1 })
   };
 }
 
