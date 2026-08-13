@@ -2,13 +2,9 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import type { TLSSocket } from 'node:tls';
 import { asRedactedLog, type AtNacosLog } from '../utils/logger';
-import {
-  classifyHttpStatus,
-  NacosApiError,
-  toNetworkOrTlsError,
-  type NacosApiErrorKind
-} from './NacosApiError';
+import { classifyHttpStatus, describeFailure, NacosApiError, toNetworkOrTlsError } from './NacosApiError';
 import type { NacosCertVerifier } from './NacosCertTrustStore';
+import { isRecord } from './jsonGuards';
 
 export type { NacosCertVerifier } from './NacosCertTrustStore';
 
@@ -397,41 +393,3 @@ function parseJsonResponse<T>(status: number, text: string, target: URL): T {
   return parsed as T;
 }
 
-/** Turns the classification into one sentence that points at the next action. */
-function describeFailure(kind: NacosApiErrorKind, status: number, text: string, target: URL): string {
-  const detail = extractErrorMessage(text);
-  switch (kind) {
-    case 'api-deprecated':
-      return `Nacos rejected ${target.pathname} as a deprecated API (HTTP 410). This server is Nacos 3.0/3.1 with the v1/v2 compatibility switch turned off.`;
-    case 'not-found':
-      return `Nacos has no endpoint at ${target.pathname} (HTTP 404).`;
-    case 'forbidden':
-      return `Nacos denied the request to ${target.pathname} (HTTP 403)${detail ? `: ${detail}` : '. The credential may be expired, or the account may lack permission for this API.'}`;
-    case 'gateway-auth':
-      return `Something in front of Nacos returned HTTP 401 for ${target.pathname}. Nacos itself never answers 401, so check the reverse proxy or gateway.`;
-    default:
-      return `Nacos returned HTTP ${status} for ${target.pathname}${detail ? `: ${detail}` : '.'}`;
-  }
-}
-
-/** v2/v3 error bodies are `{code,message,data}`; 1.x often sends bare text. */
-function extractErrorMessage(text: string): string | undefined {
-  if (text.length === 0) {
-    return undefined;
-  }
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (isRecord(parsed) && typeof parsed.message === 'string' && parsed.message.length > 0) {
-      return parsed.message;
-    }
-  } catch {
-    // A non-JSON body: 1.x's plain-text errors, or Spring's 410 error page.
-    // Truncating and passing it through beats dropping it.
-    return text.slice(0, 200);
-  }
-  return undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
