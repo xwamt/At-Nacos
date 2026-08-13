@@ -86,9 +86,19 @@
           "group": "navigation@3"
         },
         {
-          "command": "atNacos.refreshServices",
+          "command": "atNacos.addInstance",
           "when": "view == atNacos.services",
           "group": "navigation@1"
+        },
+        {
+          "command": "atNacos.refreshServices",
+          "when": "view == atNacos.services",
+          "group": "navigation@2"
+        },
+        {
+          "command": "atNacos.manageInstances",
+          "when": "view == atNacos.services",
+          "group": "navigation@3"
         }
       ]
     },
