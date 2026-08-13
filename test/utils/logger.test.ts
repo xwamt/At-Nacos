@@ -73,7 +73,9 @@ describe('createRedactedLog', () => {
       'config content carries spring.datasource.password=[REDACTED]',
       'applied spring.redis.password: [REDACTED]',
       'instance credential accessKey=[REDACTED] rotated',
-      'GET /nacos/v1/cs/configs?accessToken=[REDACTED] -> 200',
+      // The pagination survives because the JWT is replaced before the field
+      // pattern runs, and the marker it leaves behind is matched as itself.
+      'GET /nacos/v1/cs/configs?accessToken=[REDACTED]&pageNo=1 -> 200',
       '[REDACTED_PRIVATE_KEY]'
     ]);
   });

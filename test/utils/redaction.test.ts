@@ -50,6 +50,42 @@ describe('redactSensitiveText', () => {
     );
   });
 
+  it('does not let an escaped quote end a string early and leak the rest', () => {
+    const once = redactSensitiveText('{"password":"hun\\"ter"}');
+
+    expect(once).toBe('{"password":"[REDACTED]"}');
+    expect(redactSensitiveText(once)).toBe(once);
+    expect(redactSensitiveText("password: 'hun\\'ter'")).toBe("password: '[REDACTED]'");
+  });
+
+  it('leaves an object-valued secret key to the inner keys, which can be judged on their own', () => {
+    expect(redactSensitiveText('{"credential": {"accessKey": "LTAI5tSomeAliyunKey"}}')).toBe(
+      '{"credential": {"accessKey": "[REDACTED]"}}'
+    );
+  });
+
+  it('consumes an array-valued secret key whole rather than leaving its elements bare', () => {
+    // An array under a secret name holds secrets. Skipping it the way the
+    // object case is skipped would leave every element in the clear, because
+    // elements carry no names of their own for a second pass to judge. Eating
+    // the surrounding punctuation is the safe way to lose this trade.
+    expect(redactSensitiveText('{"secret": ["a","b"]}')).toBe('{"secret": [REDACTED]');
+    // A plural name is not in the word list, so this one is untouched for a
+    // different reason: the secret word has to end where the separator begins.
+    expect(redactSensitiveText('{"secrets": ["a","b"]}')).toBe('{"secrets": ["a","b"]}');
+  });
+
+  it('redacts an unquoted value that merely contains a brace', () => {
+    expect(redactSensitiveText('password=P@ss{word}')).toBe('password=[REDACTED]');
+  });
+
+  it('redacts a scalar that happens to open with a bracket', () => {
+    // The structural guard covers `{` only. Exempting `[` as well would read
+    // this password as a structure and leave it in the clear.
+    expect(redactSensitiveText('password=[br@cketed]')).toBe('password=[REDACTED]');
+    expect(redactSensitiveText('password: [br@cketed]')).toBe('password: [REDACTED]');
+  });
+
   it('is idempotent on the JSON form, whose marker now carries quotes of its own', () => {
     const once = redactSensitiveText('{"password": "hunter2"}');
     expect(once).toBe('{"password": "[REDACTED]"}');
@@ -87,12 +123,33 @@ describe('redactSensitiveText', () => {
     expect(redactSensitiveText('MYSQL_ROOT_PASSWORD=hunter2')).toBe('MYSQL_ROOT_PASSWORD=[REDACTED]');
   });
 
-  it('redacts an accessToken carried in a request URL, at the cost of the query tail', () => {
+  it('redacts an accessToken carried in a request URL', () => {
     const redacted = redactSensitiveText(
       'GET /nacos/v1/cs/configs?accessToken=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuYWNvcyJ9.Sf1kx&pageNo=1 -> 403'
     );
     expect(redacted).not.toContain('eyJzdWIiOiJuYWNvcyJ9');
-    expect(redacted).toBe('GET /nacos/v1/cs/configs?accessToken=[REDACTED] -> 403');
+    expect(redacted).toBe('GET /nacos/v1/cs/configs?accessToken=[REDACTED]&pageNo=1 -> 403');
+  });
+
+  it('takes the query tail with it when the value itself is what gets matched', () => {
+    // The standing cost of an unquoted value running to the next space. The
+    // URL above escapes it only because the JWT is replaced first, and the
+    // marker that leaves behind is matched by a branch of its own.
+    expect(redactSensitiveText('POST /nacos/v1/auth/login?password=hunter2&username=nacos')).toBe(
+      'POST /nacos/v1/auth/login?password=[REDACTED]'
+    );
+  });
+
+  it('stops eroding a line once the value is already the marker', () => {
+    // formatError redacts, then the logger redacts again on the way to the
+    // channel. Without a branch for the marker each pass would eat a little
+    // more of what follows it, so the same line would read differently
+    // depending on how many times it had been through.
+    const once = redactSensitiveText('GET /configs?accessToken=eyJhbGciOi.eyJzdWIi.Sf1kx&pageNo=1');
+
+    expect(once).toBe('GET /configs?accessToken=[REDACTED]&pageNo=1');
+    expect(redactSensitiveText(once)).toBe(once);
+    expect(redactSensitiveText(redactSensitiveText(once))).toBe(once);
   });
 
   it('leaves configuration keys that only look sensitive alone', () => {

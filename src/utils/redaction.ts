@@ -10,6 +10,20 @@
  * different result when the pattern that wrote it matches again, which matters
  * because `formatError` redacts once and the logger redacts again on the way
  * to the channel.
+ *
+ * Three shapes are deliberately out of scope, so that nobody widens the
+ * patterns to reach them:
+ *
+ * - Prose. `the password is hunter2` has no separator introducing the value,
+ *   and a pattern loose enough to read English would fire on most sentences
+ *   containing the word.
+ * - Unlabelled high-entropy strings. Recognizing a bare base64 key without a
+ *   name in front of it means scoring entropy, which cannot tell a secret from
+ *   a namespace id or a config md5 -- both of which appear in nearly every
+ *   line this extension logs.
+ * - The tail of a query string whose value is not already redacted. See
+ *   `NACOS_SECRET_FIELD_PATTERN`; narrowing the value to stop at `&` would
+ *   half-redact any password containing one.
  */
 
 const PRIVATE_KEY_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*/g;
@@ -61,14 +75,34 @@ const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
  *
  * The value is an alternation rather than a plain `\S+` because those two
  * shapes want opposite things. A quoted value has to stop at its closing
- * quote: minified JSON puts the whole document on one line, and `\S+` would
- * swallow every field after the secret. An unquoted value has to keep going
+ * quote -- and only at a real one, since an escaped `\"` inside the string
+ * would otherwise end it early and leave the tail in the clear. Its two
+ * branches start on disjoint characters, which is what keeps a run of quotes
+ * from being ambiguous enough to backtrack over. Stopping at the closing
+ * quote is what a plain `\S+` cannot do: minified JSON puts the whole
+ * document on one line, and it would swallow every field after the secret.
+ * An unquoted value has to keep going
  * to the next space, so that a password containing `&`, `"` or `'` is
  * redacted whole rather than up to its first punctuation mark. The cost of
  * the unquoted branch is that a secret carried as a query parameter takes the
- * rest of the query string with it (`?accessToken=[REDACTED]` rather than
- * `?accessToken=[REDACTED]&pageNo=1`); that is the right way to lose the
+ * rest of the query string with it (`?password=[REDACTED]` rather than
+ * `?password=[REDACTED]&username=nacos`); that is the right way to lose the
  * trade, because the alternative leaks.
+ *
+ * What the unquoted branch must not do is start on a `{`, because an object is
+ * not a scalar to redact. `{"credential": {"accessKey": "..."}}` would
+ * otherwise have its outer key consume `{"accessKey":`, which strips the inner
+ * field of the very name that would have got it redacted. Skipping the outer
+ * key leaves each inner key to be judged on its own. A `[` gets no such
+ * exemption: an array under a secret name holds secrets, and consuming it
+ * whole over-redacts the surrounding punctuation rather than leaving its
+ * elements in the clear.
+ *
+ * The marker leads the alternation so that a value which has already been
+ * redacted is matched as itself rather than as an unquoted run. Without that
+ * branch the second pass over `?accessToken=[REDACTED]&pageNo=1` would take
+ * the query tail along with it, and every log line that survives two passes
+ * would lose a little more of itself than the pass before.
  *
  * The whitespace around the separator is horizontal only. A key and its value
  * always share a line, and `\s` would let a YAML key with an empty value
@@ -76,7 +110,7 @@ const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
  * key as its value.
  */
 const NACOS_SECRET_FIELD_PATTERN =
-  /((?:password|passwd|pwd|secret[.\-_]?key|secret|access[.\-_]?key|token|credential|private[.\-_]?key)["']?[ \t]*[=:][ \t]*)("[^"]*"|'[^']*'|\S+)/gi;
+  /((?:password|passwd|pwd|secret[.\-_]?key|secret|access[.\-_]?key|token|credential|private[.\-_]?key)["']?[ \t]*[=:][ \t]*)(\[REDACTED\]|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s{]\S*)/gi;
 
 export function redactSensitiveText(value: string): string {
   return value
