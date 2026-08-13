@@ -74,6 +74,113 @@ export function normalizeNamespace(entry: unknown): NacosNamespace {
   };
 }
 
+/** Where a config lives. All three are needed to fetch it, and `namespaceId` is '' for 1.x/2.x public. */
+export interface NacosConfigRef {
+  namespaceId: string;
+  group: string;
+  dataId: string;
+}
+
+export interface NacosConfigSummary extends NacosConfigRef {
+  /** null on a blur search; callers fall back to the dataId suffix. */
+  type?: string;
+  appName?: string;
+  md5?: string;
+}
+
+export interface NacosConfigDetail extends NacosConfigSummary {
+  content: string;
+  createTime?: number;
+  modifyTime?: number;
+  createIp?: string;
+  description?: string;
+}
+
+/**
+ * One entry of a config listing, with the content taken out.
+ *
+ * **`content` is dropped on purpose.** The server sends the whole config body
+ * in every list item whether we want it or not -- 12 configs measured 38KB on
+ * a real 2.3.2, and v1 has no parameter to exclude it. Keeping it would mean
+ * every node of the tree holds a full config body, and those bodies contain
+ * database passwords. Dropping it here, at the boundary, is what lets every
+ * layer above be unable to leak it.
+ *
+ * Field names differ by version: 1.x/2.x say `group` and `tenant`, 3.x says
+ * `groupName` and `namespaceId`. Whichever is present is taken, and the 3.x
+ * spelling wins if a compatibility layer sends both -- in that arrangement it
+ * is the legacy alias that goes stale.
+ */
+export function normalizeConfigSummary(entry: unknown): NacosConfigSummary {
+  const record = asConfigRecord(entry);
+  return {
+    // '' rather than a thrown error: the 1.x public namespace really is the
+    // empty string, so there is no value here that means "missing".
+    namespaceId: firstString(record.namespaceId, record.tenant) ?? '',
+    group: firstString(record.groupName, record.group) ?? '',
+    dataId: record.dataId,
+    type: optionalString(record.type),
+    appName: optionalString(record.appName),
+    md5: optionalString(record.md5)
+  };
+}
+
+/** A single config with its body, from `?show=all` on v1/v2 or the config detail endpoint on v3. */
+export function normalizeConfigDetail(entry: unknown): NacosConfigDetail {
+  const summary = normalizeConfigSummary(entry);
+  const record = asConfigRecord(entry);
+  const content = record.content;
+  if (typeof content !== 'string') {
+    // Defaulting to '' would open an empty editor for a config that is not
+    // empty, indistinguishable from the real thing -- and M5's publish path
+    // could then write that emptiness back to the server.
+    throw new NacosApiError(
+      'invalid-response',
+      `Nacos returned no content for the config ${summary.dataId}: the response carried ${describePayload(content)}.`
+    );
+  }
+  return {
+    ...summary,
+    content,
+    createTime: optionalNumber(record.createTime),
+    modifyTime: optionalNumber(record.modifyTime),
+    createIp: optionalString(record.createIp),
+    description: optionalString(record.desc)
+  };
+}
+
+/**
+ * The dataId is the entry's identity: without one there is nothing to render
+ * in the tree and nothing to fetch. A rename of that field in a future
+ * version breaks every item alike, so failing on the first says what happened
+ * more clearly than a page of blanks would.
+ */
+function asConfigRecord(entry: unknown): Record<string, unknown> & { dataId: string } {
+  if (!isRecord(entry) || typeof entry.dataId !== 'string' || entry.dataId.length === 0) {
+    throw new NacosApiError('invalid-response', 'Nacos returned a config entry with no dataId.');
+  }
+  return entry as Record<string, unknown> & { dataId: string };
+}
+
+/** Takes the first spelling a server actually sent, and '' counts as sent. */
+function firstString(...candidates: unknown[]): string | undefined {
+  return candidates.find((candidate): candidate is string => typeof candidate === 'string');
+}
+
+/**
+ * Nacos spells "not set" three different ways in one config entry: `''` for
+ * `appName` and `desc`, null for `type` under a blur search, and null for
+ * `md5` under an accurate one. Folding all of them into undefined is what
+ * lets callers write one check instead of three.
+ */
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === 'number' ? value : undefined;
+}
+
 /**
  * Reads v2/v3's `{code,message,data}` and 1.x's bare responses the same way.
  *
@@ -118,12 +225,63 @@ export function unwrapDataArray(payload: unknown, endpoint: string): unknown[] {
   return data;
 }
 
+export interface Paged<T> {
+  items: T[];
+  totalCount: number;
+  pageNumber: number;
+  pagesAvailable: number;
+}
+
+/**
+ * For paged endpoints: reads both the bare `Page` that 1.x/2.x answer the
+ * config list with and the `{code,message,data:{...}}` that 3.x wraps the
+ * same object in.
+ *
+ * A payload that is neither raises `invalid-response` naming the endpoint,
+ * for the same reason `unwrapDataArray` does: a raw TypeError out of `.map()`
+ * carries no kind, so `NacosCapabilityResolver` cannot judge whether to try
+ * the next driver and the chain stops there instead of falling through.
+ *
+ * Missing counters degrade rather than throw. The items are the payload and
+ * the counters are only navigation, so a response that carries rows is worth
+ * showing even if it forgot to say how many pages there are.
+ */
+export function normalizePaged<T>(payload: unknown, mapItem: (entry: unknown) => T, endpoint: string): Paged<T> {
+  const page = unwrapData<unknown>(payload);
+  if (!isRecord(page) || !Array.isArray(page.pageItems)) {
+    throw new NacosApiError(
+      'invalid-response',
+      `Nacos returned no page for ${endpoint}: the response carried ${describePage(page)}.`
+    );
+  }
+  const items = page.pageItems.map((entry: unknown) => mapItem(entry));
+  return {
+    items,
+    totalCount: typeof page.totalCount === 'number' ? page.totalCount : items.length,
+    pageNumber: typeof page.pageNumber === 'number' ? page.pageNumber : 1,
+    pagesAvailable: typeof page.pagesAvailable === 'number' ? page.pagesAvailable : 1
+  };
+}
+
+/** Points at the `pageItems` slot when there is one, since that is the field that failed. */
+function describePage(page: unknown): string {
+  if (!isRecord(page)) {
+    return describePayload(page);
+  }
+  return `an object whose pageItems field carried ${describePayload(page.pageItems)}`;
+}
+
 function describePayload(value: unknown): string {
   if (value === undefined) {
     return 'no data';
   }
   if (value === null) {
     return 'null';
+  }
+  // Before the isRecord check, which excludes arrays and would otherwise let
+  // one fall through to the ungrammatical, undiagnostic "a object".
+  if (Array.isArray(value)) {
+    return 'an array';
   }
   if (isRecord(value)) {
     return 'an object';
