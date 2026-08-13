@@ -26,6 +26,14 @@ const contextConfigs = [
     platform: 'browser',
     format: 'iife',
     target: 'chrome114'
+  }),
+  esbuild.context({
+    ...common,
+    entryPoints: ['webview/nacos-cluster-status/index.ts'],
+    outfile: 'dist/webview/nacos-cluster-status.js',
+    platform: 'browser',
+    format: 'iife',
+    target: 'chrome114'
   })
 ];
 
