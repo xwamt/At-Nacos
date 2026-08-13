@@ -17,11 +17,21 @@
 import { describe, expect, it } from 'vitest';
 import { createNacosClient } from '../../src/extension';
 import type { NacosInstanceConfig } from '../../src/config/schema';
+import { NacosConfigDocumentProvider } from '../../src/document/NacosConfigDocumentProvider';
+import { openConfigDocument } from '../../src/document/openConfigDocument';
 import type { NacosApiError } from '../../src/nacos/NacosApiError';
 import type { NacosClient } from '../../src/nacos/NacosClient';
 import { configLanguageId } from '../../src/nacos/driver/configLanguage';
 import type { NacosConfigSummary } from '../../src/nacos/driver/normalize';
 import { testNacosConnection } from '../../src/nacos/testNacosConnection';
+import { ConfigTreeProvider } from '../../src/tree/ConfigTreeProvider';
+import {
+  ConfigTreeItem,
+  GroupTreeItem,
+  LoadMoreTreeItem,
+  NamespaceTreeItem,
+  type NacosTreeItem
+} from '../../src/tree/NacosTreeItems';
 import { noopLog } from '../../src/utils/logger';
 
 const liveUrl = process.env.AT_NACOS_LIVE_URL;
@@ -220,4 +230,197 @@ describeLive('a real Nacos server, browsing configurations', () => {
     expect(error.shouldFallThrough()).toBe(false);
     console.log(`  missing dataId -> kind=${error.kind} status=${error.status ?? '(none)'}: ${error.message}`);
   });
+});
+
+/**
+ * The same server, reached the way a user reaches it: through the tree
+ * provider the view is backed by and the document layer a click goes through,
+ * rather than through the client those two are built on.
+ *
+ * What only this level can catch is the wiring between them -- that the
+ * summary the tree holds is the one the document layer is handed, that the
+ * address built from it survives a round trip, and that the language mode
+ * survives a filter. The driver tests above prove the server answers; these
+ * prove the answer reaches the editor.
+ *
+ * A generous timeout, because a page is a fresh client: `createNacosClient`
+ * probes the version on every call, deliberately, and expanding eleven
+ * namespaces to find one with configurations pays for eleven of them.
+ */
+const LIVE_BROWSE_TIMEOUT_MS = 60_000;
+
+/** One namespace of the live server, expanded down to its configurations. */
+interface BrowsedNamespace {
+  provider: ConfigTreeProvider;
+  namespaceItem: NamespaceTreeItem;
+  children: NacosTreeItem[];
+  groups: GroupTreeItem[];
+  configs: ConfigTreeItem[];
+}
+
+function liveConfigTree(): ConfigTreeProvider {
+  return new ConfigTreeProvider({ listInstances: async () => [liveInstance()] }, () => connectLive());
+}
+
+/**
+ * The instance is answered for whatever id is asked, because the tree built
+ * the address from `liveInstance().id` a moment earlier -- there is exactly
+ * one server in this suite.
+ */
+function liveDocumentProvider(): NacosConfigDocumentProvider {
+  return new NacosConfigDocumentProvider({ getInstance: async () => liveInstance() }, () => connectLive());
+}
+
+function groupsIn(children: NacosTreeItem[]): GroupTreeItem[] {
+  return children.filter((item): item is GroupTreeItem => item instanceof GroupTreeItem);
+}
+
+function configsIn(children: NacosTreeItem[]): ConfigTreeItem[] {
+  return children.filter((item): item is ConfigTreeItem => item instanceof ConfigTreeItem);
+}
+
+/**
+ * Walks instance -> namespace -> group -> configuration and stops at the first
+ * namespace that has anything under it. Not hard-coded to a namespace name, so
+ * the suite still means something on a server that is not this one.
+ */
+async function browseFirstPopulatedNamespace(provider: ConfigTreeProvider): Promise<BrowsedNamespace> {
+  const instances = await provider.getChildren();
+  expect(instances.length, 'the tree offered no instance to expand').toBe(1);
+  const namespaces = await provider.getChildren(instances[0]);
+
+  for (const candidate of namespaces) {
+    if (!(candidate instanceof NamespaceTreeItem)) {
+      continue;
+    }
+    const children = await provider.getChildren(candidate);
+    const groups = groupsIn(children);
+    if (groups.length === 0) {
+      continue;
+    }
+    const configs = (await Promise.all(groups.map((group) => provider.getChildren(group)))).flatMap(configsIn);
+    return { provider, namespaceItem: candidate, children, groups, configs };
+  }
+  throw new Error('no namespace on this server holds a configuration; nothing to browse');
+}
+
+function printTree(browsed: BrowsedNamespace, heading: string): void {
+  console.log(`  ${heading}`);
+  console.log(`    ${browsed.namespaceItem.label} [${browsed.namespaceItem.description ?? ''}]`);
+  for (const group of browsed.groups) {
+    console.log(`      ${group.label} (${group.description})`);
+    for (const item of browsed.configs.filter((entry) => entry.config.group === group.group)) {
+      console.log(
+        `        ${String(item.label).padEnd(34)} type=${(item.config.type ?? '(null)').padEnd(8)} ` +
+          `language=${configLanguageId(item.config)}`
+      );
+    }
+  }
+  for (const item of browsed.children.filter((entry) => entry instanceof LoadMoreTreeItem)) {
+    console.log(`      [Load more] ${item.description}`);
+  }
+}
+
+/** A configuration the tree found that we can assert a language mode on. */
+function firstYaml(configs: ConfigTreeItem[]): ConfigTreeItem {
+  const found = configs.find((item) => configLanguageId(item.config) === 'yaml');
+  expect(found, 'no YAML configuration on this server to open').toBeDefined();
+  return found as ConfigTreeItem;
+}
+
+describeLive('a real Nacos server, through the configuration tree and the editor', () => {
+  let browsing: Promise<BrowsedNamespace> | undefined;
+
+  /** Shared: the walk costs a probe per namespace, and all three tests want the same one. */
+  function browse(): Promise<BrowsedNamespace> {
+    browsing ??= browseFirstPopulatedNamespace(liveConfigTree());
+    return browsing;
+  }
+
+  it(
+    'expands an instance down to its groups and data IDs',
+    async () => {
+      const browsed = await browse();
+
+      expect(browsed.groups.length).toBeGreaterThan(0);
+      expect(browsed.configs.length).toBeGreaterThan(0);
+      // Nacos has no endpoint that lists groups, so every group node here was
+      // derived from the page of configurations that was loaded. A group with
+      // nothing under it would mean that derivation is wrong.
+      for (const group of browsed.groups) {
+        expect(
+          browsed.configs.filter((item) => item.config.group === group.group).length,
+          `group ${group.group} rendered with no configuration under it`
+        ).toBeGreaterThan(0);
+      }
+      printTree(browsed, `tree shape for namespace ${JSON.stringify(browsed.namespaceItem.namespace.namespaceId)}:`);
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  it(
+    'opens a configuration the tree found, through the address the document layer builds',
+    async () => {
+      const { namespaceItem, configs } = await browse();
+      const target = firstYaml(configs);
+
+      const document = await openConfigDocument(namespaceItem.instance.id, target.config);
+      const content = await liveDocumentProvider().provideTextDocumentContent(document.uri);
+
+      expect(document.languageId).toBe('yaml');
+      expect(content.length).toBeGreaterThan(0);
+      // The provider answers every failure with readable prose instead of
+      // rejecting, so a length check on its own would pass for "AT Nacos could
+      // not read this configuration".
+      expect(content).not.toMatch(/AT Nacos|no longer exists|no longer configured/);
+      console.log(
+        `  ${String(target.label)} -> ${document.uri.toString()}\n` +
+          `    language=${document.languageId} bytes=${content.length} ` +
+          `first line: ${JSON.stringify(content.split('\n')[0])}`
+      );
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  /**
+   * The filter searches with `search=blur`, and §14.2 records that Nacos
+   * fills `type` only under `search=accurate`. So the moment a user filters,
+   * the dataId suffix stops being a fallback and becomes the only thing
+   * deciding the syntax highlighting. This is the test that says so.
+   */
+  it(
+    'narrows the tree to a filter, and still highlights what is opened while filtered',
+    async () => {
+      const unfiltered = await browse();
+      const target = firstYaml(unfiltered.configs);
+      // A substring of a dataId the unfiltered pass really found, so the
+      // filter is guaranteed to match at least that one.
+      const needle = target.config.dataId.slice(0, Math.max(3, target.config.dataId.indexOf('.')));
+
+      const provider = liveConfigTree();
+      provider.setFilter(needle);
+      const filtered = await browseFirstPopulatedNamespace(provider);
+
+      expect(filtered.configs.length).toBeGreaterThan(0);
+      expect(filtered.configs.length).toBeLessThan(unfiltered.configs.length);
+      for (const item of filtered.configs) {
+        expect(item.config.dataId, 'a filtered listing returned a dataId that does not match').toContain(needle);
+      }
+
+      const openWhileFiltered = firstYaml(filtered.configs);
+      expect(
+        openWhileFiltered.config.type ?? null,
+        'a blur search filled in `type`; §14.2 says it does not, and the suffix fallback is built on that'
+      ).toBeNull();
+      const document = await openConfigDocument(filtered.namespaceItem.instance.id, openWhileFiltered.config);
+
+      expect(document.languageId).toBe('yaml');
+      printTree(filtered, `tree shape under filter ${JSON.stringify(needle)}:`);
+      console.log(
+        `    opened while filtered: ${String(openWhileFiltered.label)} ` +
+          `type=${openWhileFiltered.config.type ?? '(null)'} -> language=${document.languageId}`
+      );
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
 });
