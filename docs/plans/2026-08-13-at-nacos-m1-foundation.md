@@ -2550,7 +2550,9 @@ describe('testNacosConnection', () => {
 
 - [ ] **Step 2: 运行确认失败，实现，运行确认通过**
 
-`testNacosConnection` 遍历 `candidateBaseUrls()` 的候选，对每个调 `probeServerState`，第一个成功的返回 `{ ok: true, baseUrl, version, majorVersion, startupMode, consoleUrl? }`。全部失败时按最后一个错误的 kind 映射成 `reason: 'auth' | 'network' | 'tls' | 'error'`。
+`testNacosConnection` 遍历 `candidateBaseUrls()` 的候选，对每个调 `probeServerState`，第一个成功的返回 `{ ok: true, baseUrl, version, majorVersion, startupMode, consoleUrl? }`。全部失败时按最后一个错误的 kind 映射成 `reason: 'auth' | 'network' | 'tls' | 'error'`。`consoleUrl` 由 Task 7 的 `fetchConsoleHint()` 提供，仅当探测到 3.x 且用户未显式填写时才去问。
+
+**必须先处理 base URL 里的 query string 与 fragment。** `candidateBaseUrls` 的「显式路径」分支刻意原样返回用户输入，所以 `http://h:8848/nacos?x=1` 会原封不动传给 `NacosHttpClient`；而 `buildUrl` 拼出的 base 变成 `http://h:8848/nacos?x=1/`，相对解析会把 context path 整个丢掉，请求打到 `http://h:8848/v3/...`。这不是 Task 7 引入的，但连接测试是它第一次真正被触发的地方。在这里剥掉 `?` 和 `#` 之后的部分，并为此写一条测试。
 
 Run: `npx vitest run test/nacos/testNacosConnection.test.ts`
 Expected: PASS

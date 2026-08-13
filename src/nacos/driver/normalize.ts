@@ -1,50 +1,64 @@
 import { NacosApiError } from '../NacosApiError';
 import { isRecord } from '../jsonGuards';
+// Type-only, so it is erased before any module graph exists at runtime. The
+// alternative -- rehoming NacosApiFlavor here -- would put the driver
+// vocabulary in a file named for what it does to responses.
+import type { NacosApiFlavor } from './NacosDriver';
 
 export type NacosModule = 'config' | 'naming' | 'console';
 
 export interface NacosNamespace {
-  /** 1.x/2.x 的 public 是空字符串，3.x 是字面量 'public'。原样保留，不做归一。 */
+  /** Empty string on 1.x/2.x, the literal 'public' on 3.x. Carried through verbatim, never normalized. */
   namespaceId: string;
-  /** 服务端给的展示名。缺 `namespaceShowName` 时退回 id，可能是空串，见 `normalizeNamespace`。 */
+  /** The server's display name. Falls back to the id, which can be empty -- see `normalizeNamespace`. */
   displayName: string;
   description?: string;
   quota?: number;
   configCount?: number;
-  /** 0 = 全局/默认，1 = 默认私有，2 = 自定义。 */
+  /** 0 = global/default, 1 = default private, 2 = custom. */
   type: number;
 }
 
 /**
- * 1.x/2.x 里 public 的 id 是空字符串；传 `tenant=public` 会被当成一个
- * 名叫 "public" 的自定义命名空间，查出来是空的。3.x 统一成了字面量。
+ * Which spelling of the public namespace's id a server stores.
+ *
+ * On 1.x/2.x it is the empty string, and sending `public` instead addresses a
+ * *custom* namespace by that name -- which almost never exists, so the server
+ * answers with an empty result and no error at all. 3.x settled on the
+ * literal.
+ *
+ * Keyed on the server's major version rather than on the driver flavor,
+ * because this is a question about what the server has stored, not about
+ * which endpoint family is being asked.
  */
 export function publicNamespaceId(majorVersion: number): string {
   return majorVersion >= 3 ? 'public' : '';
 }
 
 /**
- * 1.x 的 config 模块用 `tenant`，同一版本的 naming 模块却用 `namespaceId`。
- * 这是最经常写错的地方，所以集中在这里映射，不允许在 driver 里硬编码。
+ * Which spelling of the namespace parameter an endpoint family expects.
  *
- * 注意 2.x：它同时保留了 v1 与 v2 两套端点，v1 config 仍是 `tenant`，v2
- * config 已经是 `namespaceId`——只看大版本号分不出这两者。当前按 v1 的拼法
- * 回答（2.x 上我们走的就是 v1 端点）。等哪个里程碑真的调用 v2 的 config
- * 端点时，这里要改成按 driver flavor 而不是大版本号来判断。
+ * Only the v1 config module says `tenant`; the v1 *naming* module already
+ * said `namespaceId`, and everything from v2 onward agrees on `namespaceId`.
+ * Getting this wrong is silent: the server ignores the unknown parameter and
+ * answers for the default namespace.
+ *
+ * Keyed on flavor rather than on major version, because the spelling follows
+ * the endpoint being called, not the server answering it. A 2.x server serves
+ * both the v1 paths and the v2 paths, and a major-version argument cannot
+ * tell those apart.
  */
-export function namespaceParamName(majorVersion: number, module: NacosModule): 'tenant' | 'namespaceId' {
-  if (majorVersion >= 3) {
-    return 'namespaceId';
-  }
-  return module === 'config' ? 'tenant' : 'namespaceId';
+export function namespaceParamName(flavor: NacosApiFlavor, module: NacosModule): 'tenant' | 'namespaceId' {
+  return flavor === 'v1' && module === 'config' ? 'tenant' : 'namespaceId';
 }
 
 /**
- * `displayName` 在缺 `namespaceShowName` 时退回 id，而 1.x 的 public 其 id
- * 就是空串——于是展示名也是空的。这里不补默认文案：领域层不该造展示文本，
- * 而且树层本来就要为 public 做本地化（l10n 里已有 `public` 这条），补了反
- * 而多一处版本相关的特判。调用方用 `publicNamespaceId(majorVersion)` 就能
- * 认出这一条。
+ * `displayName` falls back to the id when `namespaceShowName` is absent, and
+ * on 1.x the public namespace's id is the empty string -- so the display name
+ * can be empty too. No default is invented here: the domain layer should not
+ * author display text, and the tree has to special-case public regardless in
+ * order to localize it (`l10n` already carries a `public` key). Callers
+ * recognize the entry with `publicNamespaceId(majorVersion)`.
  */
 export function normalizeNamespace(entry: unknown): NacosNamespace {
   if (!isRecord(entry) || typeof entry.namespace !== 'string') {

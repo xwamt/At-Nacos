@@ -29,34 +29,31 @@ describe('publicNamespaceId', () => {
 });
 
 describe('namespaceParamName', () => {
-  it('uses tenant for the 1.x config module', () => {
-    expect(namespaceParamName(1, 'config')).toBe('tenant');
+  it('uses tenant for the v1 config module', () => {
+    expect(namespaceParamName('v1', 'config')).toBe('tenant');
   });
 
-  it('uses namespaceId for the 1.x naming module even though config uses tenant', () => {
-    expect(namespaceParamName(1, 'naming')).toBe('namespaceId');
+  it('uses namespaceId for the v1 naming module even though v1 config uses tenant', () => {
+    expect(namespaceParamName('v1', 'naming')).toBe('namespaceId');
   });
 
   /** 1.x's own console endpoints (namespace create/delete) take namespaceId, never tenant. */
-  it('uses namespaceId for the 1.x console module', () => {
-    expect(namespaceParamName(1, 'console')).toBe('namespaceId');
+  it('uses namespaceId for the v1 console module', () => {
+    expect(namespaceParamName('v1', 'console')).toBe('namespaceId');
   });
 
-  /**
-   * 2.x keeps the whole v1 surface, so a config call made against a v1 path
-   * still spells it `tenant`. The v2 config paths spell it `namespaceId`, and
-   * the major version alone cannot tell those two apart -- whoever adds the
-   * first v2 config call site has to key this off the driver flavor instead.
-   */
-  it('uses the v1 spelling on 2.x, which is right for v1 paths and wrong for v2 paths', () => {
-    expect(namespaceParamName(2, 'config')).toBe('tenant');
-    expect(namespaceParamName(2, 'naming')).toBe('namespaceId');
+  it('uses namespaceId for v2 config, which a major-version argument could not distinguish', () => {
+    // A 2.x server serves both the v1 config paths (tenant) and the v2 config
+    // paths (namespaceId). Keying on the flavor is what tells them apart.
+    expect(namespaceParamName('v2', 'config')).toBe('namespaceId');
+    expect(namespaceParamName('v2', 'naming')).toBe('namespaceId');
   });
 
-  it('uses namespaceId everywhere on 3.x', () => {
-    expect(namespaceParamName(3, 'config')).toBe('namespaceId');
-    expect(namespaceParamName(3, 'naming')).toBe('namespaceId');
-    expect(namespaceParamName(3, 'console')).toBe('namespaceId');
+  it('uses namespaceId for both v3 flavors', () => {
+    expect(namespaceParamName('v3-admin', 'config')).toBe('namespaceId');
+    expect(namespaceParamName('v3-console', 'config')).toBe('namespaceId');
+    expect(namespaceParamName('v3-admin', 'naming')).toBe('namespaceId');
+    expect(namespaceParamName('v3-console', 'console')).toBe('namespaceId');
   });
 });
 
