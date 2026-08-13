@@ -19,6 +19,7 @@ import { testNacosConnection } from './nacos/testNacosConnection';
 import { ConfigTreeProvider } from './tree/ConfigTreeProvider';
 import {
   LOAD_MORE_CONFIGS_COMMAND,
+  LOAD_MORE_SERVICES_COMMAND,
   OPEN_CONFIG_COMMAND,
   type NacosTreeItem,
   type NamespaceTreeItem
@@ -26,6 +27,7 @@ import {
 import { ServiceTreeProvider } from './tree/ServiceTreeProvider';
 import { formatError } from './utils/errors';
 import { createRedactedLog, type AtNacosLog } from './utils/logger';
+import { ClusterStatusPanel, disposeClusterStatusPanels } from './webview/ClusterStatusPanel';
 import { NacosInstanceFormPanel } from './webview/NacosInstanceFormPanel';
 
 /** What `deactivate` awaits. Replaced on every `activate`; see the doc on `cleanup`. */
@@ -275,6 +277,53 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
+  // Its own command rather than a shared one taking the scope: the two trees
+  // page out of caches of their own, and a single registration would send
+  // every click to whichever provider was wired last.
+  const loadMoreServicesCommand = vscode.commands.registerCommand(
+    LOAD_MORE_SERVICES_COMMAND,
+    async (namespace: NamespaceTreeItem) => {
+      try {
+        await serviceTreeProvider.loadMore(namespace);
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`loadMoreServices: ${message}`);
+        await vscode.window.showErrorMessage(t('Could not load more services: {message}', { message }));
+      }
+    }
+  );
+
+  /**
+   * The cluster panel, opened for whichever instance the user means.
+   *
+   * It hangs off both view titles, so it arrives with no arguments at all and
+   * has to ask -- but only when there is something to ask about. One instance
+   * is not a choice, and a quick pick with a single entry is a click spent on
+   * confirming what the user already said.
+   */
+  const openClusterStatusCommand = vscode.commands.registerCommand('atNacos.openClusterStatus', async () => {
+    try {
+      const instance = await pickInstanceForClusterStatus(configManager, openInstanceForm);
+      if (!instance) {
+        return;
+      }
+      await ClusterStatusPanel.open(context, {
+        instance,
+        // Built per open and per refresh, exactly as the trees build theirs,
+        // so an edited address or a rotated password takes effect on the next
+        // click of Refresh rather than on the next window reload.
+        connect: () => createNacosClient(configManager, instance, certTrustStore, log)
+      });
+    } catch (error) {
+      // The panel reports what it could not *read* itself, in the section it
+      // belongs to. What is left here is failing to open one at all: a
+      // damaged stored instance, or VS Code refusing the panel.
+      const message = formatError(error);
+      log.error(`openClusterStatus: ${message}`);
+      await vscode.window.showErrorMessage(t('Could not open the cluster status panel: {message}', { message }));
+    }
+  });
+
   // VS Code awaits the promise `deactivate()` returns. It does NOT await the
   // `dispose()` of anything in `context.subscriptions` -- it calls each one and
   // moves on. Nothing in this milestone needs that guarantee: the channel, the
@@ -293,6 +342,10 @@ export function activate(context: vscode.ExtensionContext): void {
       if (extensionCleanup === cleanup) {
         extensionCleanup = undefined;
       }
+      // Not a `context.subscriptions` entry: a panel outlives that array, and
+      // the message handler behind its Refresh button does not outlive this
+      // host. Left open, it would keep a button that does nothing at all.
+      disposeClusterStatusPanels();
       log.info('deactivate: AT Nacos shut down');
     }
   };
@@ -315,8 +368,48 @@ export function activate(context: vscode.ExtensionContext): void {
     filterConfigsCommand,
     clearConfigFilterCommand,
     openConfigCommand,
-    loadMoreConfigsCommand
+    loadMoreConfigsCommand,
+    loadMoreServicesCommand,
+    openClusterStatusCommand
   );
+}
+
+/**
+ * Which instance the cluster panel should show: the only one, the one picked,
+ * or none at all.
+ *
+ * `manageInstances` asks the same question and cannot share this, deliberately
+ * -- it offers the pick even for a single instance, because there the pick is
+ * how an instance is reached in order to be edited or deleted. Here it would
+ * only be a click.
+ */
+async function pickInstanceForClusterStatus(
+  configManager: Pick<NacosInstanceConfigManager, 'listInstances'>,
+  openInstanceForm: OpenInstanceForm
+): Promise<NacosInstanceConfig | undefined> {
+  const instances = await configManager.listInstances();
+  if (instances.length === 0) {
+    // The same offer `manageInstances` makes: this button sits on a view
+    // title, so it is reachable before any instance exists.
+    const addAction = t('Add Instance');
+    const answer = await vscode.window.showInformationMessage(t('No Nacos instances configured yet.'), addAction);
+    if (answer === addAction) {
+      await openInstanceForm();
+    }
+    return undefined;
+  }
+  if (instances.length === 1) {
+    return instances[0];
+  }
+  const picked = await vscode.window.showQuickPick(
+    instances.map((instance) => ({
+      label: instance.label,
+      description: instance.serverUrl,
+      instance
+    })),
+    { placeHolder: t('Select a Nacos instance to show the cluster status of') }
+  );
+  return picked?.instance;
 }
 
 async function manageInstances(

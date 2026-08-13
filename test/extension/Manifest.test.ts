@@ -105,12 +105,25 @@ describe('package.json contributions', () => {
   });
 
   /**
-   * Both are invoked by a tree node carrying arguments. Picked from the
-   * palette they arrive with none: `openConfig` would be asked to open
-   * `undefined` and `loadMoreConfigs` to page a namespace that was not named.
-   * `when: false` is the only way a contributed command stays out of it.
+   * The cluster is a property of the server, not of either listing, so the
+   * panel is reachable from whichever view the user happens to be in.
    */
-  it.each([['atNacos.openConfig'], ['atNacos.loadMoreConfigs']])(
+  it('puts the cluster status panel on both view titles with an icon', () => {
+    expect(commands.find((entry) => entry.command === 'atNacos.openClusterStatus')?.icon).toBe('$(server)');
+    expect(
+      (menus['view/title'] ?? [])
+        .filter((item) => item.command === 'atNacos.openClusterStatus')
+        .map((item) => item.when)
+    ).toEqual(['view == atNacos.configs', 'view == atNacos.services']);
+  });
+
+  /**
+   * All three are invoked by a tree node carrying arguments. Picked from the
+   * palette they arrive with none: `openConfig` would be asked to open
+   * `undefined` and either paging command to page a namespace that was not
+   * named. `when: false` is the only way a contributed command stays out of it.
+   */
+  it.each([['atNacos.openConfig'], ['atNacos.loadMoreConfigs'], ['atNacos.loadMoreServices']])(
     'hides %s from the command palette, since only a tree node can supply its arguments',
     (command) => {
       expect((menus.commandPalette ?? []).filter((item) => item.command === command).map((item) => item.when)).toEqual([

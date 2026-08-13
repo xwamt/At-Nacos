@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { activate, deactivate } from '../../src/extension';
 import { ConfigTreeProvider } from '../../src/tree/ConfigTreeProvider';
 import { ServiceTreeProvider } from '../../src/tree/ServiceTreeProvider';
+import { ClusterStatusPanel } from '../../src/webview/ClusterStatusPanel';
 import {
   commands as fixtureCommands,
   window as fixtureWindow,
@@ -27,7 +28,7 @@ describe('atNacos extension lifecycle', () => {
     vi.restoreAllMocks();
   });
 
-  it('registers the instance, refresh, filter and configuration commands', () => {
+  it('registers the instance, refresh, filter, configuration, service and cluster commands', () => {
     // That this is exactly what the manifest contributes is asserted in
     // Manifest.test.ts, against package.json rather than against a copy of it.
     activate(extensionContext());
@@ -37,7 +38,9 @@ describe('atNacos extension lifecycle', () => {
       'atNacos.clearConfigFilter',
       'atNacos.filterConfigs',
       'atNacos.loadMoreConfigs',
+      'atNacos.loadMoreServices',
       'atNacos.manageInstances',
+      'atNacos.openClusterStatus',
       'atNacos.openConfig',
       'atNacos.refreshConfigs',
       'atNacos.refreshServices'
@@ -60,14 +63,14 @@ describe('atNacos extension lifecycle', () => {
   });
 
   it('hands every disposable it created to context.subscriptions', () => {
-    // The channel, the eight commands, the two views, the document provider
+    // The channel, the ten commands, the two views, the document provider
     // and its registration. Anything left out survives a window reload and
     // leaks a listener into the next activation.
     const context = extensionContext();
 
     activate(context);
 
-    expect(context.subscriptions).toHaveLength(13);
+    expect(context.subscriptions).toHaveLength(15);
     for (const subscription of context.subscriptions) {
       expect(typeof subscription.dispose).toBe('function');
     }
@@ -154,6 +157,33 @@ describe('atNacos extension lifecycle', () => {
 
     expect(fixtureWindow.__getTreeViews()[0]?.message).toContain('application-uat');
     expect(fixtureWindow.__getTreeViews()[1]?.message).toBeUndefined();
+  });
+
+  /**
+   * A Webview panel is not a `context.subscriptions` entry -- it outlives the
+   * array, and the handler behind its Refresh button does not outlive the
+   * extension host. A panel left open would keep a button that silently does
+   * nothing.
+   */
+  it('closes a cluster status panel it left open when it shuts down', async () => {
+    const created: vscode.WebviewPanel[] = [];
+    const createWebviewPanel = vscode.window.createWebviewPanel;
+    vi.spyOn(vscode.window, 'createWebviewPanel').mockImplementation((viewType, title, showOptions, options) => {
+      const panel = createWebviewPanel(viewType, title, showOptions, options);
+      created.push(panel);
+      return panel;
+    });
+    const context = extensionContext();
+    activate(context);
+    await ClusterStatusPanel.open(context, {
+      instance: { id: 'instance-1', label: 'prod' },
+      connect: () => Promise.reject(new Error('nothing to reach in a unit test'))
+    });
+    const disposed = vi.spyOn(created[0] as vscode.WebviewPanel, 'dispose');
+
+    await deactivate();
+
+    expect(disposed).toHaveBeenCalledTimes(1);
   });
 
   it('runs its shutdown once even when deactivate is called twice', async () => {

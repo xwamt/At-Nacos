@@ -84,6 +84,15 @@
       {
         "command": "atNacos.loadMoreConfigs",
         "title": "%atNacos.command.loadMoreConfigs.title%"
+      },
+      {
+        "command": "atNacos.loadMoreServices",
+        "title": "%atNacos.command.loadMoreServices.title%"
+      },
+      {
+        "command": "atNacos.openClusterStatus",
+        "title": "%atNacos.command.openClusterStatus.title%",
+        "icon": "$(server)"
       }
     ],
     "menus": {
@@ -94,6 +103,10 @@
         },
         {
           "command": "atNacos.loadMoreConfigs",
+          "when": "false"
+        },
+        {
+          "command": "atNacos.loadMoreServices",
           "when": "false"
         }
       ],
@@ -119,9 +132,14 @@
           "group": "navigation@4"
         },
         {
-          "command": "atNacos.manageInstances",
+          "command": "atNacos.openClusterStatus",
           "when": "view == atNacos.configs",
           "group": "navigation@5"
+        },
+        {
+          "command": "atNacos.manageInstances",
+          "when": "view == atNacos.configs",
+          "group": "navigation@6"
         },
         {
           "command": "atNacos.addInstance",
@@ -134,9 +152,14 @@
           "group": "navigation@2"
         },
         {
-          "command": "atNacos.manageInstances",
+          "command": "atNacos.openClusterStatus",
           "when": "view == atNacos.services",
           "group": "navigation@3"
+        },
+        {
+          "command": "atNacos.manageInstances",
+          "when": "view == atNacos.services",
+          "group": "navigation@4"
         }
       ]
     },

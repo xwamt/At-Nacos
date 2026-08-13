@@ -36,6 +36,7 @@ import {
 } from '../../src/tree/NacosTreeItems';
 import { ServiceTreeProvider } from '../../src/tree/ServiceTreeProvider';
 import { noopLog } from '../../src/utils/logger';
+import { loadClusterStatus, renderClusterStatus } from '../../src/webview/ClusterStatusPanel';
 
 const liveUrl = process.env.AT_NACOS_LIVE_URL;
 const username = process.env.AT_NACOS_LIVE_USERNAME;
@@ -415,6 +416,73 @@ describeLive('a real Nacos server, its cluster and its registry', () => {
 
     expect(instances).toEqual([]);
     console.log('  a service nobody registered -> 0 instances, no error');
+  });
+});
+
+/**
+ * The cluster panel, built from what this server actually answers.
+ *
+ * The suites above prove the client can read the cluster; this one is the
+ * only thing that proves the panel can show it. Everything a node reports is
+ * optional except its address and its state, and a fixture cannot say which
+ * of those a real 2.3.2 fills in -- a body full of "not reported" would pass
+ * every render test in `test/webview` and tell a user nothing.
+ */
+describeLive('a real Nacos server, through the cluster status panel', () => {
+  it('renders the panel body from the live cluster nodes and metrics', async () => {
+    const client = await connectLive();
+    const snapshot = await loadClusterStatus(async () => client);
+    const view = renderClusterStatus({ instanceLabel: 'live', snapshot });
+
+    expect(snapshot.nodesError, 'the node listing failed').toBeUndefined();
+    expect(snapshot.metricsError, 'the metrics request failed').toBeUndefined();
+    expect(snapshot.nodes.length).toBeGreaterThan(0);
+    const address = snapshot.nodes[0]?.address ?? '';
+    expect(view.body).toContain(address);
+    // The count only exists because the request carried `onlyStatus=false`;
+    // without it the panel would render seven "not reported" cells.
+    expect(snapshot.metrics?.serviceCount, 'no serviceCount to render').toBeDefined();
+    expect(view.body).toContain(`>${snapshot.metrics?.serviceCount}<`);
+    // A field the server did report must not arrive as the word `undefined`,
+    // which is what a template writes when a value is interpolated unchecked.
+    expect(view.body).not.toContain('undefined');
+    // The badge class is chosen from the five states we know. Falling back to
+    // `state-unknown` here would mean this server names its states some other
+    // way than `NodeState` does.
+    expect(view.body).not.toContain('state-unknown');
+
+    console.log(`  panel body for ${snapshot.nodes.length} node(s), ${view.body.length} bytes:`);
+    for (const row of view.body.match(/<tr class="node-summary">[\s\S]*?<\/tr>/g) ?? []) {
+      console.log(`    ${row.replace(/\s+/g, ' ')}`);
+    }
+    for (const metric of view.body.match(/<div class="metric">[\s\S]*?<\/div>/g) ?? []) {
+      console.log(`    ${metric.replace(/\s+/g, ' ')}`);
+    }
+  });
+
+  /**
+   * The raft detail is the one part of the table the extension side has to
+   * flatten out of `extendInfo.raftMetaData` before it can be rendered, so a
+   * row that opens onto nothing means the normalization lost it between the
+   * driver and the page.
+   */
+  it('renders the raft groups of a live node behind an expander', async () => {
+    const client = await connectLive();
+    const snapshot = await loadClusterStatus(async () => client);
+    const groups = snapshot.nodes.flatMap((node) => node.raftGroups ?? []);
+    expect(groups.length, 'this server reported no raft group to render').toBeGreaterThan(0);
+
+    const body = renderClusterStatus({ instanceLabel: 'live', snapshot }).body;
+
+    expect(body).toContain('class="node-toggle"');
+    for (const group of groups) {
+      expect(body).toContain(group.group);
+      expect(body).toContain(group.leader);
+    }
+    console.log(`  ${groups.length} raft group(s) rendered:`);
+    for (const group of groups) {
+      console.log(`    ${group.group.padEnd(30)} leader=${group.leader} term=${group.term}`);
+    }
   });
 });
 
