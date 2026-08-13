@@ -4,6 +4,17 @@ import type { NacosClient } from '../nacos/NacosClient';
 import type { NacosClusterNode, NacosRaftGroup, NacosServerMetrics } from '../nacos/driver/normalize';
 import { formatError } from '../utils/errors';
 import { escapeAttr, renderWebviewHtml } from './html';
+import { openOrRevealPanel, panelKey } from './openPanels';
+import {
+  errorNote,
+  loadingNote,
+  messageType,
+  note,
+  notReported,
+  renderPanelHeader,
+  renderPanelSection,
+  settle
+} from './panelParts';
 
 /** The two capabilities this panel shows, and the only ones it asks for. */
 export type ClusterStatusClient = Pick<NacosClient, 'listClusterNodes' | 'getServerMetrics'>;
@@ -66,32 +77,20 @@ const STATE_CLASSES = new Map<string, string>([
   ['ISOLATION', 'state-isolation']
 ]);
 
-/** The panels currently open, one per instance, so a second click reveals rather than duplicates. */
-const openPanels = new Map<string, vscode.WebviewPanel>();
-
 export class ClusterStatusPanel {
   static async open(context: vscode.ExtensionContext, options: ClusterStatusPanelOptions): Promise<void> {
-    const existing = openPanels.get(options.instance.id);
-    if (existing) {
-      existing.reveal();
+    // One per instance, so a second click reveals rather than duplicates.
+    const panel = openOrRevealPanel(panelKey('clusterStatus', options.instance.id), () =>
+      vscode.window.createWebviewPanel(
+        'atNacos.clusterStatus',
+        clusterStatusTitle(options.instance.label),
+        vscode.ViewColumn.Active,
+        { enableScripts: true, localResourceRoots: [context.extensionUri] }
+      )
+    );
+    if (!panel) {
       return;
     }
-
-    const panel = vscode.window.createWebviewPanel(
-      'atNacos.clusterStatus',
-      clusterStatusTitle(options.instance.label),
-      vscode.ViewColumn.Active,
-      { enableScripts: true, localResourceRoots: [context.extensionUri] }
-    );
-    openPanels.set(options.instance.id, panel);
-    panel.onDidDispose(() => {
-      // Only if it is still this panel: `disposeClusterStatusPanels` clears the
-      // map before the callbacks run, and a later panel for the same instance
-      // must not be dropped by an older one's disposal.
-      if (openPanels.get(options.instance.id) === panel) {
-        openPanels.delete(options.instance.id);
-      }
-    });
 
     const messageOptions: ClusterStatusMessageOptions = {
       instanceLabel: options.instance.label,
@@ -120,21 +119,6 @@ export class ClusterStatusPanel {
       renderClusterStatus({ instanceLabel: options.instance.label })
     );
     panel.webview.html = messageOptions.renderDocument(await clusterStatusView(messageOptions));
-  }
-}
-
-/**
- * Closes every panel still open, for `deactivate`.
- *
- * A panel outliving the extension host keeps its Refresh button, and the
- * handler behind it is gone -- clicking it would do nothing at all. Iterates a
- * snapshot because each `dispose()` fires the callback that mutates the map.
- */
-export function disposeClusterStatusPanels(): void {
-  const panels = [...openPanels.values()];
-  openPanels.clear();
-  for (const panel of panels) {
-    panel.dispose();
   }
 }
 
@@ -200,32 +184,15 @@ async function clusterStatusView(options: ClusterStatusMessageOptions): Promise<
   }
 }
 
-async function settle<T>(run: () => Promise<T>): Promise<{ value?: T; error?: string }> {
-  try {
-    return { value: await run() };
-  } catch (error) {
-    return { error: formatError(error) };
-  }
-}
-
 export function renderClusterStatus(options: RenderClusterStatusOptions): ClusterStatusView {
   const { instanceLabel, snapshot } = options;
   const body = `<main class="cluster-shell">
-  <header class="panel-header">
-    <div>
-      <h1>${escapeAttr(clusterStatusTitle(instanceLabel))}</h1>
-      <p>${escapeAttr(t('The servers this Nacos deployment is made of, and what its naming module reports.'))}</p>
-    </div>
-    <button id="refreshButton" class="primary-action" type="button">${escapeAttr(t('Refresh'))}</button>
-  </header>
-  <section class="panel-section">
-    <h2>${escapeAttr(t('Cluster nodes'))}</h2>
-    ${renderNodeSection(snapshot)}
-  </section>
-  <section class="panel-section">
-    <h2>${escapeAttr(t('Server metrics'))}</h2>
-    ${renderMetricSection(snapshot)}
-  </section>
+${renderPanelHeader({
+  title: clusterStatusTitle(instanceLabel),
+  description: t('The servers this Nacos deployment is made of, and what its naming module reports.')
+})}
+${renderPanelSection(t('Cluster nodes'), renderNodeSection(snapshot))}
+${renderPanelSection(t('Server metrics'), renderMetricSection(snapshot))}
 </main>`;
 
   return {
@@ -424,31 +391,6 @@ function formatNumber(value: number): string {
   return String(Number(value.toFixed(4)));
 }
 
-/** Not "0" and not "-": the server did not say, and those two would claim it did. */
-function notReported(): string {
-  return `<span class="not-reported">${escapeAttr(t('not reported'))}</span>`;
-}
-
-function loadingNote(): string {
-  return note(t('Loading...'));
-}
-
-function note(message: string): string {
-  return `<p class="section-note">${escapeAttr(message)}</p>`;
-}
-
-function errorNote(message: string): string {
-  return `<p class="section-error" role="status">${escapeAttr(message)}</p>`;
-}
-
 function clusterStatusTitle(instanceLabel: string): string {
   return t('Nacos Cluster: {label}', { label: instanceLabel });
-}
-
-function messageType(message: unknown): string | undefined {
-  if (typeof message !== 'object' || message === null) {
-    return undefined;
-  }
-  const { type } = message as { type?: unknown };
-  return typeof type === 'string' ? type : undefined;
 }

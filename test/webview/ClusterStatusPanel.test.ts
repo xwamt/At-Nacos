@@ -5,7 +5,6 @@ import * as vscode from 'vscode';
 import type { NacosClusterNode, NacosServerMetrics } from '../../src/nacos/driver/normalize';
 import {
   ClusterStatusPanel,
-  disposeClusterStatusPanels,
   handleClusterStatusMessage,
   loadClusterStatus,
   renderClusterStatus,
@@ -14,12 +13,13 @@ import {
   type ClusterStatusView
 } from '../../src/webview/ClusterStatusPanel';
 import { renderWebviewHtml } from '../../src/webview/html';
+import { disposeOpenPanels } from '../../src/webview/openPanels';
 
 const translate = vscode.l10n.t.bind(vscode.l10n);
 
 beforeEach(() => {
   vi.restoreAllMocks();
-  disposeClusterStatusPanels();
+  disposeOpenPanels();
 });
 
 /**
@@ -537,7 +537,7 @@ describe('ClusterStatusPanel.open', () => {
     await ClusterStatusPanel.open(context, { instance: { id: 'instance-1', label: 'prod' }, connect });
     const disposed = vi.spyOn(created[0] as vscode.WebviewPanel, 'dispose');
 
-    disposeClusterStatusPanels();
+    disposeOpenPanels();
 
     expect(disposed).toHaveBeenCalledTimes(1);
   });

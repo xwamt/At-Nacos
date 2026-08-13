@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import type { NacosInstanceConfig } from '../../src/config/schema';
 import { NacosConfigDocumentProvider } from '../../src/document/NacosConfigDocumentProvider';
-import { buildConfigUri } from '../../src/document/configUri';
+import { buildConfigHistoryUri, buildConfigUri } from '../../src/document/configUri';
 import { NacosApiError } from '../../src/nacos/NacosApiError';
 import type { NacosConfigDetail, NacosConfigRef } from '../../src/nacos/driver/normalize';
 
@@ -37,7 +37,28 @@ function providerFor(
 ): NacosConfigDocumentProvider {
   return new NacosConfigDocumentProvider(
     { getInstance: async (id) => (id === stored.id ? stored : undefined) },
-    async () => ({ getConfig })
+    async () => ({
+      getConfig,
+      getConfigHistory: async () => {
+        throw new Error('getConfigHistory must not be called for a current-version address');
+      }
+    })
+  );
+}
+
+/** The same, for an address that names a past version. */
+function historyProviderFor(
+  getConfigHistory: (query: NacosConfigRef & { nid: string }) => Promise<NacosConfigDetail>,
+  stored = instance()
+): NacosConfigDocumentProvider {
+  return new NacosConfigDocumentProvider(
+    { getInstance: async (id) => (id === stored.id ? stored : undefined) },
+    async () => ({
+      getConfig: async () => {
+        throw new Error('getConfig must not be called for a history address');
+      },
+      getConfigHistory
+    })
   );
 }
 
@@ -73,7 +94,7 @@ describe('NacosConfigDocumentProvider content', () => {
       { getInstance: async (id) => instance({ id }) },
       async (stored) => {
         built.push(stored.id);
-        return { getConfig: async () => detail() };
+        return { getConfig: async () => detail(), getConfigHistory: async () => detail() };
       }
     );
 
@@ -81,6 +102,65 @@ describe('NacosConfigDocumentProvider content', () => {
     await provider.provideTextDocumentContent(buildConfigUri('instance-b', ref()));
 
     expect(built).toEqual(['instance-a', 'instance-b']);
+  });
+});
+
+/**
+ * One provider serves both sides of a diff, which is the reason
+ * `getConfigHistory` answers with a `NacosConfigDetail` too: the address
+ * decides which endpoint is asked, and nothing downstream of that branch
+ * knows which side it is rendering.
+ */
+describe('NacosConfigDocumentProvider history content', () => {
+  it('returns a past version as the document body when the address names one', async () => {
+    const provider = historyProviderFor(async () => detail({ content: 'server.port=8079\n' }));
+
+    const content = await provider.provideTextDocumentContent(buildConfigHistoryUri('instance-1', ref(), '1044'));
+
+    expect(content).toBe('server.port=8079\n');
+  });
+
+  it('asks for exactly the version and the ref the address encodes', async () => {
+    const asked: (NacosConfigRef & { nid: string })[] = [];
+    const target = ref({ namespaceId: '', group: 'team/payments', dataId: '订单 服务?v=1#a.yaml' });
+    const provider = historyProviderFor(async (query) => {
+      asked.push(query);
+      return detail(target);
+    });
+
+    await provider.provideTextDocumentContent(buildConfigHistoryUri('instance-1', target, '1044'));
+
+    expect(asked).toEqual([{ ...target, nid: '1044' }]);
+  });
+
+  /**
+   * Nacos prunes config history after 30 days by default, so a panel left
+   * open across a weekend can hand out a version the server has since
+   * dropped. Saying the *configuration* is gone there would send a user
+   * looking for a deletion that did not happen.
+   */
+  it('says the version is gone rather than the configuration, on resource-not-found', async () => {
+    const provider = historyProviderFor(async () => {
+      throw new NacosApiError('resource-not-found', 'Nacos has no such resource at /v1/cs/history', 404);
+    });
+
+    const content = await provider.provideTextDocumentContent(buildConfigHistoryUri('instance-1', ref(), '1044'));
+
+    expect(content).toContain('application-uat.yml');
+    expect(content).toContain('1044');
+    expect(content).not.toContain('no longer exists in group');
+    expect(content).not.toContain('/v1/cs/history');
+  });
+
+  it('renders any other failure of a history read the way it renders one of the current version', async () => {
+    const provider = historyProviderFor(async () => {
+      throw new Error('connect ECONNREFUSED 10.0.0.9:8848');
+    });
+
+    const content = await provider.provideTextDocumentContent(buildConfigHistoryUri('instance-1', ref(), '1044'));
+
+    expect(content).toContain('application-uat.yml');
+    expect(content).toContain('connect ECONNREFUSED 10.0.0.9:8848');
   });
 });
 
@@ -167,7 +247,7 @@ describe('NacosConfigDocumentProvider failures', () => {
           throw new Error('atNacos.instances is not a valid instance list');
         }
       },
-      async () => ({ getConfig: async () => detail() })
+      async () => ({ getConfig: async () => detail(), getConfigHistory: async () => detail() })
     );
 
     const content = await provider.provideTextDocumentContent(buildConfigUri('instance-1', ref()));
@@ -219,7 +299,8 @@ describe('NacosConfigDocumentProvider localization', () => {
       return message;
     });
     const missing = new NacosConfigDocumentProvider({ getInstance: async () => undefined }, async () => ({
-      getConfig: async () => detail()
+      getConfig: async () => detail(),
+      getConfigHistory: async () => detail()
     }));
     const notFound = providerFor(async () => {
       throw new NacosApiError('resource-not-found', 'config data not exist', 404);
@@ -227,13 +308,17 @@ describe('NacosConfigDocumentProvider localization', () => {
     const broken = providerFor(async () => {
       throw new Error('host unreachable');
     });
+    const versionGone = historyProviderFor(async () => {
+      throw new NacosApiError('resource-not-found', 'no such history record', 404);
+    });
 
     await missing.provideTextDocumentContent(buildConfigUri('deleted', ref()));
     await notFound.provideTextDocumentContent(buildConfigUri('instance-1', ref()));
     await broken.provideTextDocumentContent(buildConfigUri('instance-1', ref()));
     await broken.provideTextDocumentContent(vscode.Uri.from({ scheme: 'nacos', path: '/only-one' }));
+    await versionGone.provideTextDocumentContent(buildConfigHistoryUri('instance-1', ref(), '1044'));
 
-    expect(sources.length).toBeGreaterThanOrEqual(4);
+    expect(sources.length).toBeGreaterThanOrEqual(5);
     for (const source of sources) {
       expect(Object.keys(bundle), source).toContain(source);
     }

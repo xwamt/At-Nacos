@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import * as vscode from 'vscode';
 import type { NacosInstanceConfig } from '../../src/config/schema';
-import { NACOS_CONFIG_SCHEME, buildConfigUri, parseConfigUri } from '../../src/document/configUri';
+import {
+  NACOS_CONFIG_SCHEME,
+  buildConfigHistoryUri,
+  buildConfigUri,
+  parseConfigUri
+} from '../../src/document/configUri';
 import type { NacosConfigRef } from '../../src/nacos/driver/normalize';
 
 function ref(overrides: Partial<NacosConfigRef> = {}): NacosConfigRef {
@@ -167,6 +172,92 @@ describe('configUri round trip', () => {
   });
 });
 
+describe('buildConfigHistoryUri', () => {
+  /**
+   * The whole reason the history address exists. `vscode.diff` is handed two
+   * URIs and VS Code keys open documents by `Uri.toString()`, so two equal
+   * addresses are one buffer -- and a diff of a buffer against itself renders
+   * as a file with no changes, which is indistinguishable from a version that
+   * really is identical.
+   */
+  it('addresses a history version differently from the current version', () => {
+    const current = buildConfigUri('instance-1', ref());
+    const history = buildConfigHistoryUri('instance-1', ref(), '1044');
+
+    expect(history.toString()).not.toBe(current.toString());
+  });
+
+  it('keeps that difference for every ref shape the current address handles', () => {
+    for (const target of [
+      ref(),
+      ref({ namespaceId: '' }),
+      ref({ namespaceId: '$public' }),
+      ref({ dataId: 'com/example/service.yml' }),
+      ref({ dataId: 'release#2024.json' }),
+      ref({ group: 'team?payments' })
+    ]) {
+      expect(buildConfigHistoryUri('instance-1', target, '1044').toString(), target.dataId).not.toBe(
+        buildConfigUri('instance-1', target).toString()
+      );
+    }
+  });
+
+  it('gives two versions of one configuration two different addresses', () => {
+    const older = buildConfigHistoryUri('instance-1', ref(), '1044');
+    const newer = buildConfigHistoryUri('instance-1', ref(), '1045');
+
+    expect(older.toString()).not.toBe(newer.toString());
+  });
+
+  /**
+   * The version is the only thing that differs. Both sides of a diff have to
+   * name the same configuration, or the editor is comparing two files.
+   */
+  it('addresses the same configuration as the current version does', () => {
+    const current = parseConfigUri(buildConfigUri('instance-1', ref()));
+    const history = parseConfigUri(buildConfigHistoryUri('instance-1', ref(), '1044'));
+
+    expect(history?.instanceId).toBe(current?.instanceId);
+    expect(history?.ref).toEqual(current?.ref);
+    expect(current?.nid).toBeUndefined();
+    expect(history?.nid).toBe('1044');
+  });
+
+  it('uses the same scheme, so one content provider serves both sides', () => {
+    expect(buildConfigHistoryUri('instance-1', ref(), '1044').scheme).toBe(NACOS_CONFIG_SCHEME);
+  });
+
+  /** The tab title is the last path segment, and a history tab titled `1044` names nothing. */
+  it('still ends its path with the dataId rather than with the version', () => {
+    const uri = buildConfigHistoryUri('instance-1', ref({ dataId: 'application-uat.yml' }), '1044');
+
+    expect(uri.path.endsWith('/application-uat.yml')).toBe(true);
+    expect(uri.path).not.toContain('1044');
+  });
+
+  it('round-trips a ref that needs encoding, exactly as the current address does', () => {
+    const target = ref({ namespaceId: '', group: 'team/payments', dataId: '订单服务?v=1.yaml' });
+
+    const parsed = parseConfigUri(buildConfigHistoryUri('legacy/instance', target, '1044'));
+
+    expect(parsed).toEqual({ instanceId: 'legacy/instance', ref: target, nid: '1044' });
+  });
+
+  /**
+   * A record id is a database bigint in practice, so this is defence rather
+   * than a case anyone has met -- but an unencoded `&` or `#` would end the
+   * query and turn the address into the current version's.
+   */
+  it('round-trips a version id carrying characters that would end the query', () => {
+    for (const nid of ['1044&nid=1', 'a#b', 'a=b', 'a b', '%2F']) {
+      const parsed = parseConfigUri(buildConfigHistoryUri('instance-1', ref(), nid));
+
+      expect(parsed?.nid, nid).toBe(nid);
+      expect(parsed?.ref, nid).toEqual(ref());
+    }
+  });
+});
+
 describe('parseConfigUri on a URI it did not build', () => {
   it('rejects a URI of another scheme, so the provider never answers for one', () => {
     expect(parseConfigUri(vscode.Uri.from({ scheme: 'file', path: '/i/ns/g/d.yml' }))).toBeUndefined();
@@ -197,5 +288,25 @@ describe('parseConfigUri on a URI it did not build', () => {
 
   it('rejects an empty path', () => {
     expect(parseConfigUri(vscode.Uri.from({ scheme: 'nacos', path: '' }))).toBeUndefined();
+  });
+
+  /**
+   * The query is the only thing that tells the two versions of one
+   * configuration apart, so a query this module did not write is refused
+   * rather than ignored: reading it as the current version would answer a
+   * question nobody asked, with the content the other side of the diff
+   * already holds.
+   */
+  it.each([['ref=1044'], ['nid='], ['nid=1044&nid=1045'], ['nid=1044&show=all'], ['1044'], ['nid=%zz']])(
+    'rejects the query %s, which it never writes',
+    (query) => {
+      expect(parseConfigUri(vscode.Uri.from({ scheme: 'nacos', path: '/i/uat/g/app.yml', query }))).toBeUndefined();
+    }
+  );
+
+  it('reads a well-formed history query it did write', () => {
+    expect(
+      parseConfigUri(vscode.Uri.from({ scheme: 'nacos', path: '/i/uat/g/app.yml', query: 'nid=1044' }))
+    ).toEqual({ instanceId: 'i', ref: { namespaceId: 'uat', group: 'g', dataId: 'app.yml' }, nid: '1044' });
   });
 });

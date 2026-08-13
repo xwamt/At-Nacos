@@ -320,6 +320,17 @@ export const window = {
         onDidReceiveMessage: (listener: (message: unknown) => unknown) => {
           messageListeners.push(listener);
           return { dispose: () => undefined };
+        },
+        /**
+         * Delivers a message as the page would, so a test can drive the
+         * handler `open()` wired up rather than the exported function behind
+         * it. Awaited, because every handler in this extension is async and
+         * an unawaited one would let an assertion run before it finished.
+         */
+        __fireMessage: async (message: unknown): Promise<void> => {
+          for (const listener of messageListeners) {
+            await listener(message);
+          }
         }
       }
     };

@@ -33,10 +33,26 @@ const PUBLIC_NAMESPACE_SEGMENT = '$public';
 /** Instance, namespace, group, dataId. */
 const SEGMENT_COUNT = 4;
 
-/** Everything needed to fetch a config again: which server, and where on it. */
+/**
+ * The query parameter naming a history record, and Nacos's own name for it.
+ *
+ * The version goes in the query rather than in a fifth path segment because
+ * VS Code titles an editor after the last segment: a history tab would be
+ * called `1044`, and the whole point of ending the path with the dataId is
+ * that the tab says which configuration it is showing.
+ */
+const HISTORY_QUERY_KEY = 'nid';
+
+/** Everything needed to fetch a config again: which server, where on it, and which version. */
 export interface NacosConfigDocumentTarget {
   instanceId: string;
   ref: NacosConfigRef;
+  /**
+   * The history record to read instead of the current content, when the
+   * address names one. Absent is the current version, which is what every
+   * address M2 wrote means.
+   */
+  nid?: string;
 }
 
 /**
@@ -62,13 +78,43 @@ export interface NacosConfigDocumentTarget {
  * in Ctrl+P and in the recently-opened list.
  */
 export function buildConfigUri(instanceId: string, ref: NacosConfigRef): vscode.Uri {
+  return vscode.Uri.from({ scheme: NACOS_CONFIG_SCHEME, path: configPath(instanceId, ref) });
+}
+
+/**
+ * The virtual document address of one *past* version of one configuration.
+ *
+ * The same path as the current version, plus the history record's id in the
+ * query. Being different is the requirement, not a detail: `vscode.diff` is
+ * handed two URIs, VS Code keys open documents by `Uri.toString()`, and two
+ * equal addresses are one buffer -- a diff of which renders as a file with no
+ * changes, indistinguishable from a version that really did not change.
+ *
+ * Being the same *path* is the other half. Both sides of a diff have to name
+ * one configuration, and the tab keeps the dataId it would have had.
+ *
+ * The id is percent-encoded like every path segment, for the same reason: a
+ * literal `&` or `#` in it would end the query and hand back the current
+ * version's address. Nacos issues a database bigint here, so that is defence
+ * rather than a case anyone has met -- but it is one rule for four components
+ * and a fifth instead of one rule with an exception.
+ */
+export function buildConfigHistoryUri(instanceId: string, ref: NacosConfigRef, nid: string): vscode.Uri {
+  return vscode.Uri.from({
+    scheme: NACOS_CONFIG_SCHEME,
+    path: configPath(instanceId, ref),
+    query: `${HISTORY_QUERY_KEY}=${encodeURIComponent(nid)}`
+  });
+}
+
+function configPath(instanceId: string, ref: NacosConfigRef): string {
   const path = [
     encodeURIComponent(instanceId),
     ref.namespaceId === '' ? PUBLIC_NAMESPACE_SEGMENT : encodeURIComponent(ref.namespaceId),
     encodeURIComponent(ref.group),
     encodeURIComponent(ref.dataId)
   ].join('/');
-  return vscode.Uri.from({ scheme: NACOS_CONFIG_SCHEME, path: `/${path}` });
+  return `/${path}`;
 }
 
 /**
@@ -98,16 +144,45 @@ export function parseConfigUri(uri: vscode.Uri): NacosConfigDocumentTarget | und
   }
   const [instanceId, namespaceId, group, dataId] = segments;
   try {
+    const nid = historyIdIn(uri.query);
+    // A query this module did not write is refused rather than dropped. The
+    // query is the only thing that tells the two versions of one
+    // configuration apart, so ignoring one would answer with the current
+    // content -- which is what the other side of the diff already holds.
+    if (uri.query !== '' && nid === undefined) {
+      return undefined;
+    }
     return {
       instanceId: decodeURIComponent(instanceId),
       ref: {
         namespaceId: namespaceId === PUBLIC_NAMESPACE_SEGMENT ? '' : decodeURIComponent(namespaceId),
         group: decodeURIComponent(group),
         dataId: decodeURIComponent(dataId)
-      }
+      },
+      nid
     };
   } catch {
     // decodeURIComponent throws URIError on a malformed escape such as `%zz`.
     return undefined;
   }
+}
+
+/**
+ * The history record id a query names, or undefined for a query this module
+ * never wrote -- including the empty one, which is the current version.
+ *
+ * Exactly one parameter, spelled exactly as `buildConfigHistoryUri` spells
+ * it. Anything looser would read `?nid=1044&nid=1045` as a single version and
+ * pick one of the two at random.
+ */
+function historyIdIn(query: string): string | undefined {
+  if (query === '') {
+    return undefined;
+  }
+  const [key, ...rest] = query.split('=');
+  const value = rest.join('=');
+  if (key !== HISTORY_QUERY_KEY || value === '' || value.includes('&')) {
+    return undefined;
+  }
+  return decodeURIComponent(value);
 }

@@ -27,8 +27,9 @@ import {
 import { ServiceTreeProvider } from './tree/ServiceTreeProvider';
 import { formatError } from './utils/errors';
 import { createRedactedLog, type AtNacosLog } from './utils/logger';
-import { ClusterStatusPanel, disposeClusterStatusPanels } from './webview/ClusterStatusPanel';
+import { ClusterStatusPanel } from './webview/ClusterStatusPanel';
 import { NacosInstanceFormPanel } from './webview/NacosInstanceFormPanel';
+import { disposeOpenPanels } from './webview/openPanels';
 
 /** What `deactivate` awaits. Replaced on every `activate`; see the doc on `cleanup`. */
 let extensionCleanup: { dispose(): Promise<void> } | undefined;
@@ -345,7 +346,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // Not a `context.subscriptions` entry: a panel outlives that array, and
       // the message handler behind its Refresh button does not outlive this
       // host. Left open, it would keep a button that does nothing at all.
-      disposeClusterStatusPanels();
+      disposeOpenPanels();
       log.info('deactivate: AT Nacos shut down');
     }
   };

@@ -1,0 +1,218 @@
+html,
+body {
+  min-width: 0;
+  min-height: 100%;
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  font-family: var(--vscode-font-family);
+}
+
+.panel-shell {
+  width: min(980px, 100%);
+  padding: 24px 28px 30px;
+  box-sizing: border-box;
+}
+
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  margin-bottom: 18px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  color: var(--vscode-foreground);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+h2 {
+  color: var(--vscode-foreground);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+p {
+  max-width: 620px;
+  margin-top: 5px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.panel-section {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--vscode-sideBar-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  margin-bottom: 14px;
+}
+
+.section-note,
+.section-error {
+  padding: 14px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.section-error {
+  color: var(--vscode-errorForeground);
+}
+
+button {
+  font: inherit;
+}
+
+.primary-action {
+  flex: 0 0 auto;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  border: 0;
+  border-radius: 4px;
+  padding: 7px 14px;
+  line-height: 1.2;
+}
+
+.primary-action:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.primary-action:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.primary-action[disabled] {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+th {
+  color: var(--vscode-descriptionForeground);
+  font-weight: 600;
+  text-align: left;
+}
+
+th,
+td {
+  padding: 8px 14px;
+  vertical-align: middle;
+}
+
+thead th {
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+tbody tr + tr td {
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.version-id {
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-descriptionForeground);
+}
+
+.not-reported {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
+.operation {
+  display: inline-block;
+  border-radius: 10px;
+  padding: 1px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  /*
+   * The badge can carry a letter from a Nacos this plugin has not seen, so it
+   * has to survive being long without pushing the table apart.
+   */
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+}
+
+/*
+ * Three operations, three looks. A delete is the one that cannot be undone
+ * from this panel, so it is the one that reads as a warning.
+ */
+.operation-i {
+  color: var(--vscode-charts-blue);
+  background: color-mix(in srgb, var(--vscode-charts-blue) 18%, transparent);
+}
+
+.operation-u {
+  color: var(--vscode-charts-green);
+  background: color-mix(in srgb, var(--vscode-charts-green) 18%, transparent);
+}
+
+.operation-d {
+  color: var(--vscode-errorForeground);
+  background: color-mix(in srgb, var(--vscode-errorForeground) 18%, transparent);
+}
+
+.version-action {
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  background: var(--vscode-button-secondaryBackground, transparent);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.version-action:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.version-action:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+.version-table td:last-child {
+  text-align: right;
+}
+
+@media (max-width: 720px) {
+  .panel-shell {
+    padding: 20px;
+  }
+
+  .panel-header {
+    display: grid;
+  }
+
+  .primary-action {
+    width: 100%;
+  }
+}

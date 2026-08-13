@@ -6,10 +6,18 @@ import { NacosApiError } from '../nacos/NacosApiError';
 import type { NacosClient } from '../nacos/NacosClient';
 import type { NacosConfigRef } from '../nacos/driver/normalize';
 import { formatError } from '../utils/errors';
-import { buildConfigUri, parseConfigUri } from './configUri';
+import { buildConfigUri, parseConfigUri, type NacosConfigDocumentTarget } from './configUri';
 
-/** Only the one capability, so this provider cannot reach an endpoint reading a config has no business calling. */
-export type NacosConfigDocumentClient = Pick<NacosClient, 'getConfig'>;
+/**
+ * Only the two read capabilities, so this provider cannot reach an endpoint
+ * reading a config has no business calling.
+ *
+ * Both are here because both serve documents under this scheme: which of them
+ * answers is decided by the address, and `getConfigHistory` returns the same
+ * `NacosConfigDetail` that `getConfig` does precisely so that nothing below
+ * that branch has to know which side of a diff it is rendering.
+ */
+export type NacosConfigDocumentClient = Pick<NacosClient, 'getConfig' | 'getConfigHistory'>;
 
 /**
  * Injected for the same reason the tree's is: assembling a client means an
@@ -76,9 +84,13 @@ export class NacosConfigDocumentProvider implements vscode.TextDocumentContentPr
         );
       }
       const client = await this.createClient(instance);
-      return (await client.getConfig(target.ref)).content;
+      const detail =
+        target.nid === undefined
+          ? await client.getConfig(target.ref)
+          : await client.getConfigHistory({ ...target.ref, nid: target.nid });
+      return detail.content;
     } catch (error) {
-      return describeReadFailure(error, target.ref);
+      return describeReadFailure(error, target);
     }
   }
 }
@@ -90,11 +102,23 @@ export class NacosConfigDocumentProvider implements vscode.TextDocumentContentPr
  * any notification -- and a Nacos error message quotes the request that
  * failed, query string and all.
  */
-function describeReadFailure(error: unknown, ref: NacosConfigRef): string {
+function describeReadFailure(error: unknown, target: NacosConfigDocumentTarget): string {
+  const { ref } = target;
   // The dataId is gone, not the endpoint -- the other half of Nacos's
   // overloaded 404. Quoting the API's own answer here would send the user
   // looking for a server fault instead of a deleted config.
   if (error instanceof NacosApiError && error.kind === 'resource-not-found') {
+    // A missing *version* is its own sentence. Nacos prunes config history
+    // after 30 days by default, so a history panel left open across a long
+    // weekend can offer a version the server has since dropped -- and saying
+    // the configuration was deleted there would report a deletion that never
+    // happened, of something the user can still see in the tree.
+    if (target.nid !== undefined) {
+      return t(
+        'Version {version} of {dataId} is no longer on the server. Nacos keeps a configuration\'s history for a limited time and prunes what is older.',
+        { dataId: ref.dataId, version: target.nid }
+      );
+    }
     return t('The configuration {dataId} no longer exists in group {group}. It may have been deleted on the server.', {
       dataId: ref.dataId,
       group: ref.group

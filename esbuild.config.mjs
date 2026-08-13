@@ -34,6 +34,23 @@ const contextConfigs = [
     platform: 'browser',
     format: 'iife',
     target: 'chrome114'
+  }),
+  esbuild.context({
+    ...common,
+    entryPoints: ['webview/nacos-config-history/index.ts'],
+    outfile: 'dist/webview/nacos-config-history.js',
+    platform: 'browser',
+    format: 'iife',
+    target: 'chrome114'
+  }),
+  // 一个 bundle 供两个面板用：配置的监听者与服务的订阅者，页面行为完全一致。
+  esbuild.context({
+    ...common,
+    entryPoints: ['webview/nacos-consumers/index.ts'],
+    outfile: 'dist/webview/nacos-consumers.js',
+    platform: 'browser',
+    format: 'iife',
+    target: 'chrome114'
   })
 ];
 
