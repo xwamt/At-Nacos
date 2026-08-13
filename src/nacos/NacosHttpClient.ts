@@ -306,10 +306,18 @@ export interface CertVerificationHooks {
 }
 
 /**
- * Wires a one-shot `secureConnect` handshake hook that defers `onVerified`
- * until the certVerifier's TOFU fingerprint check settles (mirroring the
- * SSH-host-key confirmation flow). Exported standalone so this
+ * Defers `onVerified` until the certVerifier's TOFU fingerprint check settles
+ * (mirroring the SSH-host-key confirmation flow). Exported standalone so this
  * security-sensitive wiring exists in exactly one place.
+ *
+ * The check runs per *request*, not per connection, which is why the socket
+ * has to be inspected rather than simply hooked. Node's agents keep HTTPS
+ * sockets alive (the default since Node 19), so every request after the first
+ * to a given origin is handed a socket whose handshake finished during an
+ * earlier one: `secureConnect` has already fired and never fires again.
+ * Waiting for it there would leave the request written to nobody until the
+ * timeout -- and on this client the second request is not an edge case, it is
+ * the namespace listing that follows the version probe.
  */
 export function attachCertVerification(
   request: http.ClientRequest,
@@ -319,8 +327,9 @@ export function attachCertVerification(
   hooks: CertVerificationHooks
 ): void {
   request.on('socket', (socket) => {
-    socket.once('secureConnect', () => {
-      const fingerprint256 = (socket as TLSSocket).getPeerCertificate()?.fingerprint256;
+    const tlsSocket = socket as TLSSocket;
+    const verify = (): void => {
+      const fingerprint256 = tlsSocket.getPeerCertificate()?.fingerprint256;
       verifyCertFingerprint(certVerifier, host, port, fingerprint256)
         .then((verifyError) => {
           if (verifyError) {
@@ -337,8 +346,29 @@ export function attachCertVerification(
             )
           );
         });
-    });
+    };
+
+    if (hasCompletedHandshake(tlsSocket)) {
+      verify();
+      return;
+    }
+    tlsSocket.once('secureConnect', verify);
   });
+}
+
+/**
+ * Whether this socket has already presented its certificate, i.e. it came out
+ * of the agent's pool rather than being dialled for this request.
+ *
+ * Read from the certificate itself rather than from a connection flag: a
+ * socket still handshaking answers with an empty object, and one with no
+ * handle answers null, so the same expression that decides "is the handshake
+ * done" is the one that would supply the fingerprint. Nothing can be
+ * mistakenly treated as verified -- a false positive here would still have to
+ * produce a fingerprint the verifier accepts.
+ */
+function hasCompletedHandshake(socket: TLSSocket): boolean {
+  return typeof socket.getPeerCertificate === 'function' && Boolean(socket.getPeerCertificate()?.fingerprint256);
 }
 
 /**

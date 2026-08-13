@@ -578,6 +578,68 @@ describe('NacosHttpClient TLS trust-on-first-use', () => {
     expect(tlsServer.requests).toHaveLength(1);
   });
 
+  it('completes a second request that reuses the pooled connection', async () => {
+    // Node's global agent keeps HTTPS sockets alive (its default since Node
+    // 19), so the second request is handed a socket whose handshake finished
+    // during the first. `secureConnect` never fires again for it, and a
+    // verification hook that waits for it would hold the request until the
+    // timeout -- which is every request after the first: the version probe is
+    // followed immediately by a namespace listing on the same origin.
+    tlsServer = await startTestHttpsServer((_request, response) => {
+      response.setHeader('content-type', 'application/json');
+      response.end('{"code":0}');
+    });
+    const client = new NacosHttpClient({
+      baseUrl: tlsServer.origin,
+      timeoutMs: 2000,
+      certVerifier: { verify: async () => true }
+    });
+
+    await expect(client.requestJson('GET', '/first')).resolves.toMatchObject({ code: 0 });
+    await expect(client.requestJson('GET', '/second')).resolves.toMatchObject({ code: 0 });
+
+    expect(tlsServer.requests.map((request) => request.url)).toEqual(['/first', '/second']);
+  });
+
+  it('checks the fingerprint again on a reused connection', async () => {
+    tlsServer = await startTestHttpsServer((_request, response) => response.end('{}'));
+    let checks = 0;
+    const client = new NacosHttpClient({
+      baseUrl: tlsServer.origin,
+      timeoutMs: 2000,
+      certVerifier: {
+        verify: async () => {
+          checks += 1;
+          return true;
+        }
+      }
+    });
+
+    await client.requestJson('GET', '/first');
+    await client.requestJson('GET', '/second');
+
+    // Skipping the check for a socket already in the pool would make "no
+    // request is written without a verdict" true only for the first one.
+    expect(checks).toBe(2);
+  });
+
+  it('sends nothing on a reused connection whose certificate is no longer trusted', async () => {
+    tlsServer = await startTestHttpsServer((_request, response) => response.end('{}'));
+    let trusted = true;
+    const client = new NacosHttpClient({
+      baseUrl: tlsServer.origin,
+      timeoutMs: 2000,
+      certVerifier: { verify: async () => trusted }
+    });
+
+    await client.requestJson('GET', '/first');
+    trusted = false;
+    const error = await client.requestJson('GET', '/second').catch((e: unknown) => e);
+
+    expect((error as NacosApiError).kind).toBe('tls');
+    expect(tlsServer.requests.map((request) => request.url)).toEqual(['/first']);
+  });
+
   it('falls back to Node chain validation when no verifier is configured', async () => {
     tlsServer = await startTestHttpsServer((_request, response) => response.end('{}'));
     const client = new NacosHttpClient({ baseUrl: tlsServer.origin });
