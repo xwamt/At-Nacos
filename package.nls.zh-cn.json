@@ -8,5 +8,6 @@
   "atNacos.command.manageInstances.title": "AT Nacos: 管理实例",
   "atNacos.command.refreshConfigs.title": "AT Nacos: 刷新配置",
   "atNacos.command.refreshServices.title": "AT Nacos: 刷新服务",
-  "atNacos.welcome.configs": "尚未配置任何 Nacos 实例。\n[添加实例](command:atNacos.addInstance)"
+  "atNacos.welcome.configs": "尚未配置任何 Nacos 实例。\n[添加实例](command:atNacos.addInstance)",
+  "atNacos.welcome.services": "尚未配置任何 Nacos 实例。添加后即可浏览其中注册的服务。\n[添加实例](command:atNacos.addInstance)"
 }

@@ -96,6 +96,10 @@
       {
         "view": "atNacos.configs",
         "contents": "%atNacos.welcome.configs%"
+      },
+      {
+        "view": "atNacos.services",
+        "contents": "%atNacos.welcome.services%"
       }
     ]
   },
