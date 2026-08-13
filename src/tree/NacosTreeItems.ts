@@ -1,7 +1,14 @@
 import * as vscode from 'vscode';
 import type { NacosInstanceConfig } from '../config/schema';
 import { t } from '../i18n/t';
-import { publicNamespaceId, type NacosConfigSummary, type NacosNamespace } from '../nacos/driver/normalize';
+import {
+  publicNamespaceId,
+  type NacosConfigSummary,
+  type NacosInstance,
+  type NacosNamespace,
+  type NacosServiceRef,
+  type NacosServiceSummary
+} from '../nacos/driver/normalize';
 
 /**
  * Which of the two views an item was built for.
@@ -23,6 +30,12 @@ export type NacosTreeScope = 'config' | 'service';
  */
 export const OPEN_CONFIG_COMMAND = 'atNacos.openConfig';
 export const LOAD_MORE_CONFIGS_COMMAND = 'atNacos.loadMoreConfigs';
+/**
+ * One per view, not one shared: the two trees page different listings out of
+ * caches of their own, so a single command id would send every click to
+ * whichever provider happened to register last.
+ */
+export const LOAD_MORE_SERVICES_COMMAND = 'atNacos.loadMoreServices';
 
 /**
  * A read-only instance answers to a different context value so that a menu
@@ -124,12 +137,15 @@ export class NamespaceTreeItem extends vscode.TreeItem {
 }
 
 /**
- * One configuration group of one namespace.
+ * One group of one namespace, in either view: configurations in the one,
+ * services in the other. The two derive the group set the same way and say
+ * the same thing about it, and the scope in the id is what keeps the two
+ * views' nodes apart.
  *
  * It carries the namespace it was rendered under rather than reading it back
- * off a configuration, because that is the node's place in the tree: two
- * namespaces of one instance regularly hold a group of the same name, and an
- * id built from anything else would give those two nodes one identity.
+ * off a child, because that is the node's place in the tree: two namespaces
+ * of one instance regularly hold a group of the same name, and an id built
+ * from anything else would give those two nodes one identity.
  */
 export class GroupTreeItem extends vscode.TreeItem {
   constructor(
@@ -137,20 +153,20 @@ export class GroupTreeItem extends vscode.TreeItem {
     readonly instance: NacosInstanceConfig,
     readonly namespaceId: string,
     readonly group: string,
-    configCount: number
+    loadedCount: number
   ) {
     super(group, vscode.TreeItemCollapsibleState.Collapsed);
     this.id = treeItemId(scope, 'group', instance.id, namespaceId, group);
     this.contextValue = contextValueFor('group', instance);
     this.iconPath = new vscode.ThemeIcon('folder');
-    this.description = String(configCount);
+    this.description = String(loadedCount);
     // Said in the tooltip because the list really is partial: Nacos has no
-    // endpoint that lists groups, so they can only be derived from the
-    // configurations paged in so far. A user who reads this list as complete
-    // concludes that a group does not exist when it merely has not loaded.
+    // endpoint that lists groups, so they can only be derived from what has
+    // been paged in so far. A user who reads this list as complete concludes
+    // that a group does not exist when it merely has not loaded.
     this.tooltip = t(
       'Group {group}, {count} loaded. Nacos cannot list groups, so this list is derived from the pages loaded so far -- more groups may appear as you load more.',
-      { count: configCount, group }
+      { count: loadedCount, group }
     );
   }
 }
@@ -187,6 +203,194 @@ export class ConfigTreeItem extends vscode.TreeItem {
 }
 
 /**
+ * How a service's instances are doing, as far as the listing that answered
+ * was willing to say.
+ *
+ * Five outcomes rather than the obvious three, and the two extra ones are the
+ * ones that matter. `unknown` is not a zero: the counts arrive only from the
+ * catalog endpoint or from 3.x, so a driver reduced to the name-only listing
+ * reports nothing at all -- and painting that red would accuse a healthy
+ * registry of being down. `empty` is not "all healthy": a service with no
+ * instances satisfies `healthy === total` vacuously, and a green tick on a
+ * service nobody can call is the worst answer of the five.
+ */
+type ServiceHealth = 'unknown' | 'empty' | 'none-healthy' | 'partly-healthy' | 'all-healthy';
+
+function serviceHealth(service: NacosServiceSummary): ServiceHealth {
+  const { instanceCount: total, healthyInstanceCount: healthy } = service;
+  // Both, not either: half a count cannot be rendered as a ratio, and
+  // inventing the missing half is exactly what this state exists to prevent.
+  if (total === undefined || healthy === undefined) {
+    return 'unknown';
+  }
+  if (total === 0) {
+    return 'empty';
+  }
+  if (healthy === 0) {
+    return 'none-healthy';
+  }
+  return healthy < total ? 'partly-healthy' : 'all-healthy';
+}
+
+/**
+ * `ThemeColor` rather than a literal, so the tree follows the user's theme --
+ * the same colours the Problems panel uses for its own error and warning
+ * icons, which is where a VS Code user has already learned to read them.
+ * `unknown` is deliberately left uncoloured: a colour is a claim, and that
+ * state is the absence of one.
+ */
+function serviceHealthIcon(health: ServiceHealth): vscode.ThemeIcon {
+  switch (health) {
+    case 'all-healthy':
+      return new vscode.ThemeIcon('pass', new vscode.ThemeColor('charts.green'));
+    case 'partly-healthy':
+      return new vscode.ThemeIcon('warning', new vscode.ThemeColor('problemsWarningIcon.foreground'));
+    case 'none-healthy':
+      return new vscode.ThemeIcon('error', new vscode.ThemeColor('problemsErrorIcon.foreground'));
+    // As red as none-healthy, because the caller's outcome is the same, and a
+    // glyph of its own because the cause is not: nothing is failing here,
+    // there is simply nothing registered.
+    case 'empty':
+      return new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('problemsErrorIcon.foreground'));
+    default:
+      return new vscode.ThemeIcon('circle-outline');
+  }
+}
+
+/**
+ * One service of one group.
+ *
+ * The whole summary is kept rather than only its name: the counts are what
+ * the icon and the description are built from, only the listing carries
+ * them, and M4's detail view will want the rest of it.
+ */
+export class ServiceTreeItem extends vscode.TreeItem {
+  constructor(
+    scope: NacosTreeScope,
+    readonly instance: NacosInstanceConfig,
+    /**
+     * The namespace this node was rendered under, which is not read off the
+     * summary for the reason `GroupTreeItem` does not read its own: the
+     * node's place in the tree is what its identity is made of. An entry
+     * whose `namespaceId` came back as something else -- a fallback, or a
+     * server echoing the wrong scope -- would otherwise give the same
+     * service in two namespaces one id, and VS Code would draw one of them.
+     */
+    readonly namespaceId: string,
+    readonly service: NacosServiceSummary
+  ) {
+    super(service.serviceName, vscode.TreeItemCollapsibleState.Collapsed);
+    this.id = treeItemId(scope, 'service', instance.id, namespaceId, service.group, service.serviceName);
+    this.contextValue = contextValueFor('service', instance);
+    const health = serviceHealth(service);
+    this.iconPath = serviceHealthIcon(health);
+    // Spelled out in words when there is no count, never as `?/?`: a glyph
+    // for "we could not ask" is read as a glyph for "nothing is there".
+    this.description =
+      health === 'unknown'
+        ? t('instance count not reported')
+        : `${service.healthyInstanceCount}/${service.instanceCount}`;
+    this.tooltip =
+      health === 'unknown'
+        ? t(
+            '{serviceName} in group {group}. The listing that answered carries no instance counts, so expand the service to see its instances.',
+            { group: service.group, serviceName: service.serviceName }
+          )
+        : t('{serviceName} in group {group}: {healthy} of {total} instances healthy.', {
+            group: service.group,
+            healthy: service.healthyInstanceCount ?? 0,
+            serviceName: service.serviceName,
+            total: service.instanceCount ?? 0
+          });
+  }
+}
+
+/**
+ * One registered instance of one service.
+ *
+ * The whole `NacosInstance` and the ref it was found under are both kept:
+ * M5's enable/disable takes the service address and the instance together,
+ * and nothing below this node can reconstruct either.
+ *
+ * **No `command`.** M3 is read-only and has no instance detail panel, so a
+ * click would have nowhere to go; the context value is what M5 hangs its
+ * menu on.
+ */
+export class ServiceInstanceTreeItem extends vscode.TreeItem {
+  constructor(
+    scope: NacosTreeScope,
+    readonly instance: NacosInstanceConfig,
+    readonly service: NacosServiceRef,
+    readonly serviceInstance: NacosInstance
+  ) {
+    const address = `${serviceInstance.ip}:${serviceInstance.port}`;
+    super(address, vscode.TreeItemCollapsibleState.None);
+    this.id = treeItemId(
+      scope,
+      'serviceInstance',
+      instance.id,
+      service.namespaceId,
+      service.group,
+      service.serviceName,
+      address
+    );
+    // Not `atNacos.instance`: that context value already belongs to the Nacos
+    // server node at the root, and a menu contributed for one would appear on
+    // the other.
+    this.contextValue = contextValueFor('serviceInstance', instance);
+    this.iconPath = instanceHealthIcon(serviceInstance);
+    this.description = instanceDescription(serviceInstance);
+    this.tooltip = instanceTooltip(serviceInstance);
+  }
+}
+
+/**
+ * A disabled instance is checked for first, and deliberately outranks an
+ * unhealthy one: Nacos hands a disabled instance to no caller however
+ * healthy it is, so that is the fact about routing. The health underneath is
+ * not lost -- the tooltip's first line still reports it.
+ */
+function instanceHealthIcon(serviceInstance: NacosInstance): vscode.ThemeIcon {
+  if (!serviceInstance.enabled) {
+    return new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('problemsWarningIcon.foreground'));
+  }
+  return serviceInstance.healthy
+    ? new vscode.ThemeIcon('pass', new vscode.ThemeColor('charts.green'))
+    : new vscode.ThemeIcon('error', new vscode.ThemeColor('problemsErrorIcon.foreground'));
+}
+
+/**
+ * The two fields that decide where a request lands. `normalizeInstance`
+ * leaves the cluster name empty when the entry omitted it, and a description
+ * reading "cluster , weight 1" looks like a rendering bug rather than like a
+ * missing field.
+ */
+function instanceDescription(serviceInstance: NacosInstance): string {
+  return serviceInstance.clusterName
+    ? t('cluster {cluster}, weight {weight}', {
+        cluster: serviceInstance.clusterName,
+        weight: serviceInstance.weight
+      })
+    : t('weight {weight}', { weight: serviceInstance.weight });
+}
+
+function instanceTooltip(serviceInstance: NacosInstance): string {
+  const lines = [serviceInstance.healthy ? t('This instance is healthy.') : t('This instance is unhealthy.')];
+  if (!serviceInstance.enabled) {
+    lines.push(t('This instance is disabled, so Nacos hands it to no caller.'));
+  }
+  const metadata = Object.entries(serviceInstance.metadata);
+  // An instance registered by a bare API call carries none at all, and a line
+  // that trails off after "Metadata:" reads as a failed lookup.
+  lines.push(
+    metadata.length === 0
+      ? t('No metadata.')
+      : t('Metadata: {metadata}', { metadata: metadata.map(([key, value]) => `${key}=${value}`).join(', ') })
+  );
+  return lines.join('\n');
+}
+
+/**
  * The next page of one namespace's configurations.
  *
  * It belongs to the namespace and not to a group: the page it loads can
@@ -203,13 +407,32 @@ export class LoadMoreTreeItem extends vscode.TreeItem {
     this.contextValue = 'atNacos.loadMore';
     this.iconPath = new vscode.ThemeIcon('ellipsis');
     this.description = `${loaded} / ${total}`;
-    this.tooltip = t(
-      '{loaded} of {total} configurations loaded. The next page may bring groups that are not shown yet.',
-      { loaded, total }
-    );
-    this.command = { command: LOAD_MORE_CONFIGS_COMMAND, title: t('Load more'), arguments: [namespace] };
+    // Both halves follow from the view rather than from an argument: what is
+    // being counted and which provider does the paging are one decision, and
+    // splitting it would let a caller pass a noun that contradicts the
+    // command it triggers. The noun is inside the sentence rather than
+    // interpolated into it, because a translated fragment dropped into a
+    // translated frame is only grammatical by luck.
+    const paging = scope === 'service' ? SERVICE_PAGING : CONFIG_PAGING;
+    this.tooltip = paging.tooltip(loaded, total);
+    this.command = { command: paging.command, title: t('Load more'), arguments: [namespace] };
   }
 }
+
+const CONFIG_PAGING = {
+  command: LOAD_MORE_CONFIGS_COMMAND,
+  tooltip: (loaded: number, total: number): string =>
+    t('{loaded} of {total} configurations loaded. The next page may bring groups that are not shown yet.', {
+      loaded,
+      total
+    })
+};
+
+const SERVICE_PAGING = {
+  command: LOAD_MORE_SERVICES_COMMAND,
+  tooltip: (loaded: number, total: number): string =>
+    t('{loaded} of {total} services loaded. The next page may bring groups that are not shown yet.', { loaded, total })
+};
 
 export class ErrorTreeItem extends vscode.TreeItem {
   /**
@@ -239,5 +462,7 @@ export type NacosTreeItem =
   | NamespaceTreeItem
   | GroupTreeItem
   | ConfigTreeItem
+  | ServiceTreeItem
+  | ServiceInstanceTreeItem
   | LoadMoreTreeItem
   | ErrorTreeItem;

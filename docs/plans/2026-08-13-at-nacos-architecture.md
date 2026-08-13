@@ -612,7 +612,7 @@ M2 Task 7 把 `test/live` 从驱动层抬到了 UI 层：这一组驱动的是 `
 
 M3 计划开篇的三条真机发现里，**第二条是错的**，而它错的方式恰好是第三条陷阱本身。
 
-**① 这台服务器有 13 个注册服务，不是零。** 分布在两个命名空间、同一个分组 `cl-intimfy`：`cl-parent-offline` 12 个、`cl-taskcenter` 1 个，各带 1 个健康实例，实例全部在 `192.168.99.92`，metadata 是 `{"preserved.register.source":"SPRING_CLOUD"}`。
+**① 这台服务器有 13 个注册服务，不是零。** 分布在两个命名空间、同一个分组 `cl-intimfy`：`cl-parent-offline` 12 个、`cl-taskcenter` 1 个，各带 1 个健康实例，metadata 是 `{"preserved.register.source":"SPRING_CLOUD"}`。~~实例全部在 `192.168.99.92`~~ ——这一句是从当时唯一展开过的那个服务外推的，Task 2 把 12 个服务全部展开后不成立，见 §14.6 ②。
 
 得出「零服务」结论的是 `/v1/ns/service/list`，而它的 `groupName` 默认 `DEFAULT_GROUP`。同一个命名空间实测：不带分组返回 `{"count":0,"doms":[]}`，带 `groupName=cl-intimfy` 返回 12 条。**分组默认值不只是「可能藏住一个注册表」——它藏住了这一个，并且骗过了为它做调研的人。**
 
@@ -641,7 +641,21 @@ M3 计划开篇的三条真机发现里，**第二条是错的**，而它错的�
 18. **console 没有 naming metrics 端点这一判断。** 来自 3.1.0 的 `console/controller/v3` 目录清单（只有 health、serverState、naming 的 service/instance、core 的 cluster/namespace），据此 `V3ConsoleDriver.getServerMetrics` 不发请求直接拒绝。若某个 3.x 其实提供了，我们会拒绝一个存在的能力。
 19. **多节点集群与非 UP 状态。** 这台是单节点 standalone，所以 `raftGroups` 的多成员分支、以及 `STARTING` / `SUSPICIOUS` / `DOWN` / `ISOLATION` 四种状态全部只有夹具覆盖。
 
-## 16. 已知延后项（M1 完成时记录）
+### 14.6 M3 Task 2 服务树的真机验证（Nacos 2.3.2，2026-08-14）
+
+Task 1 把 `test/live` 走到了 `NacosClient`，这一组走的是 `ServiceTreeProvider` 本身——命名空间 → 分组 → 服务 → 实例四层，从树节点上读断言。
+
+**① 四层在真机上是通的，分组确实是推导出来的。** `cl-parent-offline` 展开出 1 个分组 `cl-intimfy`（12）、12 个服务节点，每个服务再展开出 1 个实例节点。分组名不是 `DEFAULT_GROUP`——这正是 §14.5 ① 那个陷阱的反面证据：树的服务列举**不带 `group` 参数**，所以能看见注册在别处的分组；一个带默认值的列举在这台服务器上会渲染出空树。
+
+**② 修正 §14.5 ①：实例并不全在 `192.168.99.92`。** 全部展开后，`cl-onboarding-server-offline` 注册的地址是 `192.168.66.124:9208`，其余 11 个在 `192.168.99.92` 的不同端口上。M3 计划 ② 说 13 个客户端连接「全部来自同一台 `192.168.99.92`」——那是**连接来源**，而实例注册的是**它自己上报的地址**，两者可以不同（`spring.cloud.nacos.discovery.ip`、NAT、容器网络都会让它们分开）。任何从连接来源推断实例地址的判断都不成立。
+
+**③ catalog 的计数一路到了树上。** 12 个服务节点的 description 全是 `1/1`，图标是 `$(pass)` + `charts.green`；实例节点的 description 是 `cluster DEFAULT, weight 1`，tooltip 两行（健康 + metadata）。实例节点的 id 里地址是百分号编码的（`192.168.99.92%3A9202`），冒号进不了分隔位。
+
+**M3 Task 2 仍未覆盖的：**
+
+20. **除「全健康」以外的四种健康状态。** 这台服务器上 13 个服务全是 `1/1`，所以「部分健康」「全不健康」「0 实例」「未报计数」四个分支，以及不健康实例与已下线实例的图标，全部只有夹具覆盖。「未报计数」尤其需要一台真的 1.x——它是 catalog 不可用时的降级形态（§14.5 ⑰）。
+21. **服务树的分页。** 最大的命名空间只有 12 个服务，远低于每页 100，所以 `LoadMoreTreeItem` 在服务树上也从未出现过（配置树同样，见 §14.4 ⑬）。
+22. **`atNacos.loadMoreServices` 还没有注册。** 节点已经带上这个命令 id，注册留在 M3 Task 4——在那之前，一个超过 100 个服务的命名空间会渲染出一个点了没反应的 Load more。
 
 这些是 M1 整体评审确认过的、有意留到后续里程碑的问题。它们不是缺陷清单里的遗漏，但**开始 M2 之前应当各自有个决定**。
 

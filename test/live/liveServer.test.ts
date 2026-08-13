@@ -30,8 +30,11 @@ import {
   GroupTreeItem,
   LoadMoreTreeItem,
   NamespaceTreeItem,
+  ServiceInstanceTreeItem,
+  ServiceTreeItem,
   type NacosTreeItem
 } from '../../src/tree/NacosTreeItems';
+import { ServiceTreeProvider } from '../../src/tree/ServiceTreeProvider';
 import { noopLog } from '../../src/utils/logger';
 
 const liveUrl = process.env.AT_NACOS_LIVE_URL;
@@ -626,6 +629,190 @@ describeLive('a real Nacos server, through the configuration tree and the editor
       console.log(
         `    opened while filtered: ${String(openWhileFiltered.label)} ` +
           `type=${openWhileFiltered.config.type ?? '(null)'} -> language=${document.languageId}`
+      );
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+});
+
+/** One namespace of the live server, expanded from the namespace down to the instances. */
+interface BrowsedServiceNamespace {
+  namespaceItem: NamespaceTreeItem;
+  children: NacosTreeItem[];
+  groups: GroupTreeItem[];
+  services: ServiceTreeItem[];
+  /** Keyed by the service node's id, because two groups may hold a service of the same name. */
+  instances: Map<string, NacosTreeItem[]>;
+}
+
+function liveServiceTree(): ServiceTreeProvider {
+  return new ServiceTreeProvider({ listInstances: async () => [liveInstance()] }, () => connectLive());
+}
+
+function servicesIn(children: NacosTreeItem[]): ServiceTreeItem[] {
+  return children.filter((item): item is ServiceTreeItem => item instanceof ServiceTreeItem);
+}
+
+function instancesIn(children: NacosTreeItem[]): ServiceInstanceTreeItem[] {
+  return children.filter((item): item is ServiceInstanceTreeItem => item instanceof ServiceInstanceTreeItem);
+}
+
+/** The codicon and the theme colour a node was decorated with, which is what the view renders. */
+function decorationOf(item: NacosTreeItem): { icon: string; color: string | undefined } {
+  const icon = item.iconPath as { id: string; color?: { id: string } };
+  return { icon: icon.id, color: icon.color?.id };
+}
+
+/**
+ * Walks namespace -> group -> service -> instance and stops at the first
+ * namespace that has a service under it. Not hard-coded to a namespace or a
+ * group name, so the suite still means something on a server that is not
+ * this one.
+ */
+async function browseFirstPopulatedServiceNamespace(
+  provider: ServiceTreeProvider
+): Promise<BrowsedServiceNamespace> {
+  const instances = await provider.getChildren();
+  expect(instances.length, 'the tree offered no instance to expand').toBe(1);
+  const namespaces = await provider.getChildren(instances[0]);
+
+  for (const candidate of namespaces) {
+    if (!(candidate instanceof NamespaceTreeItem)) {
+      continue;
+    }
+    const children = await provider.getChildren(candidate);
+    const groups = groupsIn(children);
+    if (groups.length === 0) {
+      continue;
+    }
+    const services = (await Promise.all(groups.map((group) => provider.getChildren(group)))).flatMap(servicesIn);
+    const instancesByService = new Map<string, NacosTreeItem[]>();
+    for (const service of services) {
+      instancesByService.set(String(service.id), await provider.getChildren(service));
+    }
+    return { namespaceItem: candidate, children, groups, services, instances: instancesByService };
+  }
+  throw new Error('no namespace on this server has a registered service; nothing to browse');
+}
+
+function printServiceTree(browsed: BrowsedServiceNamespace, heading: string): void {
+  console.log(`  ${heading}`);
+  console.log(`    ${browsed.namespaceItem.label} [${browsed.namespaceItem.description ?? ''}]`);
+  for (const group of browsed.groups) {
+    console.log(`      ${group.label} (${group.description})`);
+    for (const service of browsed.services.filter((entry) => entry.service.group === group.group)) {
+      const decoration = decorationOf(service);
+      console.log(
+        `        ${String(service.label).padEnd(32)} ${String(service.description).padEnd(24)} ` +
+          `$(${decoration.icon}) ${decoration.color ?? '(no colour)'}`
+      );
+      for (const item of browsed.instances.get(String(service.id)) ?? []) {
+        const instanceDecoration = decorationOf(item);
+        console.log(
+          `          ${String(item.label).padEnd(28)} ${String(item.description).padEnd(28)} ` +
+            `$(${instanceDecoration.icon}) ${instanceDecoration.color ?? '(no colour)'}`
+        );
+        console.log(`            tooltip: ${String(item.tooltip).replace(/\n/g, ' | ')}`);
+      }
+    }
+  }
+  for (const item of browsed.children.filter((entry) => entry instanceof LoadMoreTreeItem)) {
+    console.log(`      [Load more] ${item.description}`);
+  }
+}
+
+/**
+ * The same registry, reached the way a user reaches it: through the tree
+ * provider the view is backed by rather than through the client it is built
+ * on. What only this level can catch is that the four levels agree -- that
+ * the group derived from a listing is the group the services are asked for
+ * under, and that the ref a service node carries is the one whose instances
+ * come back.
+ */
+describeLive('a real Nacos server, through the service tree', () => {
+  let browsing: Promise<BrowsedServiceNamespace> | undefined;
+
+  /** Shared: the walk costs a probe per level, and both tests want the same one. */
+  function browse(): Promise<BrowsedServiceNamespace> {
+    browsing ??= browseFirstPopulatedServiceNamespace(liveServiceTree());
+    return browsing;
+  }
+
+  it(
+    'expands an instance down to the instances of its services',
+    async () => {
+      const browsed = await browse();
+
+      expect(browsed.groups.length).toBeGreaterThan(0);
+      expect(browsed.services.length).toBeGreaterThan(0);
+      // Nacos has no endpoint that lists groups, so every group node here was
+      // derived from the page of services that was loaded. A group with
+      // nothing under it would mean that derivation is wrong.
+      for (const group of browsed.groups) {
+        expect(
+          browsed.services.filter((item) => item.service.group === group.group).length,
+          `group ${group.group} rendered with no service under it`
+        ).toBeGreaterThan(0);
+      }
+      // The whole reason the query leaves `group` absent. A tree that could
+      // only see `DEFAULT_GROUP` would render nothing at all on this server,
+      // which is exactly what this milestone's reconnaissance concluded from
+      // the endpoint that has that default.
+      expect(
+        browsed.groups.some((group) => group.group !== 'DEFAULT_GROUP'),
+        'every group found was DEFAULT_GROUP, so this run proves nothing about the group derivation'
+      ).toBe(true);
+      const withInstances = browsed.services.filter(
+        (service) => instancesIn(browsed.instances.get(String(service.id)) ?? []).length > 0
+      );
+      expect(withInstances.length, 'no service expanded into an instance node').toBeGreaterThan(0);
+
+      printServiceTree(
+        browsed,
+        `tree shape for namespace ${JSON.stringify(browsed.namespaceItem.namespace.namespaceId)}:`
+      );
+    },
+    LIVE_BROWSE_TIMEOUT_MS
+  );
+
+  /**
+   * The decoration is the whole point of the service level, and it is the one
+   * thing a fixture cannot prove: the counts it is computed from come from the
+   * catalog endpoint, and whether that endpoint answered at all is a fact
+   * about the server.
+   */
+  it(
+    'decorates a healthy instance and the service above it as healthy',
+    async () => {
+      const browsed = await browse();
+      const healthy = browsed.services
+        .flatMap((service) => instancesIn(browsed.instances.get(String(service.id)) ?? []))
+        .find((item) => item.serviceInstance.healthy && item.serviceInstance.enabled);
+      expect(healthy, 'no healthy instance on this server to assert a decoration on').toBeDefined();
+      const instanceItem = healthy as ServiceInstanceTreeItem;
+
+      expect(decorationOf(instanceItem)).toEqual({ icon: 'pass', color: 'charts.green' });
+      expect(String(instanceItem.label)).toMatch(/^\d+\.\d+\.\d+\.\d+:\d+$/);
+      expect(instanceItem.command, 'M3 has no detail panel, so an instance node must not be clickable').toBeUndefined();
+
+      // The service above it: its counts came from the catalog, so a
+      // description of anything but `healthy/total` means the driver fell back
+      // to the name-only listing and the tree is showing less than it could.
+      const parent = browsed.services.find(
+        (service) => instancesIn(browsed.instances.get(String(service.id)) ?? []).includes(instanceItem)
+      );
+      expect(parent, 'the healthy instance has no service node above it').toBeDefined();
+      const serviceItem = parent as ServiceTreeItem;
+      expect(serviceItem.service.instanceCount, 'the catalog counts did not reach the tree').toBeDefined();
+      expect(String(serviceItem.description)).toMatch(/^\d+\/\d+$/);
+
+      console.log(
+        `  ${String(serviceItem.label)} ${String(serviceItem.description)} ` +
+          `$(${decorationOf(serviceItem).icon}) ${decorationOf(serviceItem).color ?? '(no colour)'}\n` +
+          `    ${String(instanceItem.label)} ${String(instanceItem.description)} ` +
+          `$(${decorationOf(instanceItem).icon}) ${decorationOf(instanceItem).color ?? '(no colour)'}\n` +
+          `    tooltip: ${String(instanceItem.tooltip).replace(/\n/g, ' | ')}\n` +
+          `    id: ${String(instanceItem.id)}`
       );
     },
     LIVE_BROWSE_TIMEOUT_MS
