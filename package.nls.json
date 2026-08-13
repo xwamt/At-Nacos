@@ -1,0 +1,11 @@
+{
+  "atNacos.displayName": "AT Nacos",
+  "atNacos.description": "Browse Nacos configurations, services, and cluster status inside VS Code, with Agent (MCP) integration via AT Series.",
+  "atNacos.viewsContainer.title": "AT Nacos",
+  "atNacos.view.configs.name": "Configurations",
+  "atNacos.view.services.name": "Services",
+  "atNacos.command.addInstance.title": "AT Nacos: Add Instance",
+  "atNacos.command.manageInstances.title": "AT Nacos: Manage Instances",
+  "atNacos.command.refreshConfigs.title": "AT Nacos: Refresh Configurations",
+  "atNacos.command.refreshServices.title": "AT Nacos: Refresh Services"
+}

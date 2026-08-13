@@ -331,3 +331,29 @@ export enum ViewColumn {
   Active = -1,
   Beside = -2
 }
+
+export const l10n = {
+  /**
+   * No real translation happens here: tests assert the key and its arguments,
+   * not the wording. What is worth copying exactly is the substitution, which
+   * the extension host performs with `format2` for every overload -- rest
+   * arguments arrive as an array, so `{0}` resolves as `values['0']` and both
+   * forms share one code path. Two behaviours ride on that and are easy to get
+   * wrong in a fixture: an unresolved placeholder stays literal rather than
+   * becoming "undefined", and `??` (not `||`) means `0` and `false` still
+   * substitute.
+   */
+  t(
+    message: string,
+    ...args: Array<string | number | boolean | Record<string, string | number | boolean>>
+  ): string {
+    const values: Record<string, unknown> =
+      args.length === 1 && typeof args[0] === 'object' && args[0] !== null ? args[0] : { ...args };
+
+    if (Object.keys(values).length === 0) {
+      return message;
+    }
+
+    return message.replace(/{([^}]+)}/g, (match, key: string) => String(values[key] ?? match));
+  }
+};

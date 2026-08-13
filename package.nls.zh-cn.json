@@ -1,0 +1,11 @@
+{
+  "atNacos.displayName": "AT Nacos",
+  "atNacos.description": "在 VS Code 中浏览 Nacos 配置、服务与集群状态，并通过 AT Series 集成 Agent (MCP)。",
+  "atNacos.viewsContainer.title": "AT Nacos",
+  "atNacos.view.configs.name": "配置管理",
+  "atNacos.view.services.name": "服务列表",
+  "atNacos.command.addInstance.title": "AT Nacos: 添加实例",
+  "atNacos.command.manageInstances.title": "AT Nacos: 管理实例",
+  "atNacos.command.refreshConfigs.title": "AT Nacos: 刷新配置",
+  "atNacos.command.refreshServices.title": "AT Nacos: 刷新服务"
+}
