@@ -1,5 +1,5 @@
 import { asRedactedLog, noopLog, type AtNacosLog } from '../utils/logger';
-import { NacosApiError } from './NacosApiError';
+import { NacosApiError, type NacosApiErrorKind } from './NacosApiError';
 import type { NacosApiFlavor, NacosDriver } from './driver/NacosDriver';
 
 /**
@@ -9,6 +9,26 @@ import type { NacosApiFlavor, NacosDriver } from './driver/NacosDriver';
  * that widens `NacosDriver` widens this alongside it.
  */
 export type NacosCapability = 'namespaces';
+
+/** How one driver in the chain declined, in the terms the chain builder reasons about. */
+export interface NacosDriverRefusal {
+  flavor: NacosApiFlavor;
+  kind: NacosApiErrorKind;
+  status: number | undefined;
+}
+
+/**
+ * One sentence naming what would make an exhausted walk succeed, or undefined
+ * when this particular set of refusals suggests nothing.
+ *
+ * It is supplied from outside because the useful advice is usually about a
+ * driver that is *not* in the chain -- the console driver a 3.x server gets
+ * only once its console address is known. The resolver is handed a list of
+ * drivers and no account of how it was chosen, so it can report the refusals
+ * it collected and nothing more; only whoever assembled the chain knows what
+ * was left out of it and why.
+ */
+export type NacosChainAdvice = (refusals: readonly NacosDriverRefusal[]) => string | undefined;
 
 /** What one driver's attempt gave back, before the caller learns which one answered. */
 interface Attempt<T> {
@@ -28,7 +48,8 @@ export class NacosCapabilityResolver {
 
   constructor(
     private readonly drivers: readonly NacosDriver[],
-    log: AtNacosLog = noopLog
+    log: AtNacosLog = noopLog,
+    private readonly adviseOnExhaustion: NacosChainAdvice = () => undefined
   ) {
     this.log = asRedactedLog(log);
   }
@@ -87,7 +108,7 @@ export class NacosCapabilityResolver {
         this.resolved.delete(capability);
       }
       this.log.debug(
-        `capability ${capability}: ${driver.flavor} stopped working (${describeAttempt(error)}); re-probing`
+        `capability ${capability}: ${driver.flavor} stopped working (${describeRefusal(error)}); re-probing`
       );
     }
     return await this.probe(capability, invoke);
@@ -129,7 +150,7 @@ export class NacosCapabilityResolver {
     capability: NacosCapability,
     invoke: (driver: NacosDriver) => Promise<T>
   ): Promise<Attempt<T>> {
-    const attempts: string[] = [];
+    const refusals: NacosDriverRefusal[] = [];
     for (const driver of this.drivers) {
       try {
         const result = await invoke(driver);
@@ -138,13 +159,18 @@ export class NacosCapabilityResolver {
         if (!isFallThrough(error)) {
           throw error;
         }
-        attempts.push(`${driver.flavor} (${describeAttempt(error)})`);
+        refusals.push({ flavor: driver.flavor, kind: error.kind, status: error.status });
       }
     }
 
+    const tried = refusals.map((refusal) => `${refusal.flavor} (${describeRefusal(refusal)})`).join('; ');
+    // Four refusals listed as equals send the user to check all four. The
+    // builder's sentence, when it has one, names the single one worth acting
+    // on -- so it goes last, where a reader stops.
+    const advice = this.adviseOnExhaustion(refusals);
     throw new NacosApiError(
       'api-error',
-      `No Nacos API flavor could serve "${capability}". Tried: ${attempts.join('; ')}.`
+      `No Nacos API flavor could serve "${capability}". Tried: ${tried}.${advice ? ` ${advice}` : ''}`
     );
   }
 }
@@ -159,6 +185,7 @@ function isFallThrough(error: unknown): error is NacosApiError {
   return error instanceof NacosApiError && error.shouldFallThrough();
 }
 
-function describeAttempt(error: NacosApiError): string {
-  return `${error.kind}${error.status === undefined ? '' : ` ${error.status}`}`;
+/** Takes the two fields rather than either whole type, so an error and a refusal read alike. */
+function describeRefusal(refusal: { kind: NacosApiErrorKind; status?: number }): string {
+  return `${refusal.kind}${refusal.status === undefined ? '' : ` ${refusal.status}`}`;
 }

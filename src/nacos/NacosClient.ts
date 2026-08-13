@@ -1,4 +1,4 @@
-import type { NacosCapabilityResolver } from './NacosCapabilityResolver';
+import type { NacosCapabilityResolver, NacosChainAdvice } from './NacosCapabilityResolver';
 import type { NacosHttpClient } from './NacosHttpClient';
 import type { NacosDriver } from './driver/NacosDriver';
 import { V1Driver } from './driver/V1Driver';
@@ -51,6 +51,42 @@ export function buildDriverChain(
   // two deployments where they do: 3.0/3.1 with the compatibility switch on
   // and no reachable console, and 3.2+ carrying nacos-api-legacy-adapter.
   return [v3Admin, ...(v3Console ? [v3Console] : []), v2, v1];
+}
+
+/**
+ * What to tell a user whose whole chain declined, given the same two facts
+ * `buildDriverChain` decided from.
+ *
+ * It lives beside the builder rather than in the resolver because it is about
+ * the driver the builder left out. The resolver can only report what it tried;
+ * "the one that would have worked was never built, and here is how to build
+ * it" is knowledge of construction, and putting it there would mean teaching
+ * the resolver which flavors exist and when each is omitted.
+ *
+ * Narrow on purpose. A 403 from the admin API is the documented signal for an
+ * ordinary (non-administrator) account -- §4.3 -- and the console API is the
+ * documented answer to it; any other refusal has some other cause, and a
+ * console address would not fix it.
+ */
+export function buildChainAdvice(majorVersion: number, consoleBaseUrl: string | undefined): NacosChainAdvice {
+  if (!hasConsoleDriverSlot(majorVersion) || consoleBaseUrl) {
+    return () => undefined;
+  }
+  return (refusals) =>
+    refusals.some((refusal) => refusal.flavor === 'v3-admin' && refusal.kind === 'forbidden')
+      ? 'The v3 admin API answered HTTP 403, which on Nacos 3.x usually means the account is not an administrator. Its console API needs only a valid identity, but this instance has no console address for it: fill in the instance\'s console URL (Nacos 3.x serves its console on port 8080 by default) so that fallback exists, or connect with an administrator account.'
+      : undefined;
+}
+
+/**
+ * Whether a chain for this major version would have carried a console driver
+ * had a console address been known -- i.e. whether `buildDriverChain` takes
+ * its 3.x branch. Spelled as the negation of the two older versions, exactly
+ * as that branch is reached, so an unrecognized major is treated the same way
+ * in both places.
+ */
+function hasConsoleDriverSlot(majorVersion: number): boolean {
+  return majorVersion !== 1 && majorVersion !== 2;
 }
 
 /**

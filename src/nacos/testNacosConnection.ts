@@ -12,7 +12,13 @@ import {
 import type { NacosAuthStrategy } from './auth/NacosAuthStrategy';
 import { createAuthStrategy } from './auth/createAuthStrategy';
 import { probeServerState, type NacosServerState } from './probe/probeServerState';
-import { candidateBaseUrls, fetchConsoleHint, type NacosConsoleHint } from './probe/resolveBaseUrl';
+import {
+  candidateBaseUrls,
+  composeConsoleUrl,
+  CONSOLE_MAJOR_VERSION,
+  fetchConsoleHint,
+  type NacosConsoleHint
+} from './probe/resolveBaseUrl';
 
 /**
  * The part of the instance form that changes what goes on the wire. The label
@@ -105,9 +111,6 @@ export interface NacosConnectionTestFailure {
  * worth reporting.
  */
 export type NacosConnectionTestResult = NacosConnectionTestSuccess | NacosConnectionTestFailure;
-
-/** Nacos 3.x is the first version to serve its console from a port of its own. */
-const CONSOLE_MAJOR_VERSION = 3;
 
 /**
  * Probes a Nacos server with the settings a form is holding, without saving
@@ -273,29 +276,6 @@ async function resolveConsoleUrl(
   } catch {
     return undefined;
   }
-}
-
-/**
- * The hint carries a port and a path but no host, because Nacos is describing
- * itself -- so the host has to come from the candidate that answered rather
- * than from what the user typed, which may have been a bare origin.
- *
- * Rebuilt through `URL` rather than by concatenation so that an IPv6 literal
- * keeps its brackets, and stripped of any userinfo, which would otherwise be
- * copied into a field the form saves.
- */
-function composeConsoleUrl(baseUrl: string, hint: NacosConsoleHint): string | undefined {
-  let url: URL;
-  try {
-    url = new URL(baseUrl);
-  } catch {
-    return undefined;
-  }
-  url.username = '';
-  url.password = '';
-  url.pathname = hint.path;
-  url.port = String(hint.port);
-  return normalizeBaseUrl(url.href);
 }
 
 function toFailure(

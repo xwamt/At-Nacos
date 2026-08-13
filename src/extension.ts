@@ -4,12 +4,14 @@ import type { NacosInstanceConfig } from './config/schema';
 import { t } from './i18n/t';
 import { NacosCapabilityResolver } from './nacos/NacosCapabilityResolver';
 import { NacosCertTrustStore } from './nacos/NacosCertTrustStore';
-import { NacosClient, buildDriverChain } from './nacos/NacosClient';
+import { NacosClient, buildChainAdvice, buildDriverChain } from './nacos/NacosClient';
 import { NacosHttpClient } from './nacos/NacosHttpClient';
+import type { NacosAuthedRequests } from './nacos/auth/withAuth';
 import { createAuthStrategy } from './nacos/auth/createAuthStrategy';
 import { withAuth } from './nacos/auth/withAuth';
 import { createInteractiveCertVerifier } from './nacos/createInteractiveCertVerifier';
 import { probeServerState } from './nacos/probe/probeServerState';
+import { CONSOLE_MAJOR_VERSION, discoverConsoleBaseUrl } from './nacos/probe/resolveBaseUrl';
 import { testNacosConnection } from './nacos/testNacosConnection';
 import { ConfigTreeProvider } from './tree/ConfigTreeProvider';
 import type { NacosTreeItem } from './tree/NacosTreeItems';
@@ -66,8 +68,41 @@ export async function createNacosClient(
   // sent no credential would report the server as unreachable.
   const authed = withAuth(http, auth);
   const state = await probeServerState(authed);
-  const drivers = buildDriverChain(state.majorVersion, authed, instance.consoleUrl);
-  return new NacosClient(new NacosCapabilityResolver(drivers, log), state);
+  const consoleBaseUrl = await resolveConsoleBaseUrl(instance, state.majorVersion, authed);
+  const drivers = buildDriverChain(state.majorVersion, authed, consoleBaseUrl);
+  const resolver = new NacosCapabilityResolver(drivers, log, buildChainAdvice(state.majorVersion, consoleBaseUrl));
+  return new NacosClient(resolver, state);
+}
+
+/**
+ * The console address to build the chain from: what the instance carries, or
+ * what the server will admit to when it carries none.
+ *
+ * Asking here rather than only in the connection test is what makes a blank
+ * console field survive being saved. §4.3: `nacos.core.auth.admin.enabled`
+ * defaults to true and most `/v3/admin/*` endpoints want an administrator, so
+ * an ordinary account gets 403 and needs the console endpoint to drop to --
+ * and a chain built without a console address does not have one. The
+ * connection test discovers exactly this and shows it, but only the saved
+ * field reaches the tree, and the tree is where the 403 happens.
+ *
+ * One extra request, on 3.x instances with the field left blank only, and the
+ * connection test writes its answer back into that field -- so an instance the
+ * user tested before saving never pays it again. 1.x and 2.x serve their
+ * console from the same port and are not asked at all.
+ */
+async function resolveConsoleBaseUrl(
+  instance: NacosInstanceConfig,
+  majorVersion: number,
+  authed: NacosAuthedRequests
+): Promise<string | undefined> {
+  if (instance.consoleUrl) {
+    return instance.consoleUrl;
+  }
+  if (majorVersion < CONSOLE_MAJOR_VERSION) {
+    return undefined;
+  }
+  return discoverConsoleBaseUrl(authed, instance.serverUrl);
 }
 
 /**

@@ -1,6 +1,9 @@
 import { NacosApiError } from '../NacosApiError';
 import { normalizeBaseUrl, type NacosHttpClient } from '../NacosHttpClient';
 
+/** Nacos 3.x is the first version to serve its console from a port of its own. */
+export const CONSOLE_MAJOR_VERSION = 3;
+
 /**
  * The base URLs to try, in order. `/nacos` is not a given: a K8s Ingress and
  * some Docker images serve Nacos at the root path.
@@ -101,5 +104,48 @@ export async function fetchConsoleHint(
       return undefined;
     }
     throw error;
+  }
+}
+
+/**
+ * The hint carries a port and a path but no host, because Nacos is describing
+ * itself -- so the host has to come from the base URL that answered rather
+ * than from what the user typed, which may have been a bare origin.
+ *
+ * Rebuilt through `URL` rather than by concatenation so that an IPv6 literal
+ * keeps its brackets, and stripped of any userinfo, which would otherwise be
+ * copied into a field the form saves.
+ */
+export function composeConsoleUrl(baseUrl: string, hint: NacosConsoleHint): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return undefined;
+  }
+  url.username = '';
+  url.password = '';
+  url.pathname = hint.path;
+  url.port = String(hint.port);
+  return normalizeBaseUrl(url.href);
+}
+
+/**
+ * Asks a 3.x server where its console is and turns the answer into a base URL.
+ *
+ * Every failure becomes undefined, the unparsable hint included. A console
+ * that cannot be located is one fallback the caller does not get, not a
+ * connection that failed: the admin API is still there, and on an
+ * administrator account it is all that is needed.
+ */
+export async function discoverConsoleBaseUrl(
+  http: Pick<NacosHttpClient, 'requestRaw'>,
+  baseUrl: string
+): Promise<string | undefined> {
+  try {
+    const hint = await fetchConsoleHint(http);
+    return hint && composeConsoleUrl(baseUrl, hint);
+  } catch {
+    return undefined;
   }
 }

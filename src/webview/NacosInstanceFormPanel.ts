@@ -293,6 +293,12 @@ async function runConnectionTest(
 interface TestOutcome {
   ok: boolean;
   message: string;
+  /**
+   * The console address the probe discovered, for the page to write into the
+   * field the user left blank. Present only when there is something to fill:
+   * what the user typed is not sent back to them.
+   */
+  consoleUrl?: string;
 }
 
 async function probeWithFormValues(
@@ -340,7 +346,16 @@ async function probeWithFormValues(
     customHeaders
   });
   return result.ok
-    ? { ok: true, message: describeSuccess(result, payload.authMode) }
+    ? {
+        ok: true,
+        message: describeSuccess(result, payload.authMode),
+        // Naming the console in the success sentence and then dropping it is
+        // how the discovery used to get lost: the instance is saved with
+        // whatever the field holds, and a 3.x instance saved without a console
+        // address has no fallback for the 403 an ordinary account gets from
+        // the v3 admin API.
+        consoleUrl: payload.consoleUrl.trim() ? undefined : result.consoleUrl
+      }
     : // English, and left that way: these sentences are assembled from the
       // address, the status and the server's own words, so there is no source
       // string to key a translation on. Localizing them means rebuilding them

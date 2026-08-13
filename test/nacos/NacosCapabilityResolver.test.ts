@@ -345,6 +345,73 @@ describe('NacosCapabilityResolver', () => {
     expect(resolver.snapshot()).toEqual({});
   });
 
+  /**
+   * The most useful thing to say about an exhausted chain is usually about a
+   * driver that is not in it, which the resolver cannot see: it is handed a
+   * list of drivers, not the reasons behind it. So the sentence comes from
+   * whoever built the chain, and the resolver only supplies the facts to
+   * decide on.
+   */
+  describe('exhausted-chain advice', () => {
+    it('appends the advice the chain builder offers for this set of refusals', async () => {
+      const resolver = new NacosCapabilityResolver(
+        [
+          driver('v3-admin', () => Promise.reject(new NacosApiError('forbidden', 'denied', 403))),
+          driver('v2', () => Promise.reject(new NacosApiError('not-found', 'missing', 404)))
+        ],
+        undefined,
+        () => 'Set the console URL on this instance.'
+      );
+
+      await expect(resolver.run('namespaces', (d) => d.listNamespaces())).rejects.toThrow(
+        'No Nacos API flavor could serve "namespaces". Tried: v3-admin (forbidden 403); v2 (not-found 404). Set the console URL on this instance.'
+      );
+    });
+
+    it('hands the builder each refusal as its flavor, kind and status', async () => {
+      const seen: unknown[] = [];
+      const resolver = new NacosCapabilityResolver(
+        [
+          driver('v3-admin', () => Promise.reject(new NacosApiError('forbidden', 'denied', 403))),
+          driver('v1', () => Promise.reject(new NacosApiError('api-deprecated', 'gone', 410)))
+        ],
+        undefined,
+        (attempts) => {
+          seen.push(...attempts);
+          return undefined;
+        }
+      );
+
+      await expect(resolver.run('namespaces', (d) => d.listNamespaces())).rejects.toThrow(NacosApiError);
+      expect(seen).toEqual([
+        { flavor: 'v3-admin', kind: 'forbidden', status: 403 },
+        { flavor: 'v1', kind: 'api-deprecated', status: 410 }
+      ]);
+    });
+
+    it('leaves the message exactly as it was when the builder has nothing to add', async () => {
+      const resolver = new NacosCapabilityResolver(
+        [driver('v1', () => Promise.reject(new NacosApiError('not-found', 'missing', 404)))],
+        undefined,
+        () => undefined
+      );
+
+      await expect(resolver.run('namespaces', (d) => d.listNamespaces())).rejects.toThrow(
+        'No Nacos API flavor could serve "namespaces". Tried: v1 (not-found 404).'
+      );
+    });
+
+    it('says nothing extra when no builder supplied advice at all', async () => {
+      const resolver = new NacosCapabilityResolver([
+        driver('v1', () => Promise.reject(new NacosApiError('not-found', 'missing', 404)))
+      ]);
+
+      await expect(resolver.run('namespaces', (d) => d.listNamespaces())).rejects.toThrow(
+        'No Nacos API flavor could serve "namespaces". Tried: v1 (not-found 404).'
+      );
+    });
+  });
+
   describe('snapshot', () => {
     it('is empty before anything has been resolved', () => {
       const resolver = new NacosCapabilityResolver([driver('v1', () => Promise.resolve([]))]);

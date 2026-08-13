@@ -115,6 +115,22 @@ function setTesting(isTesting: boolean): void {
 }
 
 /**
+ * A console address the probe discovered is only worth anything once it is
+ * saved, and Save writes the field. Put in the field rather than kept aside so
+ * the user sees what will be stored and can correct it first.
+ *
+ * Still guarded on the field being empty even though the extension only sends
+ * an address for a field it saw blank: the user can type into it while the
+ * probe is in flight, and what they typed wins.
+ */
+function fillConsoleUrl(value: string): void {
+  const element = field('consoleUrl');
+  if (element instanceof HTMLInputElement && element.value.trim() === '') {
+    element.value = value;
+  }
+}
+
+/**
  * Which credential fields are shown is a class on the form; the rules live in
  * the stylesheet. The modes come from the options the extension rendered, so
  * there is no second list here to fall out of step with the first.
@@ -156,8 +172,11 @@ window.addEventListener('message', (event: MessageEvent<{ type?: string; payload
   }
   if (message.type === 'connectionTestResult') {
     setTesting(false);
-    const payload = (message.payload ?? {}) as { ok?: boolean; message?: string };
+    const payload = (message.payload ?? {}) as { ok?: boolean; message?: string; consoleUrl?: string };
     setTestStatus(payload.message ?? strings.unknownError, payload.ok ? 'success' : 'error');
+    if (payload.consoleUrl) {
+      fillConsoleUrl(payload.consoleUrl);
+    }
   }
 });
 

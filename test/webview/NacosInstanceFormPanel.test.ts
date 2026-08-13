@@ -135,9 +135,9 @@ function errorPayload(panel: TestPanel): unknown {
   return panel.posted.find((entry) => entry.type === 'error')?.payload;
 }
 
-function testOutcome(panel: TestPanel): { ok?: boolean; message?: string } {
+function testOutcome(panel: TestPanel): { ok?: boolean; message?: string; consoleUrl?: string } {
   const message = panel.posted.find((entry) => entry.type === 'connectionTestResult');
-  return (message?.payload ?? {}) as { ok?: boolean; message?: string };
+  return (message?.payload ?? {}) as { ok?: boolean; message?: string; consoleUrl?: string };
 }
 
 /** Declares the parameter so that `mock.calls[0][0]` is the probe's input rather than `never`. */
@@ -712,6 +712,62 @@ describe('handleInstanceFormMessage: testing the connection', () => {
     expect(testOutcome(panel).message).toBe(
       'Connected to Nacos 3.0.1 (standalone mode). Its console is at http://nacos.example.com:8080.'
     );
+  });
+
+  /**
+   * Naming the console in the success sentence and then dropping it is how the
+   * discovery got lost: the instance is saved with whatever the field holds, so
+   * the field is where the discovered address has to end up.
+   */
+  it('sends the discovered console address back so the blank field can be filled with it', async () => {
+    const panel = createPanel();
+
+    await handleInstanceFormMessage(
+      testConnectionMessage({ consoleUrl: '' }),
+      undefined,
+      asManager(createManager()),
+      vi.fn(),
+      asPanel(panel),
+      {
+        testConnection: async () =>
+          successResult({ version: '3.2.3', majorVersion: 3, consoleUrl: 'http://nacos.example.com:8080' })
+      }
+    );
+
+    expect(testOutcome(panel).consoleUrl).toBe('http://nacos.example.com:8080');
+  });
+
+  it('sends nothing back for the console field the user filled in themselves', async () => {
+    const panel = createPanel();
+
+    await handleInstanceFormMessage(
+      testConnectionMessage({ consoleUrl: 'http://console.example.com:8080' }),
+      undefined,
+      asManager(createManager()),
+      vi.fn(),
+      asPanel(panel),
+      {
+        testConnection: async () =>
+          successResult({ version: '3.2.3', majorVersion: 3, consoleUrl: 'http://console.example.com:8080' })
+      }
+    );
+
+    expect(testOutcome(panel).consoleUrl).toBeUndefined();
+  });
+
+  it('sends no console address back when the probe found none', async () => {
+    const panel = createPanel();
+
+    await handleInstanceFormMessage(
+      testConnectionMessage({ consoleUrl: '' }),
+      undefined,
+      asManager(createManager()),
+      vi.fn(),
+      asPanel(panel),
+      { testConnection: async () => successResult() }
+    );
+
+    expect(testOutcome(panel).consoleUrl).toBeUndefined();
   });
 
   it('says so when a secured server was reached with no credentials', async () => {

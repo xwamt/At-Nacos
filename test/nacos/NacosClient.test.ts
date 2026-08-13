@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NacosApiError } from '../../src/nacos/NacosApiError';
 import { NacosCapabilityResolver } from '../../src/nacos/NacosCapabilityResolver';
-import { buildDriverChain, NacosClient } from '../../src/nacos/NacosClient';
+import { buildChainAdvice, buildDriverChain, NacosClient } from '../../src/nacos/NacosClient';
 import type { NacosHttpClient, NacosRequestOptions } from '../../src/nacos/NacosHttpClient';
 import type { NacosApiFlavor, NacosDriver } from '../../src/nacos/driver/NacosDriver';
 import type { NacosServerState } from '../../src/nacos/probe/probeServerState';
@@ -124,6 +124,35 @@ describe('buildDriverChain', () => {
       { path: '/v2/console/namespace/list', options: undefined },
       { path: '/v1/console/namespaces', options: undefined }
     ]);
+  });
+});
+
+/**
+ * `buildDriverChain` is the only place that knows a console driver was left
+ * out and why, so it is also the only place that can say what would put one
+ * back. The resolver asks; this answers.
+ */
+describe('buildChainAdvice', () => {
+  it('names the console address when v3-admin refused and the chain had no console driver', () => {
+    const advice = buildChainAdvice(3, undefined)([{ flavor: 'v3-admin', kind: 'forbidden', status: 403 }]);
+
+    expect(advice).toMatch(/console/i);
+    expect(advice).toMatch(/administrator/i);
+  });
+
+  it('says nothing when the chain already had a console driver to fall through to', () => {
+    expect(buildChainAdvice(3, CONSOLE_BASE_URL)([{ flavor: 'v3-admin', kind: 'forbidden', status: 403 }])).toBeUndefined();
+  });
+
+  /** A 404 from the admin API is a missing endpoint, not a permission the console API would satisfy. */
+  it('says nothing when v3-admin failed for a reason a console account would not fix', () => {
+    expect(buildChainAdvice(3, undefined)([{ flavor: 'v3-admin', kind: 'not-found', status: 404 }])).toBeUndefined();
+  });
+
+  it('says nothing on 1.x and 2.x, which have no console API to point at', () => {
+    const attempts = [{ flavor: 'v1', kind: 'forbidden', status: 403 } as const];
+    expect(buildChainAdvice(1, undefined)(attempts)).toBeUndefined();
+    expect(buildChainAdvice(2, undefined)(attempts)).toBeUndefined();
   });
 });
 
