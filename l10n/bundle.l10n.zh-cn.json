@@ -26,5 +26,11 @@
   "Edit": "编辑",
   "No Nacos instances configured yet.": "尚未配置任何 Nacos 实例。",
   "Select a Nacos instance to edit or delete": "选择要编辑或删除的 Nacos 实例",
-  "public": "public（默认命名空间）"
+  "public": "public（默认命名空间）",
+  "Trust Certificate": "信任该证书",
+  "Trust New Certificate": "信任新证书",
+  "Reject": "拒绝",
+  "(unknown)": "（未知）",
+  "Nacos instance {host}:{port} presented a TLS certificate that has not been seen before.\n\nFingerprint: {fingerprint}\n\nIf you recognize and trust this Nacos server (for example, it uses a self-signed or private-CA certificate you administer), you can trust it now. Otherwise, reject the connection.": "Nacos 实例 {host}:{port} 出示了一份此前未见过的 TLS 证书。\n\n指纹：{fingerprint}\n\n如果你认得并信任这台 Nacos 服务器（例如它使用你自己签发的自签名证书或私有 CA 证书），可以现在信任它；否则请拒绝本次连接。",
+  "SECURITY WARNING: The TLS certificate for Nacos instance {host}:{port} has CHANGED since it was last trusted.\n\nPreviously trusted fingerprint: {previousFingerprint}\nNew fingerprint presented: {fingerprint}\n\nThis can happen after a legitimate certificate rotation, but it can also indicate a machine-in-the-middle attack. Only continue if you can independently confirm the new fingerprint with whoever administers this Nacos server.": "安全警告：Nacos 实例 {host}:{port} 的 TLS 证书自上次信任以来已发生变更。\n\n此前信任的指纹：{previousFingerprint}\n本次出示的新指纹：{fingerprint}\n\n这可能是一次正常的证书轮换，但也可能是中间人攻击。请先向该 Nacos 服务器的管理员独立核实新指纹，确认无误后再继续。"
 }

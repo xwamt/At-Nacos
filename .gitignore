@@ -56,6 +56,12 @@ pnpm-debug.log*
 *.key
 *.p12
 *.pfx
+# The one exception to the rule above: a throwaway self-signed certificate for
+# 127.0.0.1 that the TLS trust-on-first-use tests need in order to present an
+# untrusted chain. It grants access to nothing and must be committed, or those
+# tests cannot run from a fresh clone.
+!test/nacos/fixtures/selfsigned-test.cert.pem
+!test/nacos/fixtures/selfsigned-test.key.pem
 ATmcp.json
 
 # Binary planning/export artifacts

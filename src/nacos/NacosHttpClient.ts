@@ -1,0 +1,437 @@
+import * as http from 'node:http';
+import * as https from 'node:https';
+import type { TLSSocket } from 'node:tls';
+import { asRedactedLog, type AtNacosLog } from '../utils/logger';
+import {
+  classifyHttpStatus,
+  NacosApiError,
+  toNetworkOrTlsError,
+  type NacosApiErrorKind
+} from './NacosApiError';
+import type { NacosCertVerifier } from './NacosCertTrustStore';
+
+export type { NacosCertVerifier } from './NacosCertTrustStore';
+
+export interface NacosHttpClientOptions {
+  baseUrl: string;
+  certVerifier?: NacosCertVerifier;
+  timeoutMs?: number;
+  /**
+   * Diagnostics only. The classified kind and status are what separate "this
+   * version has no such endpoint" from "your token expired" from "Nacos is
+   * down", so they go to the channel at `debug`.
+   */
+  log?: AtNacosLog;
+}
+
+export interface NacosRequestOptions {
+  query?: Record<string, string | undefined>;
+  /** JSON request body. Mutually exclusive with `form`. */
+  body?: unknown;
+  /** application/x-www-form-urlencoded request body. Mutually exclusive with `body`. */
+  form?: Record<string, string>;
+  /**
+   * Per-request headers, which is where authorization belongs: the Nacos JWT
+   * is re-issued during a session, so freezing it into the client instance
+   * would pin every later request to a token that has already expired.
+   */
+  headers?: Record<string, string>;
+  /** Abort and throw `response-too-large` once the body passes this many bytes. */
+  maxResponseBytes?: number;
+  /** Overrides `baseUrl`, for the separate console origin a Nacos 3.x deployment exposes. */
+  baseUrlOverride?: string;
+}
+
+/**
+ * What the wire actually said. `requestRaw` deliberately does not throw on a
+ * non-2xx: its callers are the ones that need the status *and* the body of a
+ * failure — the context-path probe reads a 404 as "try the next candidate",
+ * and the 3.x detector has to read the body of a 410. Throwing would destroy
+ * exactly the information they came for. `ok` exists so that a caller cannot
+ * mistake an error page for content without ignoring a field in plain sight.
+ */
+export interface NacosRawResponse {
+  status: number;
+  ok: boolean;
+  text: string;
+  contentType: string | undefined;
+}
+
+interface RequestPayload {
+  text: string;
+  contentType: string;
+}
+
+const DEFAULT_TIMEOUT_MS = 15_000;
+
+/** Nacos's two success codes: v2/v3 use 0, and 1.x's RestResult uses an HTTP-style 200. */
+const SUCCESS_CODES: ReadonlySet<number> = new Set([0, 200]);
+
+/**
+ * Thin wrapper around node:http/node:https carrying the trickiest, most
+ * security-sensitive logic in this client. When no certVerifier is supplied
+ * this behaves exactly like a normal https client (Node's default chain
+ * validation applies). When a certVerifier IS supplied, Node's own chain
+ * validation is disabled (`rejectUnauthorized: false`) and trust is delegated
+ * entirely to the verifier's fingerprint check — this mirrors the
+ * SSH-host-key-style TOFU model (a known-fingerprint check, not "is this a
+ * publicly trusted CA") used elsewhere in this codebase
+ * (NacosCertTrustStore), rather than layering both checks, which would make
+ * the self-signed and private-CA certificates typical of an internal Nacos
+ * impossible to trust at all.
+ *
+ * Carries no credential of its own: auth headers arrive per request.
+ */
+export class NacosHttpClient {
+  private readonly baseUrl: string;
+  private readonly log: AtNacosLog;
+
+  constructor(private readonly options: NacosHttpClientOptions) {
+    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.log = asRedactedLog(options.log);
+  }
+
+  async requestJson<T>(method: string, path: string, requestOptions: NacosRequestOptions = {}): Promise<T> {
+    let target: URL | undefined;
+    try {
+      const prepared = this.prepare(path, requestOptions);
+      target = prepared.target;
+      const { status, text } = await this.performRequest(
+        target,
+        method,
+        prepared.payload,
+        requestOptions,
+        'application/json'
+      );
+      return parseJsonResponse<T>(status, text, target);
+    } catch (error) {
+      this.logClassifiedFailure(method, target?.pathname ?? path, error);
+      throw error;
+    }
+  }
+
+  /**
+   * The unparsed response. Nacos 1.x answers `GET /v1/cs/configs` with the
+   * configuration content as plain text and no JSON envelope, so `requestJson`
+   * would reject perfectly good content as `invalid-response`.
+   */
+  async requestRaw(method: string, path: string, requestOptions: NacosRequestOptions = {}): Promise<NacosRawResponse> {
+    let target: URL | undefined;
+    try {
+      const prepared = this.prepare(path, requestOptions);
+      target = prepared.target;
+      return await this.performRequest(target, method, prepared.payload, requestOptions, '*/*');
+    } catch (error) {
+      this.logClassifiedFailure(method, target?.pathname ?? path, error);
+      throw error;
+    }
+  }
+
+  /** Everything that can fail before a socket is opened. */
+  private prepare(path: string, options: NacosRequestOptions): { target: URL; payload: RequestPayload | undefined } {
+    if (options.body !== undefined && options.form !== undefined) {
+      throw new NacosApiError(
+        'validation',
+        `A Nacos request to ${path} supplied both a JSON body and a form body; exactly one encoding can win, so neither is assumed.`
+      );
+    }
+    let target: URL;
+    try {
+      target = this.buildUrl(path, options);
+    } catch {
+      throw new NacosApiError('validation', `Invalid Nacos request URL for path ${path}.`);
+    }
+    return { target, payload: toPayload(options) };
+  }
+
+  private buildUrl(path: string, options: NacosRequestOptions): URL {
+    const base = (options.baseUrlOverride ?? this.baseUrl).replace(/\/+$/, '');
+    // The leading slash has to go: as an absolute path it would replace the
+    // context path (`/nacos`) that the base URL carries rather than extend it.
+    const target = new URL(path.replace(/^\/+/, ''), `${base}/`);
+    if (options.query) {
+      for (const [key, value] of Object.entries(options.query)) {
+        if (value !== undefined) {
+          target.searchParams.set(key, value);
+        }
+      }
+    }
+    return target;
+  }
+
+  /**
+   * Only the classification and the path reach the channel — never the query
+   * string or the body, either of which can carry a credential on the login
+   * path.
+   */
+  private logClassifiedFailure(method: string, path: string, error: unknown): void {
+    if (error instanceof NacosApiError) {
+      const detail = error.status === undefined ? `kind=${error.kind}` : `kind=${error.kind}, status=${error.status}`;
+      this.log.debug(`nacos-api: ${method} ${path} failed (${detail})`);
+      return;
+    }
+    this.log.debug(`nacos-api: ${method} ${path} failed with an unclassified error: ${String(error)}`);
+  }
+
+  private performRequest(
+    target: URL,
+    method: string,
+    payload: RequestPayload | undefined,
+    options: NacosRequestOptions,
+    defaultAccept: string
+  ): Promise<NacosRawResponse> {
+    const maxResponseBytes = options.maxResponseBytes;
+    return new Promise((resolve, reject) => {
+      // Guards against the size-cap abort path below racing a subsequent
+      // 'error'/'end' event on the same response/request (destroying a
+      // stream doesn't guarantee no further events fire) -- settle exactly
+      // once no matter which path gets there first.
+      let settled = false;
+      const settleResolve = (value: NacosRawResponse) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve(value);
+      };
+      const settleReject = (error: unknown) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        reject(error);
+      };
+
+      const isHttps = target.protocol === 'https:';
+      const client: typeof http | typeof https = isHttps ? https : http;
+      const headers: Record<string, string> = { accept: defaultAccept, ...options.headers };
+      if (payload) {
+        headers['content-type'] = payload.contentType;
+        headers['content-length'] = Buffer.byteLength(payload.text).toString();
+      }
+
+      const certVerifier = this.options.certVerifier;
+      const usesCertVerifier = isHttps && Boolean(certVerifier);
+
+      const request = client.request(
+        target,
+        {
+          method,
+          headers,
+          timeout: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          rejectUnauthorized: usesCertVerifier ? false : undefined
+        },
+        (response) => {
+          const chunks: Buffer[] = [];
+          let size = 0;
+          response.on('data', (chunk: Buffer | string) => {
+            if (settled) {
+              return;
+            }
+            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            size += buf.length;
+            if (maxResponseBytes !== undefined && size > maxResponseBytes) {
+              // Stop reading now rather than buffering the rest of a response
+              // we already know is over the cap. `response.destroy()` with no
+              // argument tears down the stream without emitting its own
+              // 'error' event, so this is the only place that settles the
+              // promise for this path.
+              settleReject(
+                new NacosApiError(
+                  'response-too-large',
+                  `The Nacos response for ${target.pathname} exceeded the configured maximum of ${maxResponseBytes} bytes; aborted before buffering the full body.`
+                )
+              );
+              response.destroy();
+              return;
+            }
+            chunks.push(buf);
+          });
+          response.on('end', () => {
+            const status = response.statusCode ?? 0;
+            settleResolve({
+              status,
+              ok: classifyHttpStatus(status) === undefined,
+              text: Buffer.concat(chunks).toString('utf8'),
+              contentType: response.headers['content-type']
+            });
+          });
+          response.on('error', (error: NodeJS.ErrnoException) => settleReject(toNetworkOrTlsError(error)));
+        }
+      );
+
+      request.on('timeout', () => {
+        request.destroy(new NacosApiError('network', `The request to Nacos timed out: ${target.pathname}`));
+      });
+
+      request.on('error', (error) => {
+        settleReject(error instanceof NacosApiError ? error : toNetworkOrTlsError(error as NodeJS.ErrnoException));
+      });
+
+      if (usesCertVerifier && certVerifier) {
+        // Deferred write: nothing leaves the process until verify() settles.
+        attachCertVerification(request, target.hostname, portOf(target), certVerifier, {
+          onVerified: () => writeAndEnd(request, payload),
+          onRejected: (error) => request.destroy(error)
+        });
+        return;
+      }
+
+      writeAndEnd(request, payload);
+    });
+  }
+}
+
+export interface CertVerificationHooks {
+  onVerified(): void;
+  onRejected(error: NacosApiError): void;
+}
+
+/**
+ * Wires a one-shot `secureConnect` handshake hook that defers `onVerified`
+ * until the certVerifier's TOFU fingerprint check settles (mirroring the
+ * SSH-host-key confirmation flow). Exported standalone so this
+ * security-sensitive wiring exists in exactly one place.
+ */
+export function attachCertVerification(
+  request: http.ClientRequest,
+  host: string,
+  port: number,
+  certVerifier: NacosCertVerifier,
+  hooks: CertVerificationHooks
+): void {
+  request.on('socket', (socket) => {
+    socket.once('secureConnect', () => {
+      const fingerprint256 = (socket as TLSSocket).getPeerCertificate()?.fingerprint256;
+      verifyCertFingerprint(certVerifier, host, port, fingerprint256)
+        .then((verifyError) => {
+          if (verifyError) {
+            hooks.onRejected(verifyError);
+            return;
+          }
+          hooks.onVerified();
+        })
+        .catch((error: unknown) => {
+          hooks.onRejected(
+            new NacosApiError(
+              'tls',
+              `Nacos TLS certificate verification failed: ${error instanceof Error ? error.message : String(error)}`
+            )
+          );
+        });
+    });
+  });
+}
+
+/**
+ * Exported standalone so the fingerprint-classification logic is unit-testable
+ * without a real TLS handshake.
+ */
+export async function verifyCertFingerprint(
+  verifier: NacosCertVerifier,
+  host: string,
+  port: number,
+  fingerprint256: string | undefined
+): Promise<NacosApiError | undefined> {
+  if (!fingerprint256) {
+    return new NacosApiError('tls', `The Nacos TLS certificate for ${host}:${port} did not present a fingerprint.`);
+  }
+  const trusted = await verifier.verify(host, port, fingerprint256);
+  return trusted
+    ? undefined
+    : new NacosApiError('tls', `The Nacos TLS certificate for ${host}:${port} was rejected by the certificate verifier.`);
+}
+
+function toPayload(options: NacosRequestOptions): RequestPayload | undefined {
+  if (options.form !== undefined) {
+    // URLSearchParams percent-encodes each value, so a password containing
+    // `&`, `=` or `+` cannot break out of its field.
+    return { text: new URLSearchParams(options.form).toString(), contentType: 'application/x-www-form-urlencoded' };
+  }
+  if (options.body !== undefined) {
+    return { text: JSON.stringify(options.body), contentType: 'application/json' };
+  }
+  return undefined;
+}
+
+function writeAndEnd(request: http.ClientRequest, payload: RequestPayload | undefined): void {
+  if (payload) {
+    request.write(payload.text);
+  }
+  request.end();
+}
+
+function portOf(target: URL): number {
+  if (target.port) {
+    return Number(target.port);
+  }
+  return target.protocol === 'https:' ? 443 : 80;
+}
+
+function parseJsonResponse<T>(status: number, text: string, target: URL): T {
+  const kind = classifyHttpStatus(status);
+  if (kind !== undefined) {
+    throw new NacosApiError(kind, describeFailure(kind, status, text, target), status);
+  }
+  if (text.length === 0) {
+    return undefined as T;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new NacosApiError('invalid-response', `Nacos returned a non-JSON response for ${target.pathname}.`);
+  }
+  // Some 1.x endpoints still answer HTTP 200 on a business failure, with the
+  // error hidden in body.code. This deliberately does not trigger driver
+  // fall-through -- another version's path would fail the same way, so
+  // retrying it only costs a round trip.
+  if (isRecord(parsed) && typeof parsed.code === 'number' && !SUCCESS_CODES.has(parsed.code)) {
+    const message = typeof parsed.message === 'string' ? parsed.message : 'unknown error';
+    throw new NacosApiError(
+      'api-error',
+      `Nacos returned code ${parsed.code} for ${target.pathname}: ${message}`,
+      status
+    );
+  }
+  return parsed as T;
+}
+
+/** Turns the classification into one sentence that points at the next action. */
+function describeFailure(kind: NacosApiErrorKind, status: number, text: string, target: URL): string {
+  const detail = extractErrorMessage(text);
+  switch (kind) {
+    case 'api-deprecated':
+      return `Nacos rejected ${target.pathname} as a deprecated API (HTTP 410). This server is Nacos 3.0/3.1 with the v1/v2 compatibility switch turned off.`;
+    case 'not-found':
+      return `Nacos has no endpoint at ${target.pathname} (HTTP 404).`;
+    case 'forbidden':
+      return `Nacos denied the request to ${target.pathname} (HTTP 403)${detail ? `: ${detail}` : '. The credential may be expired, or the account may lack permission for this API.'}`;
+    case 'gateway-auth':
+      return `Something in front of Nacos returned HTTP 401 for ${target.pathname}. Nacos itself never answers 401, so check the reverse proxy or gateway.`;
+    default:
+      return `Nacos returned HTTP ${status} for ${target.pathname}${detail ? `: ${detail}` : '.'}`;
+  }
+}
+
+/** v2/v3 error bodies are `{code,message,data}`; 1.x often sends bare text. */
+function extractErrorMessage(text: string): string | undefined {
+  if (text.length === 0) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (isRecord(parsed) && typeof parsed.message === 'string' && parsed.message.length > 0) {
+      return parsed.message;
+    }
+  } catch {
+    // A non-JSON body: 1.x's plain-text errors, or Spring's 410 error page.
+    // Truncating and passing it through beats dropping it.
+    return text.slice(0, 200);
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
