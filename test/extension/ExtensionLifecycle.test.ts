@@ -12,6 +12,9 @@ describe('atNacos extension lifecycle', () => {
     fixtureCommands.__clearRegisteredCommands();
     fixtureWindow.__clearTreeViews();
     fixtureWindow.__clearLogChannels();
+    // An input box answer queued by one test and left unconsumed would be
+    // handed to the next one that opens a box.
+    fixtureWindow.__resetDialogs();
   });
 
   afterEach(async () => {
@@ -19,13 +22,15 @@ describe('atNacos extension lifecycle', () => {
     vi.restoreAllMocks();
   });
 
-  it('registers the four instance and refresh commands', () => {
+  it('registers the instance, refresh and filter commands', () => {
     // That this is exactly what the manifest contributes is asserted in
     // Manifest.test.ts, against package.json rather than against a copy of it.
     activate(extensionContext());
 
     expect([...fixtureCommands.__getRegisteredCommands().keys()].sort()).toEqual([
       'atNacos.addInstance',
+      'atNacos.clearConfigFilter',
+      'atNacos.filterConfigs',
       'atNacos.manageInstances',
       'atNacos.refreshConfigs',
       'atNacos.refreshServices'
@@ -48,13 +53,13 @@ describe('atNacos extension lifecycle', () => {
   });
 
   it('hands every disposable it created to context.subscriptions', () => {
-    // The channel, the four commands and the two views. Anything left out
+    // The channel, the six commands and the two views. Anything left out
     // survives a window reload and leaks a listener into the next activation.
     const context = extensionContext();
 
     activate(context);
 
-    expect(context.subscriptions).toHaveLength(7);
+    expect(context.subscriptions).toHaveLength(9);
     for (const subscription of context.subscriptions) {
       expect(typeof subscription.dispose).toBe('function');
     }
@@ -87,6 +92,60 @@ describe('atNacos extension lifecycle', () => {
     expect(changed.map((listener) => listener.mock.calls.length)).toEqual(
       providers.map((_provider, index) => (index === viewIndex ? 1 : 0))
     );
+  });
+
+  it('filters the configuration tree with what the input box returns', async () => {
+    activate(extensionContext());
+    const provider = fixtureWindow.__getTreeViews()[0]?.treeDataProvider as ConfigTreeProvider;
+    fixtureWindow.__setInputBoxResults(['application-uat']);
+
+    await fixtureCommands.__getRegisteredCommands().get('atNacos.filterConfigs')?.();
+
+    expect(provider.getFilter()).toBe('application-uat');
+  });
+
+  /** Escape out of the input box and the filter that was there has to survive it. */
+  it('leaves the filter alone when the input box is dismissed', async () => {
+    activate(extensionContext());
+    const provider = fixtureWindow.__getTreeViews()[0]?.treeDataProvider as ConfigTreeProvider;
+    provider.setFilter('application-uat');
+    fixtureWindow.__setInputBoxResults([undefined]);
+
+    await fixtureCommands.__getRegisteredCommands().get('atNacos.filterConfigs')?.();
+
+    expect(provider.getFilter()).toBe('application-uat');
+  });
+
+  it('offers the current filter as the text to edit rather than an empty box', async () => {
+    activate(extensionContext());
+    const provider = fixtureWindow.__getTreeViews()[0]?.treeDataProvider as ConfigTreeProvider;
+    provider.setFilter('application-uat');
+    const inputBox = vi.spyOn(fixtureWindow, 'showInputBox');
+
+    await fixtureCommands.__getRegisteredCommands().get('atNacos.filterConfigs')?.();
+
+    expect(inputBox.mock.calls[0]?.[0]?.value).toBe('application-uat');
+  });
+
+  it('clears the configuration filter with the command contributed for it', async () => {
+    activate(extensionContext());
+    const provider = fixtureWindow.__getTreeViews()[0]?.treeDataProvider as ConfigTreeProvider;
+    provider.setFilter('application-uat');
+
+    await fixtureCommands.__getRegisteredCommands().get('atNacos.clearConfigFilter')?.();
+
+    expect(provider.getFilter()).toBeUndefined();
+  });
+
+  /** The message belongs to the view, so the provider only reaches it if `activate` hands it over. */
+  it('shows the active filter on the configurations view, and only on that view', async () => {
+    activate(extensionContext());
+    const provider = fixtureWindow.__getTreeViews()[0]?.treeDataProvider as ConfigTreeProvider;
+
+    provider.setFilter('application-uat');
+
+    expect(fixtureWindow.__getTreeViews()[0]?.message).toContain('application-uat');
+    expect(fixtureWindow.__getTreeViews()[1]?.message).toBeUndefined();
   });
 
   it('runs its shutdown once even when deactivate is called twice', async () => {

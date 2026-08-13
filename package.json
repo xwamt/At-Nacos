@@ -66,6 +66,16 @@
         "command": "atNacos.refreshServices",
         "title": "%atNacos.command.refreshServices.title%",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "atNacos.filterConfigs",
+        "title": "%atNacos.command.filterConfigs.title%",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "atNacos.clearConfigFilter",
+        "title": "%atNacos.command.clearConfigFilter.title%",
+        "icon": "$(clear-all)"
       }
     ],
     "menus": {
@@ -81,9 +91,19 @@
           "group": "navigation@2"
         },
         {
-          "command": "atNacos.manageInstances",
+          "command": "atNacos.filterConfigs",
           "when": "view == atNacos.configs",
           "group": "navigation@3"
+        },
+        {
+          "command": "atNacos.clearConfigFilter",
+          "when": "view == atNacos.configs",
+          "group": "navigation@4"
+        },
+        {
+          "command": "atNacos.manageInstances",
+          "when": "view == atNacos.configs",
+          "group": "navigation@5"
         },
         {
           "command": "atNacos.addInstance",

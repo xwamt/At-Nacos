@@ -643,8 +643,12 @@ describe('ConfigTreeProvider localization', () => {
       sources.push(message);
       return message;
     });
-    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'application-uat.yml')], [config('cl-gateway', 'gateway.yml')]));
+    const { client } = recordingClient(
+      pagesOf([config('cl-intimfy', 'application-uat.yml')], [config('cl-gateway', 'gateway.yml')])
+    );
     const provider = providerFor(client);
+    provider.attachTreeView({ message: undefined });
+    provider.setFilter('uat');
 
     const { children } = await expandNamespace(provider);
     await provider.getChildren(children[0]);
@@ -1068,6 +1072,32 @@ describe('ConfigTreeProvider configuration failures', () => {
     expect(groupsIn(second).map((item) => item.label)).toEqual(['cl-intimfy']);
   });
 
+  /**
+   * A namespace and a group of it can be showing an error in the same draw --
+   * a refresh that starts failing reaches both. VS Code identifies at most one
+   * item per id, so the two error nodes cannot share one.
+   */
+  it('gives a failing group an error node of its own rather than the one its namespace uses', async () => {
+    let failing = false;
+    const { client } = recordingClient((query) => {
+      if (failing) {
+        throw new Error('host unreachable');
+      }
+      return pagesOf([config('cl-intimfy', 'a.yml')])(query);
+    });
+    const provider = providerFor(client);
+
+    const { namespaceItem, children } = await expandNamespace(provider);
+    provider.refresh();
+    failing = true;
+    const underNamespace = await provider.getChildren(namespaceItem);
+    const underGroup = await provider.getChildren(children[0]);
+
+    expect(underNamespace[0]).toBeInstanceOf(ErrorTreeItem);
+    expect(underGroup[0]).toBeInstanceOf(ErrorTreeItem);
+    expect(underNamespace[0].id).not.toBe(underGroup[0].id);
+  });
+
   it('redacts credentials out of the error node it renders under a namespace', async () => {
     const { client } = recordingClient(() => {
       throw new Error('GET /v1/cs/configs?username=nacos&password=hunter2 failed');
@@ -1126,5 +1156,190 @@ describe('ConfigTreeProvider configuration item identity', () => {
     for (const item of [...children, ...configs]) {
       expect(String(item.id), String(item.label)).toMatch(/^atNacos\.config\./);
     }
+  });
+});
+
+describe('ConfigTreeProvider filtering', () => {
+  it('sends no search term while nothing is filtered', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')]));
+    const provider = providerFor(client);
+
+    await expandNamespace(provider);
+
+    expect(queries[0].search).toBeUndefined();
+    expect(provider.getFilter()).toBeUndefined();
+  });
+
+  /**
+   * The driver derives `search=blur` and the `*term*` wildcards from the
+   * presence of this field. Spelling either of them up here would put a Nacos
+   * protocol detail in the tree, and put it there four times over -- the two
+   * spellings differ by API version.
+   */
+  it('hands the driver the text the user typed, with no search mode and no wildcards', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'application-uat.yml')]), [
+      namespace({ namespaceId: 'uat' })
+    ]);
+    const provider = providerFor(client);
+
+    provider.setFilter('application');
+    await expandNamespace(provider);
+
+    expect(queries).toEqual([{ namespaceId: 'uat', pageNo: 1, pageSize: 100, search: 'application' }]);
+  });
+
+  it('trims the filter text before it searches with it', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')]));
+    const provider = providerFor(client);
+
+    provider.setFilter('  uat  ');
+    await expandNamespace(provider);
+
+    expect(provider.getFilter()).toBe('uat');
+    expect(queries[0].search).toBe('uat');
+  });
+
+  it('reads blank filter text as no filter at all', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')]));
+    const provider = providerFor(client);
+
+    provider.setFilter('   ');
+    await expandNamespace(provider);
+
+    expect(provider.getFilter()).toBeUndefined();
+    expect(queries[0].search).toBeUndefined();
+  });
+
+  it('stops searching once the filter is cleared', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')]));
+    const provider = providerFor(client);
+
+    provider.setFilter('uat');
+    await expandNamespace(provider);
+    provider.clearFilter();
+    const { children } = await expandNamespace(provider);
+
+    expect(queries.map((query) => query.search)).toEqual(['uat', undefined]);
+    expect(groupsIn(children).map((item) => item.label)).toEqual(['cl-intimfy']);
+  });
+
+  /**
+   * A filter is a different result set, so page four of the unfiltered one
+   * means nothing in it -- and continuing from there would skip the first
+   * three pages of matches, which are the ones the user is looking for.
+   */
+  it('starts the filtered listing at page one rather than continuing the unfiltered paging', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')], [config('cl-mu', 'b.yml')]));
+    const provider = providerFor(client);
+
+    const { namespaceItem } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+    provider.setFilter('uat');
+    await provider.getChildren(namespaceItem);
+
+    expect(queries.map((query) => [query.pageNo, query.search])).toEqual([
+      [1, undefined],
+      [2, undefined],
+      [1, 'uat']
+    ]);
+  });
+
+  it('starts at page one again when the filter is cleared', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')], [config('cl-mu', 'b.yml')]));
+    const provider = providerFor(client);
+
+    provider.setFilter('uat');
+    const { namespaceItem } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+    provider.clearFilter();
+    await provider.getChildren(namespaceItem);
+
+    expect(queries.map((query) => [query.pageNo, query.search])).toEqual([
+      [1, 'uat'],
+      [2, 'uat'],
+      [1, undefined]
+    ]);
+  });
+
+  /** Every namespace's result set changes at once, so this is the one case where the whole tree is right. */
+  it('redraws the whole tree when the filter changes', async () => {
+    const provider = providerFor(stubClient([namespace()]));
+    const changed: Array<NacosTreeItem | undefined | void> = [];
+    provider.onDidChangeTreeData((element) => changed.push(element));
+
+    provider.setFilter('uat');
+    provider.clearFilter();
+
+    expect(changed).toEqual([undefined, undefined]);
+  });
+
+  it('keeps the pages already loaded when the same filter text is entered again', async () => {
+    const { client, queries } = recordingClient(pagesOf([config('cl-intimfy', 'a.yml')], [config('cl-mu', 'b.yml')]));
+    const provider = providerFor(client);
+    provider.setFilter('uat');
+    const { namespaceItem } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+
+    provider.setFilter('uat');
+    const children = await provider.getChildren(namespaceItem);
+
+    expect(queries.map((query) => query.pageNo)).toEqual([1, 2]);
+    expect(groupsIn(children).map((item) => item.label)).toEqual(['cl-intimfy', 'cl-mu']);
+  });
+
+  it('does nothing when the filter is cleared and there was none', async () => {
+    const provider = providerFor(stubClient([namespace()]));
+    const changed: Array<NacosTreeItem | undefined | void> = [];
+    provider.onDidChangeTreeData((element) => changed.push(element));
+
+    provider.clearFilter();
+
+    expect(changed).toEqual([]);
+  });
+
+  it('reports the filter on the view message, and takes it off again', () => {
+    const view: { message: string | undefined } = { message: undefined };
+    const provider = providerFor(stubClient([namespace()]));
+    provider.attachTreeView(view);
+
+    provider.setFilter('uat');
+    const whileFiltered = view.message;
+    provider.clearFilter();
+
+    expect(whileFiltered).toContain('uat');
+    expect(view.message).toBeUndefined();
+  });
+
+  /** The view is created after the provider, so a filter can already be set by the time one arrives. */
+  it('reports a filter that was set before the view was attached', () => {
+    const view: { message: string | undefined } = { message: undefined };
+    const provider = providerFor(stubClient([namespace()]));
+
+    provider.setFilter('uat');
+    provider.attachTreeView(view);
+
+    expect(view.message).toContain('uat');
+  });
+
+  /**
+   * The reason `configLanguageId` has a dataId fallback at all. Verified on a
+   * real 2.3.2: a filter makes the driver search with `search=blur`, and blur
+   * nulls out `type` on every item it returns -- so the field that decides the
+   * highlighting is gone exactly when the user is searching for something to
+   * open.
+   */
+  it('opens a configuration found under a filter in the right language mode, though blur left its type out', async () => {
+    const setLanguage = vi.spyOn(vscode.languages, 'setTextDocumentLanguage');
+    const { client } = recordingClient(pagesOf([config('cl-intimfy', 'application-uat.yml', { type: undefined })]));
+    const provider = providerFor(client);
+    provider.setFilter('application');
+
+    const { children } = await expandNamespace(provider);
+    const [configItem] = await provider.getChildren(children[0]);
+    const [instanceId, summary] = (configItem.command?.arguments ?? []) as [string, NacosConfigSummary];
+    await openConfigDocument(instanceId, summary);
+
+    expect(summary.type).toBeUndefined();
+    expect(setLanguage.mock.calls[0][1]).toBe('yaml');
   });
 });

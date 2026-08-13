@@ -179,6 +179,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const configTreeView = vscode.window.createTreeView<NacosTreeItem>('atNacos.configs', {
     treeDataProvider: configTreeProvider
   });
+  // The active filter is reported on the view's message line, and only the
+  // view owns that. Without this the tree would filter itself silently, which
+  // reads as a server that has lost half its configurations.
+  configTreeProvider.attachTreeView(configTreeView);
   const serviceTreeView = vscode.window.createTreeView<NacosTreeItem>('atNacos.services', {
     treeDataProvider: serviceTreeProvider
   });
@@ -188,6 +192,24 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   const refreshServicesCommand = vscode.commands.registerCommand('atNacos.refreshServices', () => {
     serviceTreeProvider.refresh();
+  });
+
+  const filterConfigsCommand = vscode.commands.registerCommand('atNacos.filterConfigs', async () => {
+    const typed = await vscode.window.showInputBox({
+      prompt: t('Filter configurations by data ID'),
+      placeHolder: t('e.g. application-uat'),
+      // Prefilled, so that narrowing an existing filter is an edit rather than
+      // a retype.
+      value: configTreeProvider.getFilter() ?? ''
+    });
+    // Undefined is Escape and has to leave the current filter alone. An empty
+    // string is not the same gesture: that is a deliberate "show all again".
+    if (typed !== undefined) {
+      configTreeProvider.setFilter(typed);
+    }
+  });
+  const clearConfigFilterCommand = vscode.commands.registerCommand('atNacos.clearConfigFilter', () => {
+    configTreeProvider.clearFilter();
   });
 
   // VS Code awaits the promise `deactivate()` returns. It does NOT await the
@@ -220,7 +242,9 @@ export function activate(context: vscode.ExtensionContext): void {
     configTreeView,
     serviceTreeView,
     refreshConfigsCommand,
-    refreshServicesCommand
+    refreshServicesCommand,
+    filterConfigsCommand,
+    clearConfigFilterCommand
   );
 }
 

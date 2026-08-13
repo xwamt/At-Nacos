@@ -80,6 +80,20 @@ describe('package.json contributions', () => {
     }
   });
 
+  /**
+   * A view/title command with no icon is folded into the `...` overflow menu,
+   * where a filter nobody can see is a filter nobody uses.
+   */
+  it.each([
+    ['atNacos.filterConfigs', '$(filter)'],
+    ['atNacos.clearConfigFilter', '$(clear-all)']
+  ])('puts %s on the configurations view title with an icon', (command, icon) => {
+    expect(commands.find((entry) => entry.command === command)?.icon).toBe(icon);
+    expect((menus['view/title'] ?? []).filter((item) => item.command === command).map((item) => item.when)).toEqual([
+      'view == atNacos.configs'
+    ]);
+  });
+
   it('attaches its welcome view to a view it contributes', () => {
     const viewIds = new Set((views.atNacos ?? []).map((view) => view.id));
     for (const welcome of viewsWelcome) {

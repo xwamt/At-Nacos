@@ -203,6 +203,8 @@ export interface RecordedTreeView {
   viewId: string;
   treeDataProvider: unknown;
   disposed: boolean;
+  /** What the extension wrote to `TreeView.message`, which is where a tree reports its filter. */
+  message: string | undefined;
 }
 
 const treeViews: RecordedTreeView[] = [];
@@ -237,7 +239,11 @@ export const window = {
   },
   showOpenDialog: async () => dialogState.openDialogResults.shift(),
   showSaveDialog: async () => dialogState.saveDialogResults.shift(),
-  showInputBox: async () => dialogState.inputBoxResults.shift(),
+  // The options are declared, though nothing here reads them, so that a test
+  // can spy on this and assert what the extension put in the box -- a prompt
+  // or a prefilled value is part of the behaviour, not decoration.
+  showInputBox: async (_options?: { prompt?: string; placeHolder?: string; value?: string }) =>
+    dialogState.inputBoxResults.shift(),
   showQuickPick: async () => dialogState.quickPickResults.shift(),
   showErrorMessage: async () => undefined,
   showInformationMessage: async () => undefined,
@@ -250,13 +256,26 @@ export const window = {
       report: () => undefined
     }, {}),
   createTreeView: (viewId: string, options?: { treeDataProvider?: unknown }) => {
-    const record: RecordedTreeView = { viewId, treeDataProvider: options?.treeDataProvider, disposed: false };
+    const record: RecordedTreeView = {
+      viewId,
+      treeDataProvider: options?.treeDataProvider,
+      disposed: false,
+      message: undefined
+    };
     treeViews.push(record);
     return {
       dispose: () => {
         record.disposed = true;
       },
-      message: undefined as string | undefined,
+      // Proxied onto the record rather than held here, so that a test reading
+      // `__getTreeViews()` sees what the extension set on the view it was
+      // handed -- the view object itself never leaves `activate`.
+      get message(): string | undefined {
+        return record.message;
+      },
+      set message(value: string | undefined) {
+        record.message = value;
+      },
       title: undefined as string | undefined,
       treeDataProvider: options?.treeDataProvider,
       onDidChangeSelection: () => ({ dispose: () => undefined }),

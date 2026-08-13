@@ -1,5 +1,7 @@
+import type * as vscode from 'vscode';
 import type { NacosInstanceConfigManager } from '../config/NacosInstanceConfigManager';
 import type { NacosInstanceConfig } from '../config/schema';
+import { t } from '../i18n/t';
 import type { NacosClient } from '../nacos/NacosClient';
 import type { NacosConfigSummary, Paged } from '../nacos/driver/normalize';
 import { formatError } from '../utils/errors';
@@ -62,6 +64,21 @@ export class ConfigTreeProvider extends NacosTreeBase {
   private readonly pageCache = new Map<string, Promise<LoadedConfigs>>();
 
   /**
+   * The dataId substring being searched for, absent when nothing is. It is
+   * handed to the driver verbatim: which Nacos search mode that means, and
+   * where the wildcards go, differs by API version and is the driver's to
+   * know.
+   */
+  private filterText: string | undefined;
+
+  /**
+   * Only `message`, because that is the whole of what a provider has any
+   * business setting on its view -- and a wider type would make a test fake a
+   * dozen members of `TreeView` to hand one in.
+   */
+  private treeView: Pick<vscode.TreeView<NacosTreeItem>, 'message'> | undefined;
+
+  /**
    * Declared again here, and wider, so that the factory this provider calls is
    * known to produce a client that can list configurations. The base keeps its
    * own narrow view of the same function.
@@ -76,6 +93,31 @@ export class ConfigTreeProvider extends NacosTreeBase {
   refresh(): void {
     this.pageCache.clear();
     super.refresh();
+  }
+
+  /**
+   * Lends the provider the one part of the view it writes to. The view is
+   * created after the provider it is given, so a filter can already be set by
+   * the time this arrives -- hence the immediate update rather than only on
+   * the next change.
+   */
+  attachTreeView(treeView: Pick<vscode.TreeView<NacosTreeItem>, 'message'>): void {
+    this.treeView = treeView;
+    this.showFilterOnView();
+  }
+
+  getFilter(): string | undefined {
+    return this.filterText;
+  }
+
+  /** Blank text means no filter, so that clearing the input box shows everything again. */
+  setFilter(text: string): void {
+    const trimmed = text.trim();
+    this.applyFilter(trimmed.length > 0 ? trimmed : undefined);
+  }
+
+  clearFilter(): void {
+    this.applyFilter(undefined);
   }
 
   /**
@@ -127,6 +169,31 @@ export class ConfigTreeProvider extends NacosTreeBase {
     this.onDidChangeTreeDataEmitter.fire(namespace);
   }
 
+  private applyFilter(filterText: string | undefined): void {
+    if (filterText === this.filterText) {
+      // Entering the same text again is not a reload. Dropping the pages here
+      // would throw away everything the user had paged in and answer with the
+      // first hundred matches again.
+      return;
+    }
+    this.filterText = filterText;
+    // A filter is a different result set, so the page counter means nothing in
+    // it: continuing from page four would skip the first three pages of
+    // matches, which are the ones being searched for.
+    this.pageCache.clear();
+    this.showFilterOnView();
+    // Undefined, unlike Load more: every namespace's contents change at once,
+    // so there is no single subtree to redraw.
+    this.onDidChangeTreeDataEmitter.fire();
+  }
+
+  /** The only place the filter is visible at all; a filtered tree that does not say so reads as an empty one. */
+  private showFilterOnView(): void {
+    if (this.treeView) {
+      this.treeView.message = this.filterText ? t('Filter: "{text}"', { text: this.filterText }) : undefined;
+    }
+  }
+
   protected async getChildrenBelowInstance(element: NacosTreeItem): Promise<NacosTreeItem[]> {
     if (element instanceof NamespaceTreeItem) {
       return this.getNamespaceChildren(element);
@@ -143,7 +210,7 @@ export class ConfigTreeProvider extends NacosTreeBase {
     try {
       loaded = await this.loadConfigs(element.instance, namespaceId);
     } catch (error) {
-      return [this.errorNode(error, element.instance.id, namespaceId)];
+      return [this.errorNode(error, pageCacheKey(element.instance.id, namespaceId))];
     }
     const children: NacosTreeItem[] = groupConfigs(loaded.configs).map(
       ([group, configs]) => new GroupTreeItem(this.scope, element.instance, namespaceId, group, configs.length)
@@ -159,7 +226,7 @@ export class ConfigTreeProvider extends NacosTreeBase {
     try {
       loaded = await this.loadConfigs(element.instance, element.namespaceId);
     } catch (error) {
-      return [this.errorNode(error, element.instance.id, element.namespaceId)];
+      return [this.errorNode(error, joinKey(element.instance.id, element.namespaceId, element.group))];
     }
     return loaded.configs
       .filter((config) => config.group === element.group)
@@ -167,9 +234,14 @@ export class ConfigTreeProvider extends NacosTreeBase {
       .map((config) => new ConfigTreeItem(this.scope, element.instance, element.namespaceId, config));
   }
 
-  /** Rendered under the namespace that failed rather than thrown, as the instance level does. */
-  private errorNode(error: unknown, instanceId: string, namespaceId: string): ErrorTreeItem {
-    return new ErrorTreeItem(this.scope, formatError(error), pageCacheKey(instanceId, namespaceId));
+  /**
+   * Rendered under the node that failed rather than thrown, as the instance
+   * level does. `ownerId` names that node and not merely its namespace: a
+   * namespace and a group of it can be showing an error at the same moment,
+   * and two nodes carrying one id is what VS Code will not draw.
+   */
+  private errorNode(error: unknown, ownerId: string): ErrorTreeItem {
+    return new ErrorTreeItem(this.scope, formatError(error), ownerId);
   }
 
   /**
@@ -213,7 +285,12 @@ export class ConfigTreeProvider extends NacosTreeBase {
   ): Promise<LoadedConfigs> {
     const pageNo = loaded.pagesLoaded + 1;
     const client = await this.createConfigClient(instance);
-    const page = await client.listConfigs({ namespaceId, pageNo, pageSize: CONFIG_PAGE_SIZE });
+    const page = await client.listConfigs({
+      namespaceId,
+      pageNo,
+      pageSize: CONFIG_PAGE_SIZE,
+      search: this.filterText
+    });
     return mergePage(loaded, page, pageNo);
   }
 }
@@ -221,7 +298,7 @@ export class ConfigTreeProvider extends NacosTreeBase {
 const EMPTY_PAGES: LoadedConfigs = { configs: [], pagesLoaded: 0, pagesAvailable: 1, totalCount: 0 };
 
 /**
- * Appends a page to what is loaded, dropping anything already there.
+ * Appends a page to what is loaded, skipping whatever is already there.
  *
  * The duplicate check is not paranoia about the protocol: a configuration
  * published between two page requests shifts the rows, and the same dataId
