@@ -494,22 +494,78 @@ at-nacos-series/
 | **M5** | 写操作：发布配置、回滚到历史版本、实例上下线；diff 预览 + 二次确认；实例只读开关 | 写操作全部经过 diff 确认；只读实例的写按钮被禁用 |
 | **M6** | MCP Bridge、7 个只读工具、配置内容脱敏、hub 同步与配置安装、打包发布 | Agent 通过 `at_list_providers` 能发现 `at.nacos` 并调用只读工具 |
 
-## 14. 待真机验证的不确定项
+## 14. 真机验证结果与仍未确认的项
 
-以下项目**不要凭调研写死代码**，M1 开始前用真实环境 curl 确认：
+### 14.0 已验证环境
 
-1. `GET /nacos/v3/admin/core/state` 的响应是否带 `{code,message,data}` 包装。源码 `Result<Map<String,String>>` 说带，官方文档示例说不带。**代码写成两种都兼容**（先看顶层 `version`，再看 `data.version`）。
+**Nacos 2.3.2**，standalone，`nacos.core.auth.enabled=false`，`http://192.168.99.90:8848/nacos`，2026-08-13。
+
+除逐条核对下列条目外，还用本仓库自己的代码跑通了端到端（`test/live/liveServer.test.ts`，设 `AT_NACOS_LIVE_URL` 才执行）：
+
+- 版本探测正确报出 `2.3.2 / major=2 / standalone / authEnabled=false`
+- 从裸 origin `http://192.168.99.90:8848` 自动发现出 context path `/nacos`
+- 驱动链走 2.x 分支列出 11 个命名空间，public 的 id 正确识别为空字符串
+- `authMode: 'none'` 全程无凭据可用
+
+**2.x 相关条目已全部确认；1.x 与 3.x 仍未验证。**
+
+### 14.1 已确认（Nacos 2.3.2）
+
+| 条目 | 结论 |
+|---|---|
+| 命名空间条目字段名（原 §14-10，风险最高） | **完全符合预期**：`namespace` / `namespaceShowName` / `namespaceDesc` / `quota` / `configCount` / `type`。`normalizeNamespace` 的硬性要求成立。 |
+| v1 与 v2 的成功码 | v1 `/v1/console/namespaces` 返回 `code: 200`，v2 `/v2/console/namespace/list` 返回 `code: 0`。`SUCCESS_CODES = {0, 200}` 两者都覆盖到了。 |
+| public 命名空间 id | 2.x 上确为**空字符串**，`namespaceShowName` 为 `"public"`。 |
+| 配置监听者字段名（原 §14-3） | **拼写错误确认存在**：`{"collectStatus":200,"lisentersGroupkeyStatus":{}}`。M2/M4 解析时必须照抄这个拼错的键名。 |
+| catalog services 顶层字段（原 §14-4） | `{"count":N,"serviceList":[...]}`。 |
+| v1 配置列表的 pageSize 上限（原 §14-5） | **没有硬上限**。请求 `pageSize=9999` 被照单全收，无截断。500 的上限只存在于历史接口。插件端自己限制在 100 的做法是必要的。 |
+| 2.x 根路径响应（原 §14-11 的 2.x 半边） | 返回 `text/html` 的控制台页面，不匹配 3.x 的 console 提示句。`parseConsoleHint` 不会误判。 |
+| `standalone_mode` → `startup_mode` 改名分界（原 §14-9） | 2.3.2 **已经**是 `startup_mode`。结合已知的 2.2.3 用 `standalone_mode`，分界收窄到 2.2.3 与 2.3.2 之间。两个键都读的策略是对的。 |
+
+### 14.2 真机上发现的、调研没预见到的两件事
+
+**① `type` 字段只在 `search=accurate` 下被填充，`search=blur` 下是 `null`。**（原 §14-7 的答案，但比预期复杂。）
+
+这不是版本差异而是**搜索模式差异**。M2 用 `type` 决定虚拟文档的 language mode，而搜索过滤 UI 用的正是 blur 模式——也就是说用户一搜索，语法高亮的依据就消失了。
+
+对策：`type` 为 null 时按 `dataId` 后缀推断（`.yml`/`.yaml` → yaml，`.properties` → properties，`.json` → json，`.xml` → xml，`.txt` → plaintext，`.html` → html，无后缀 → plaintext）。这个回退是必需路径而非兜底。
+
+**② 配置列表接口返回完整的配置内容。**
+
+`accurate` 与 `blur` 两种模式都在 `pageItems[].content` 里带上整条配置的正文。实测 12 条配置的响应体是 38KB；Nacos 单条配置上限 100KB，一个几百条配置的命名空间，仅列表请求就可能是几十兆。
+
+v1 的列表接口**没有**排除内容的参数。这对 M2 有三个直接后果：
+
+- 树的分页必须真的分页，不能"先拉全量再本地过滤"
+- `maxResponseBytes` 必须在列表请求上设一个明确的上限，否则一次展开就可能把扩展宿主打爆
+- 更要紧的是**内容会流经列表接口**，所以配置正文里的密码不只在"查看配置"时出现，而是在"列出配置"时就已经进入内存和日志路径。脱敏与 MCP 工具的默认脱敏因此比原计划更关键
+
+列表条目的完整字段集：`id` / `dataId` / `group` / `tenant` / `appName` / `content` / `md5` / `type` / `encryptedDataKey`。注意 `md5` 在 accurate 模式下是 `null`。
+
+### 14.3 仍未验证（需要 1.x 或 3.x 环境）
+
+以下项目**不要凭调研写死代码**：
+
+**需要 Nacos 3.x：**
+
+1. `GET /nacos/v3/admin/core/state` 的响应是否带 `{code,message,data}` 包装。源码 `Result<Map<String,String>>` 说带，官方文档示例说不带。**代码写成两种都兼容**（先看 `data.version`，再看顶层 `version`）。
 2. 3.0/3.1 兼容开关拦截时 HTTP 410 的实际 body 形状。**只依赖状态码**。
-3. 1.x/2.x `GET /v1/cs/configs/listener` 的响应字段名。类型是 `GroupkeyListenserStatus`（Nacos 源码里这个类名本身就拼错了），疑似 `collectStatus` + `lisentersGroupkeyStatus`。
-4. `GET /v1/ns/catalog/services?withInstances=false` 的顶层字段名（`serviceList`？）。
-5. 除配置历史外，各分页接口是否真有 500 硬上限。
+3. **3.x 命名空间条目的字段名。** 2.x 上已确认是 `namespace` / `namespaceShowName`，但 3.x 在别处改了大量字段名（`doms` → `services`、`clusters` → `clusterMap`、`createdTime` → `createTime`）。四个 driver 共用的 `normalizeNamespace` 硬性要求 `entry.namespace` 是字符串，否则抛 `invalid-response`——而这个类型**不触发** fall-through。如果 3.x 改了它，每一次 3.x 命名空间列举都会以不可恢复的错误告终。**这是 3.x 侧优先级最高的一条。**
+4. **3.x console 提示句的确切措辞与它伴随的 HTTP 状态码。** `parseConsoleHint` 按近似措辞匹配，且刻意不对状态码设门槛。这条现在更要紧了：M1 修复后，console 地址的自动发现是 admin-403 降级路径能否成立的前提。
+5. **admin 403 → console 降级的真实行为。** 需要一个非管理员账号的 3.x 实例。这是架构 §4.3 的主路径，目前只有构造出来的测试覆盖。
 6. 3.x console 端口（8080）上是否也能调 `/v3/auth/user/login`。
-7. 1.x 配置列表返回的 `type` 是否总被填充（可能为 null，需按后缀名回退）。
+7. **`/v3/auth/user/login` 是否接受与 v1 相同的 query/form 混合写法。** 这是从 v1 Java 客户端推断的，不是源码实读结论。
 8. `nacos.deployment.type=console` 独立部署模式下 console 与 server 分离的完整行为。
-9. 1.x 各小版本差异（`standalone_mode` → `startup_mode` 的确切分界版本未确定）。调研只实读了 2.5.3 / 3.1.2 / 3.2.3 源码，1.x 信息全部来自官方文档。
-10. **命名空间列表条目的字段名。** 四个 driver 共用一个 `normalizeNamespace`，它硬性要求 `entry.namespace` 是字符串，否则抛 `invalid-response`——而这个类型**不触发** fall-through。`namespace` / `namespaceShowName` / `namespaceDesc` 这三个名字只出现在 M1 计划里，从未进入 §6 的版本差异表；而 §6 在别处对这种改名记录得很细（`doms` → `services`、`clusters` → `clusterMap`、`createdTime` → `createTime`）。**如果 3.x 也改了条目里的 id 字段名，每一次 3.x 命名空间列举都会以一个不可恢复的错误告终。** 这是真机验证清单里优先级最高的一条。
-11. **3.x console 提示句的确切措辞与它伴随的 HTTP 状态码。** `resolveBaseUrl.ts` 的 `parseConsoleHint` 按近似措辞匹配，且刻意不对状态码设门槛。
-12. **`/v3/auth/user/login` 是否接受与 v1 相同的 query/form 混合写法。** 这是从 v1 Java 客户端推断的，不是源码实读结论。
+
+**需要 Nacos 1.x：**
+
+9. 1.x 的整体行为。调研只实读了 2.5.3 / 3.1.2 / 3.2.3 源码，1.x 信息全部来自官方文档。已确认的 2.3.2 行为不能外推——`standalone_mode` → `startup_mode` 的改名就发生在 2.2.3 与 2.3.2 之间，说明 2.x 内部也在动。
+10. 1.x 配置列表返回的 `type` 是否也随搜索模式变化（2.3.2 上 accurate 有、blur 无）。
+
+**需要鉴权已开启的实例：**
+
+11. **用户名密码登录的完整链路。** 已验证环境 `auth_enabled=false`，所以 `UserPasswordStrategy`、token 缓存与刷新、403 重登重试、以及 `withAuth` 的整条重试路径都只有本地夹具覆盖，从未打过真的 `/v1/auth/login`。
+12. **TLS TOFU。** 没有 HTTPS 实例，指纹信任、变更告警、以及 M1 刚修的「提示框打开期间停表」都未经真机验证。
 
 ## 16. 已知延后项（M1 完成时记录）
 
