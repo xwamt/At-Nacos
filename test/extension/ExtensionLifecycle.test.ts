@@ -3,7 +3,11 @@ import * as vscode from 'vscode';
 import { activate, deactivate } from '../../src/extension';
 import { ConfigTreeProvider } from '../../src/tree/ConfigTreeProvider';
 import { ServiceTreeProvider } from '../../src/tree/ServiceTreeProvider';
-import { commands as fixtureCommands, window as fixtureWindow } from '../../test-fixtures/vscode';
+import {
+  commands as fixtureCommands,
+  window as fixtureWindow,
+  workspace as fixtureWorkspace
+} from '../../test-fixtures/vscode';
 import { extensionContext } from './extensionContext';
 
 describe('atNacos extension lifecycle', () => {
@@ -12,6 +16,7 @@ describe('atNacos extension lifecycle', () => {
     fixtureCommands.__clearRegisteredCommands();
     fixtureWindow.__clearTreeViews();
     fixtureWindow.__clearLogChannels();
+    fixtureWorkspace.__clearContentProviders();
     // An input box answer queued by one test and left unconsumed would be
     // handed to the next one that opens a box.
     fixtureWindow.__resetDialogs();
@@ -22,7 +27,7 @@ describe('atNacos extension lifecycle', () => {
     vi.restoreAllMocks();
   });
 
-  it('registers the instance, refresh and filter commands', () => {
+  it('registers the instance, refresh, filter and configuration commands', () => {
     // That this is exactly what the manifest contributes is asserted in
     // Manifest.test.ts, against package.json rather than against a copy of it.
     activate(extensionContext());
@@ -31,7 +36,9 @@ describe('atNacos extension lifecycle', () => {
       'atNacos.addInstance',
       'atNacos.clearConfigFilter',
       'atNacos.filterConfigs',
+      'atNacos.loadMoreConfigs',
       'atNacos.manageInstances',
+      'atNacos.openConfig',
       'atNacos.refreshConfigs',
       'atNacos.refreshServices'
     ]);
@@ -53,13 +60,14 @@ describe('atNacos extension lifecycle', () => {
   });
 
   it('hands every disposable it created to context.subscriptions', () => {
-    // The channel, the six commands and the two views. Anything left out
-    // survives a window reload and leaks a listener into the next activation.
+    // The channel, the eight commands, the two views, the document provider
+    // and its registration. Anything left out survives a window reload and
+    // leaks a listener into the next activation.
     const context = extensionContext();
 
     activate(context);
 
-    expect(context.subscriptions).toHaveLength(9);
+    expect(context.subscriptions).toHaveLength(13);
     for (const subscription of context.subscriptions) {
       expect(typeof subscription.dispose).toBe('function');
     }

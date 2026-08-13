@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { NacosInstanceConfigManager } from './config/NacosInstanceConfigManager';
 import type { NacosInstanceConfig } from './config/schema';
+import { NACOS_CONFIG_SCHEME } from './document/configUri';
+import { NacosConfigDocumentProvider } from './document/NacosConfigDocumentProvider';
+import { openConfigDocument } from './document/openConfigDocument';
 import { t } from './i18n/t';
 import { NacosCapabilityResolver } from './nacos/NacosCapabilityResolver';
 import { NacosCertTrustStore } from './nacos/NacosCertTrustStore';
@@ -11,9 +14,15 @@ import { withAuth } from './nacos/auth/withAuth';
 import { createInteractiveCertVerifier } from './nacos/createInteractiveCertVerifier';
 import { probeServerState } from './nacos/probe/probeServerState';
 import { CONSOLE_MAJOR_VERSION, discoverConsoleBaseUrl } from './nacos/probe/resolveBaseUrl';
+import type { NacosConfigSummary } from './nacos/driver/normalize';
 import { testNacosConnection } from './nacos/testNacosConnection';
 import { ConfigTreeProvider } from './tree/ConfigTreeProvider';
-import type { NacosTreeItem } from './tree/NacosTreeItems';
+import {
+  LOAD_MORE_CONFIGS_COMMAND,
+  OPEN_CONFIG_COMMAND,
+  type NacosTreeItem,
+  type NamespaceTreeItem
+} from './tree/NacosTreeItems';
 import { ServiceTreeProvider } from './tree/ServiceTreeProvider';
 import { formatError } from './utils/errors';
 import { createRedactedLog, type AtNacosLog } from './utils/logger';
@@ -138,6 +147,19 @@ export function activate(context: vscode.ExtensionContext): void {
     serviceTreeProvider.refresh();
   };
 
+  // Registered on activation rather than lazily on the first click: VS Code
+  // restores a window's open editors before anyone touches them, so a `nacos:`
+  // tab left open across a reload is asked for its content during startup.
+  // With no provider registered by then the tab reads "cannot open ... no text
+  // editor content provider" and stays that way until it is closed.
+  const configDocumentProvider = new NacosConfigDocumentProvider(configManager, (instance) =>
+    createNacosClient(configManager, instance, certTrustStore, log)
+  );
+  const configDocumentRegistration = vscode.workspace.registerTextDocumentContentProvider(
+    NACOS_CONFIG_SCHEME,
+    configDocumentProvider
+  );
+
   const openInstanceForm: OpenInstanceForm = (existing) =>
     NacosInstanceFormPanel.open(context, configManager, refreshTreeViews, existing, {
       // The form's default probe constructs its own client with neither a
@@ -212,11 +234,52 @@ export function activate(context: vscode.ExtensionContext): void {
     configTreeProvider.clearFilter();
   });
 
+  // Both take the arguments their tree node carries, and both are contributed
+  // with `"when": "false"` so the palette cannot offer them without any --
+  // there is no configuration to open and no namespace to page when the
+  // invocation comes from a text box.
+  const openConfigCommand = vscode.commands.registerCommand(
+    OPEN_CONFIG_COMMAND,
+    async (instanceId: string, config: NacosConfigSummary) => {
+      try {
+        await openConfigDocument(instanceId, config);
+      } catch (error) {
+        // The read itself cannot land here: the content provider answers every
+        // failure with readable text in the buffer, precisely so that a
+        // rejection does not become an empty editor. What is left is VS Code
+        // refusing to show the document at all, and a tree click that opens
+        // nothing and says nothing is indistinguishable from a dead node.
+        const message = formatError(error);
+        log.error(`openConfig: ${message}`);
+        await vscode.window.showErrorMessage(
+          t('Could not open the configuration {dataId}: {message}', { dataId: config.dataId, message })
+        );
+      }
+    }
+  );
+
+  const loadMoreConfigsCommand = vscode.commands.registerCommand(
+    LOAD_MORE_CONFIGS_COMMAND,
+    async (namespace: NamespaceTreeItem) => {
+      try {
+        await configTreeProvider.loadMore(namespace);
+      } catch (error) {
+        // `loadMore` rejects instead of rendering an error node, deliberately:
+        // an error node under the namespace would replace the pages the user
+        // was reading in order to report that there are no more of them. That
+        // makes this the only place the failure can be said at all.
+        const message = formatError(error);
+        log.error(`loadMoreConfigs: ${message}`);
+        await vscode.window.showErrorMessage(t('Could not load more configurations: {message}', { message }));
+      }
+    }
+  );
+
   // VS Code awaits the promise `deactivate()` returns. It does NOT await the
   // `dispose()` of anything in `context.subscriptions` -- it calls each one and
   // moves on. Nothing in this milestone needs that guarantee: the channel, the
-  // two views and the four commands all dispose synchronously, so they are
-  // pushed below. The seam exists anyway, and is guarded against a second
+  // two views, the document provider and the eight commands all dispose
+  // synchronously, so they are pushed below. The seam exists anyway, and is guarded against a second
   // call, because the shutdown steps that do need awaiting arrive later -- the
   // MCP bridge has to finish unpublishing its registry record or the Hub pays
   // a failed connection to a dead port on every later refresh.
@@ -241,10 +304,18 @@ export function activate(context: vscode.ExtensionContext): void {
     manageInstancesCommand,
     configTreeView,
     serviceTreeView,
+    // The provider and its registration both, because they own different
+    // things: dropping the registration stops VS Code asking this provider for
+    // content, and disposing the provider releases the change emitter every
+    // open document is subscribed to.
+    configDocumentProvider,
+    configDocumentRegistration,
     refreshConfigsCommand,
     refreshServicesCommand,
     filterConfigsCommand,
-    clearConfigFilterCommand
+    clearConfigFilterCommand,
+    openConfigCommand,
+    loadMoreConfigsCommand
   );
 }
 

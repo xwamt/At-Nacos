@@ -2,7 +2,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { activate, deactivate } from '../../src/extension';
-import { commands as fixtureCommands, window as fixtureWindow } from '../../test-fixtures/vscode';
+import {
+  commands as fixtureCommands,
+  window as fixtureWindow,
+  workspace as fixtureWorkspace
+} from '../../test-fixtures/vscode';
 import { extensionContext } from './extensionContext';
 
 interface Manifest {
@@ -32,6 +36,7 @@ describe('package.json contributions', () => {
     fixtureCommands.__clearRegisteredCommands();
     fixtureWindow.__clearTreeViews();
     fixtureWindow.__clearLogChannels();
+    fixtureWorkspace.__clearContentProviders();
   });
 
   afterEach(async () => {
@@ -65,9 +70,14 @@ describe('package.json contributions', () => {
   });
 
   it('references only contributed commands from its menus', () => {
+    // Every menu, not only `view/title`: a `commandPalette` entry naming a
+    // command that no longer exists is silently ignored, so the command it was
+    // meant to hide comes back into the palette.
     const contributed = new Set(commands.map((entry) => entry.command));
-    for (const item of menus['view/title'] ?? []) {
-      expect(contributed.has(item.command), item.command).toBe(true);
+    for (const [location, items] of Object.entries(menus)) {
+      for (const item of items) {
+        expect(contributed.has(item.command), `${location}: ${item.command}`).toBe(true);
+      }
     }
   });
 
@@ -92,6 +102,28 @@ describe('package.json contributions', () => {
     expect((menus['view/title'] ?? []).filter((item) => item.command === command).map((item) => item.when)).toEqual([
       'view == atNacos.configs'
     ]);
+  });
+
+  /**
+   * Both are invoked by a tree node carrying arguments. Picked from the
+   * palette they arrive with none: `openConfig` would be asked to open
+   * `undefined` and `loadMoreConfigs` to page a namespace that was not named.
+   * `when: false` is the only way a contributed command stays out of it.
+   */
+  it.each([['atNacos.openConfig'], ['atNacos.loadMoreConfigs']])(
+    'hides %s from the command palette, since only a tree node can supply its arguments',
+    (command) => {
+      expect((menus.commandPalette ?? []).filter((item) => item.command === command).map((item) => item.when)).toEqual([
+        'false'
+      ]);
+    }
+  );
+
+  /** A palette entry with any other `when` is a command that can still be picked with no arguments. */
+  it('writes no commandPalette entry that leaves a command visible', () => {
+    for (const item of menus.commandPalette ?? []) {
+      expect(item.when, item.command).toBe('false');
+    }
   });
 
   it('attaches its welcome view to a view it contributes', () => {

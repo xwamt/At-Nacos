@@ -76,9 +76,27 @@
         "command": "atNacos.clearConfigFilter",
         "title": "%atNacos.command.clearConfigFilter.title%",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "atNacos.openConfig",
+        "title": "%atNacos.command.openConfig.title%"
+      },
+      {
+        "command": "atNacos.loadMoreConfigs",
+        "title": "%atNacos.command.loadMoreConfigs.title%"
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "atNacos.openConfig",
+          "when": "false"
+        },
+        {
+          "command": "atNacos.loadMoreConfigs",
+          "when": "false"
+        }
+      ],
       "view/title": [
         {
           "command": "atNacos.addInstance",

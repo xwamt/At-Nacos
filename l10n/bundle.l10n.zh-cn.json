@@ -64,6 +64,8 @@
   "This configuration belongs to a Nacos instance that is no longer configured. It was probably deleted while this editor stayed open.": "该配置所属的 Nacos 实例已不在配置列表中，多半是在这个编辑器保持打开期间被删除了。",
   "The configuration {dataId} no longer exists in group {group}. It may have been deleted on the server.": "分组 {group} 下已不存在配置 {dataId}，它可能已在服务端被删除。",
   "AT Nacos could not read the configuration {dataId}: {message}": "AT Nacos 无法读取配置 {dataId}：{message}",
+  "Could not open the configuration {dataId}: {message}": "无法打开配置 {dataId}：{message}",
+  "Could not load more configurations: {message}": "无法加载更多配置：{message}",
   "Trust Certificate": "信任该证书",
   "Trust New Certificate": "信任新证书",
   "Reject": "拒绝",

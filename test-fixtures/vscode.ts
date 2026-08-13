@@ -384,8 +384,34 @@ export const lm = {
   __clearRegisteredTools: () => registeredTools.clear()
 };
 
+/**
+ * What `workspace.registerTextDocumentContentProvider` was handed. Recorded
+ * for the reason the tree views are: a provider that is never registered
+ * fails only when a user opens a `nacos:` URI, which no unit test does by
+ * accident.
+ */
+export interface RecordedContentProvider {
+  scheme: string;
+  provider: unknown;
+  disposed: boolean;
+}
+
+const contentProviders: RecordedContentProvider[] = [];
+
 export const workspace = {
-  registerTextDocumentContentProvider: () => ({ dispose: () => undefined }),
+  registerTextDocumentContentProvider: (scheme: string, provider: unknown) => {
+    const record: RecordedContentProvider = { scheme, provider, disposed: false };
+    contentProviders.push(record);
+    return {
+      dispose: () => {
+        record.disposed = true;
+      }
+    };
+  },
+  __getContentProviders: (): RecordedContentProvider[] => contentProviders,
+  __clearContentProviders: (): void => {
+    contentProviders.length = 0;
+  },
   openTextDocument: async (uri: Uri): Promise<TextDocument> => ({
     uri,
     fileName: uri.fsPath,

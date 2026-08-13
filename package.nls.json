@@ -10,6 +10,8 @@
   "atNacos.command.refreshServices.title": "AT Nacos: Refresh Services",
   "atNacos.command.filterConfigs.title": "AT Nacos: Filter Configurations",
   "atNacos.command.clearConfigFilter.title": "AT Nacos: Clear Configuration Filter",
+  "atNacos.command.openConfig.title": "AT Nacos: Open Configuration",
+  "atNacos.command.loadMoreConfigs.title": "AT Nacos: Load More Configurations",
   "atNacos.welcome.configs": "No Nacos instance is configured yet.\n[Add Instance](command:atNacos.addInstance)",
   "atNacos.welcome.services": "No Nacos instance is configured yet. Add one to browse its registered services.\n[Add Instance](command:atNacos.addInstance)"
 }
