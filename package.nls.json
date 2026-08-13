@@ -7,5 +7,6 @@
   "atNacos.command.addInstance.title": "AT Nacos: Add Instance",
   "atNacos.command.manageInstances.title": "AT Nacos: Manage Instances",
   "atNacos.command.refreshConfigs.title": "AT Nacos: Refresh Configurations",
-  "atNacos.command.refreshServices.title": "AT Nacos: Refresh Services"
+  "atNacos.command.refreshServices.title": "AT Nacos: Refresh Services",
+  "atNacos.welcome.configs": "No Nacos instance is configured yet.\n[Add Instance](command:atNacos.addInstance)"
 }

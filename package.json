@@ -1,7 +1,7 @@
 {
   "name": "at-nacos",
-  "displayName": "AT Nacos",
-  "description": "Browse Nacos configurations, services, and cluster status inside VS Code, with Agent (MCP) integration via AT Series.",
+  "displayName": "%atNacos.displayName%",
+  "description": "%atNacos.description%",
   "version": "0.1.0",
   "publisher": "local",
   "license": "MIT",
@@ -24,6 +24,81 @@
   ],
   "main": "./dist/extension.js",
   "l10n": "./l10n",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "atNacos",
+          "title": "%atNacos.viewsContainer.title%",
+          "icon": "media/at-nacos-activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "atNacos": [
+        {
+          "id": "atNacos.configs",
+          "name": "%atNacos.view.configs.name%"
+        },
+        {
+          "id": "atNacos.services",
+          "name": "%atNacos.view.services.name%"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "atNacos.addInstance",
+        "title": "%atNacos.command.addInstance.title%",
+        "icon": "$(add)"
+      },
+      {
+        "command": "atNacos.manageInstances",
+        "title": "%atNacos.command.manageInstances.title%",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "atNacos.refreshConfigs",
+        "title": "%atNacos.command.refreshConfigs.title%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "atNacos.refreshServices",
+        "title": "%atNacos.command.refreshServices.title%",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "atNacos.addInstance",
+          "when": "view == atNacos.configs",
+          "group": "navigation@1"
+        },
+        {
+          "command": "atNacos.refreshConfigs",
+          "when": "view == atNacos.configs",
+          "group": "navigation@2"
+        },
+        {
+          "command": "atNacos.manageInstances",
+          "when": "view == atNacos.configs",
+          "group": "navigation@3"
+        },
+        {
+          "command": "atNacos.refreshServices",
+          "when": "view == atNacos.services",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "atNacos.configs",
+        "contents": "%atNacos.welcome.configs%"
+      }
+    ]
+  },
   "scripts": {
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",

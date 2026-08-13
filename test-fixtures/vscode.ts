@@ -174,6 +174,20 @@ export class LogOutputChannel {
 
 const logChannels: LogOutputChannel[] = [];
 
+/**
+ * What `window.createTreeView` was asked for, so a test can assert that
+ * `activate` wired the right provider to the right view id. Recorded rather
+ * than spied on because `vscode.TreeView` declares a dozen members a fixture
+ * has no use for, and a spy would have to fake all of them to typecheck.
+ */
+export interface RecordedTreeView {
+  viewId: string;
+  treeDataProvider: unknown;
+  disposed: boolean;
+}
+
+const treeViews: RecordedTreeView[] = [];
+
 export const window = {
   createOutputChannel: (name: string, _options?: { log: true }): LogOutputChannel => {
     const channel = new LogOutputChannel(name);
@@ -216,16 +230,26 @@ export const window = {
     task({
       report: () => undefined
     }, {}),
-  createTreeView: (_viewId: string, options?: { treeDataProvider?: unknown }) => ({
-    dispose: () => undefined,
-    message: undefined as string | undefined,
-    title: undefined as string | undefined,
-    treeDataProvider: options?.treeDataProvider,
-    onDidChangeSelection: () => ({ dispose: () => undefined }),
-    onDidExpandElement: () => ({ dispose: () => undefined }),
-    onDidCollapseElement: () => ({ dispose: () => undefined }),
-    reveal: async () => undefined
-  }),
+  createTreeView: (viewId: string, options?: { treeDataProvider?: unknown }) => {
+    const record: RecordedTreeView = { viewId, treeDataProvider: options?.treeDataProvider, disposed: false };
+    treeViews.push(record);
+    return {
+      dispose: () => {
+        record.disposed = true;
+      },
+      message: undefined as string | undefined,
+      title: undefined as string | undefined,
+      treeDataProvider: options?.treeDataProvider,
+      onDidChangeSelection: () => ({ dispose: () => undefined }),
+      onDidExpandElement: () => ({ dispose: () => undefined }),
+      onDidCollapseElement: () => ({ dispose: () => undefined }),
+      reveal: async () => undefined
+    };
+  },
+  __getTreeViews: (): RecordedTreeView[] => treeViews,
+  __clearTreeViews: (): void => {
+    treeViews.length = 0;
+  },
   registerTreeDataProvider: (_viewId: string, _provider: unknown) => ({ dispose: () => undefined }),
   createWebviewPanel: (viewType?: string, title?: string, _showOptions?: unknown, options?: Record<string, unknown>) => {
     const messageListeners: Array<(message: unknown) => unknown> = [];
@@ -277,9 +301,26 @@ export const languages = {
   })
 };
 
+/** Keyed by command id, so a test can invoke exactly what `activate` registered. */
+const registeredCommands = new Map<string, (...args: never[]) => unknown>();
+
 export const commands = {
-  registerCommand: () => ({ dispose: () => undefined }),
-  executeCommand: async () => undefined
+  registerCommand: (command: string, callback: (...args: never[]) => unknown) => {
+    registeredCommands.set(command, callback);
+    return {
+      dispose: () => {
+        // Only if it is still the same handler: a second `activate` overwrites
+        // the entry, and disposing the first registration must not take the
+        // live one with it.
+        if (registeredCommands.get(command) === callback) {
+          registeredCommands.delete(command);
+        }
+      }
+    };
+  },
+  executeCommand: async () => undefined,
+  __getRegisteredCommands: (): Map<string, (...args: never[]) => unknown> => registeredCommands,
+  __clearRegisteredCommands: (): void => registeredCommands.clear()
 };
 
 export class LanguageModelTextPart {

@@ -61,11 +61,72 @@ describe('l10n runtime bundle', () => {
   });
 });
 
+/**
+ * Every string the manifest holds, at any depth. The placeholders live in
+ * values only, so the keys are not walked.
+ */
+function stringValuesOf(value: unknown): string[] {
+  if (typeof value === 'string') {
+    return [value];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(stringValuesOf);
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.values(value).flatMap(stringValuesOf);
+  }
+  return [];
+}
+
+/** What the extension host substitutes: a value that is *entirely* one placeholder. */
+const WHOLE_PLACEHOLDER = /^%([\w.-]+)%$/;
+const ANY_PLACEHOLDER = /%[\w.-]+%/;
+
+const manifestStrings = stringValuesOf(readJson<unknown>('package.json'));
+const manifestPlaceholders = manifestStrings
+  .map((value) => WHOLE_PLACEHOLDER.exec(value)?.[1])
+  .filter((key): key is string => key !== undefined);
+
 describe('package.json', () => {
   it('points at the l10n directory that holds the bundle', () => {
     // Without this field VS Code never loads the bundle, and every call to
     // `t()` quietly returns its English source even under a zh-cn UI.
     const manifest = readJson<{ l10n?: string }>('package.json');
     expect(manifest.l10n).toBe('./l10n');
+  });
+
+  it('uses placeholders for the strings the UI shows', () => {
+    // A guard on the guard below: if the manifest stopped using placeholders
+    // altogether, every assertion here would pass over an empty list.
+    expect(manifestPlaceholders.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('resolves every %placeholder% it writes in both languages', () => {
+    // An unresolved key does not fail anything -- VS Code renders the literal
+    // `%atNacos.foo%` in the view title, the command palette, or the welcome
+    // view, and only in the language that is missing it.
+    for (const key of manifestPlaceholders) {
+      expect(Object.keys(english), key).toContain(key);
+      expect(Object.keys(chinese), key).toContain(key);
+    }
+  });
+
+  it('never embeds a placeholder inside a longer string', () => {
+    // The host substitutes a value only when the placeholder is the whole
+    // thing, so `"AT Nacos: %atNacos.foo%"` ships exactly as written.
+    for (const value of manifestStrings) {
+      if (ANY_PLACEHOLDER.test(value)) {
+        expect(value, value).toMatch(WHOLE_PLACEHOLDER);
+      }
+    }
+  });
+
+  it('leaves no nls key unused', () => {
+    // These files are only ever read through the manifest. A key nothing
+    // points at is a translation being maintained for nothing -- or, more
+    // often, a placeholder that was renamed on one side.
+    for (const key of Object.keys(english)) {
+      expect(manifestPlaceholders, key).toContain(key);
+    }
   });
 });
