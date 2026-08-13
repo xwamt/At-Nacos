@@ -1,0 +1,288 @@
+html,
+body {
+  min-width: 0;
+  min-height: 100%;
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  font-family: var(--vscode-font-family);
+}
+
+.instance-form-shell {
+  width: min(880px, 100%);
+  padding: 24px 28px 30px;
+  box-sizing: border-box;
+}
+
+.form-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  margin-bottom: 18px;
+}
+
+h1,
+p {
+  margin: 0;
+}
+
+h1 {
+  color: var(--vscode-foreground);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+p {
+  max-width: 560px;
+  margin-top: 5px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.instance-form {
+  display: grid;
+  gap: 14px;
+}
+
+.form-panel {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--vscode-sideBar-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.field-stack {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  align-content: start;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.field-help {
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  padding: 7px 9px;
+  line-height: 1.35;
+}
+
+textarea {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  resize: vertical;
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--vscode-focusBorder);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+.field-stack select {
+  min-height: 32px;
+}
+
+/*
+ * The authentication mode decides which credential fields exist, and the class
+ * on the form is the only thing that changes when it does. Hiding rather than
+ * removing keeps the fields in the DOM, which is what lets a user switch back
+ * without retyping -- the extension host ignores whatever a hidden field holds.
+ */
+.instance-form:not(.auth-mode-userPassword) .auth-user-password-field,
+.instance-form:not(.auth-mode-customHeader) .auth-custom-header-field {
+  display: none;
+}
+
+.toggle-grid {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.toggle-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.toggle-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.toggle-title {
+  color: var(--vscode-foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.toggle-row input[type='checkbox'] {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 34px;
+  padding-top: 2px;
+}
+
+.form-feedback {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.form-error {
+  min-width: 0;
+  color: var(--vscode-errorForeground);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.test-status {
+  min-width: 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.test-status.is-success {
+  color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen));
+}
+
+.test-status.is-error {
+  color: var(--vscode-errorForeground);
+}
+
+.form-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.secondary-action {
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  border: 0;
+  border-radius: 4px;
+  padding: 7px 10px;
+  line-height: 1.35;
+}
+
+.secondary-action:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.primary-action {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  border: 0;
+  border-radius: 4px;
+  padding: 8px 14px;
+  line-height: 1.2;
+}
+
+.primary-action:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.primary-action:focus,
+.secondary-action:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.primary-action[disabled],
+.secondary-action[disabled] {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+@media (max-width: 720px) {
+  .instance-form-shell {
+    padding: 20px;
+  }
+
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-header,
+  .form-footer {
+    display: grid;
+  }
+
+  .form-actions {
+    display: grid;
+    justify-content: stretch;
+  }
+
+  .secondary-action,
+  .primary-action {
+    width: 100%;
+  }
+}
