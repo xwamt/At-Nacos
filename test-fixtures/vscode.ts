@@ -46,7 +46,14 @@ export class Uri {
     public readonly fsPath: string,
     public readonly scheme = 'file',
     public readonly path = fsPath,
-    public readonly query = ''
+    public readonly query = '',
+    /**
+     * The empty string when there is no authority, which is what `vscode.Uri`
+     * reports -- never undefined. A fixture answering undefined would let a
+     * check for "this URI has no authority" pass here and mean something else
+     * in the extension host.
+     */
+    public readonly authority = ''
   ) {}
 
   static file(path: string): Uri {
@@ -57,12 +64,24 @@ export class Uri {
     return new Uri([base.fsPath, ...paths].join('/'));
   }
 
-  static from(parts: { scheme: string; path: string; query?: string }): Uri {
-    return new Uri(parts.path, parts.scheme, parts.path, parts.query ?? '');
+  static from(parts: { scheme: string; path: string; query?: string; authority?: string }): Uri {
+    return new Uri(parts.path, parts.scheme, parts.path, parts.query ?? '', parts.authority ?? '');
   }
 
+  /**
+   * `scheme://authority/path` when there is an authority and `scheme:path`
+   * when there is not, as the real one writes it.
+   *
+   * The one liberty taken is that the components are not percent-encoded
+   * again on the way out -- `vscode.Uri` escapes everything outside
+   * `A-Za-z0-9-._~/` in a path, so it renders a literal `%` as `%25`. Assert
+   * on the components, therefore, and keep any assertion on this string to
+   * one that a stricter encoder could not change: two URIs differing, or a
+   * secret being absent.
+   */
   toString(): string {
-    return `${this.scheme}:${this.path}${this.query ? `?${this.query}` : ''}`;
+    const authority = this.authority ? `//${this.authority}` : '';
+    return `${this.scheme}:${authority}${this.path}${this.query ? `?${this.query}` : ''}`;
   }
 }
 
