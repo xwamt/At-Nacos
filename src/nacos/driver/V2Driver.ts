@@ -7,12 +7,15 @@ import {
   type NacosConfigHistoryListQuery,
   type NacosConfigHistoryQuery,
   type NacosConfigListQuery,
+  type NacosConfigPublish,
   type NacosDriver,
+  type NacosInstanceHealthUpdate,
   type NacosInstanceQuery,
   type NacosServiceListQuery
 } from './NacosDriver';
 import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners } from './history';
 import {
+  fetchCatalogInstances,
   fetchCatalogServices,
   fetchClusterNodes,
   fetchInstances,
@@ -20,8 +23,10 @@ import {
   fetchServiceDetail,
   fetchServiceNames,
   fetchSubscribers,
+  listInstancesPreferringCatalog,
   listServicesPreferringCounts
 } from './naming';
+import { deleteConfigAt, publishConfigAt, updateInstanceHealthAt } from './writes';
 import type {
   NacosClusterNode,
   NacosConfigDetail,
@@ -110,9 +115,18 @@ const SUBSCRIBERS_ENDPOINT_FLAVOR: NacosApiFlavor = 'v1';
  * the v1 one would add is a second dialect to get wrong.
  */
 const CATALOG_SERVICES_PATH = '/v1/ns/catalog/services';
+const CATALOG_INSTANCES_PATH = '/v1/ns/catalog/instances';
 const SERVICE_LIST_PATH = '/v2/ns/service/list';
 
 const INSTANCE_LIST_PATH = '/v2/ns/instance/list';
+
+/**
+ * The instance write does have a v2 endpoint of its own, unlike the
+ * configuration ones -- `InstanceControllerV2` binds an `InstanceForm`, so
+ * this is the one place in this driver where the v2 naming dialect
+ * (`groupName` beside a bare `serviceName`) is what goes out.
+ */
+const INSTANCE_PATH = '/v2/ns/instance';
 const CLUSTER_NODES_PATH = '/v2/core/cluster/node/list';
 
 /** v2 does have its own metrics endpoint -- confirmed answering on a real 2.3.2. */
@@ -159,7 +173,10 @@ export class V2Driver implements NacosDriver {
   }
 
   listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]> {
-    return fetchInstances(this.http, this.flavor, INSTANCE_LIST_PATH, query);
+    return listInstancesPreferringCatalog(
+      () => fetchCatalogInstances(this.http, CATALOG_INSTANCES_PATH, query),
+      () => fetchInstances(this.http, this.flavor, INSTANCE_LIST_PATH, query)
+    );
   }
 
   listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]> {
@@ -172,5 +189,17 @@ export class V2Driver implements NacosDriver {
 
   getServerMetrics(): Promise<NacosServerMetrics> {
     return fetchServerMetrics(this.http, METRICS_PATH);
+  }
+
+  publishConfig(request: NacosConfigPublish): Promise<void> {
+    return publishConfigAt(this.http, CONFIG_ENDPOINT_FLAVOR, CONFIG_PATH, request);
+  }
+
+  deleteConfig(ref: NacosConfigRef): Promise<void> {
+    return deleteConfigAt(this.http, CONFIG_ENDPOINT_FLAVOR, CONFIG_PATH, ref);
+  }
+
+  updateInstanceHealth(request: NacosInstanceHealthUpdate): Promise<void> {
+    return updateInstanceHealthAt(this.http, this.flavor, INSTANCE_PATH, request);
   }
 }

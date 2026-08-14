@@ -138,7 +138,12 @@ describe('package.json contributions', () => {
     ['atNacos.diffWithPrevious'],
     ['atNacos.compareAcrossEnvironments'],
     ['atNacos.showConfigListeners'],
-    ['atNacos.showServiceSubscribers']
+    ['atNacos.showServiceSubscribers'],
+    ['atNacos.editConfig'],
+    ['atNacos.publishConfig'],
+    ['atNacos.deleteConfig'],
+    ['atNacos.enableServiceInstance'],
+    ['atNacos.disableServiceInstance']
   ])(
     'hides %s from the command palette, since only a tree node can supply its arguments',
     (command) => {
@@ -256,6 +261,28 @@ describe('package.json contributions', () => {
     ]) {
       expect(nodeMenu(command).group, command).toMatch(/^atNacos\.inspect@\d$/);
     }
+  });
+
+  it.each([
+    ['atNacos.editConfig'],
+    ['atNacos.publishConfig'],
+    ['atNacos.deleteConfig']
+  ])('hides write command %s on a read-only configuration node', (command) => {
+    const item = nodeMenu(command);
+    expect(item.when).toBe('viewItem == atNacos.config');
+
+    // Matches writable config node contextValue
+    expect(configNodeValue(false)).toBe('atNacos.config');
+    // Does not match read-only config node contextValue
+    expect(configNodeValue(true)).toBe('atNacos.config.readonly');
+  });
+
+  it('shows enableServiceInstance only on disabled service instances and disableServiceInstance only on enabled instances', () => {
+    const enableItem = nodeMenu('atNacos.enableServiceInstance');
+    expect(enableItem.when).toBe('viewItem == atNacos.serviceInstance.disabled');
+
+    const disableItem = nodeMenu('atNacos.disableServiceInstance');
+    expect(disableItem.when).toBe('viewItem == atNacos.serviceInstance.enabled');
   });
 
   it('attaches its welcome view to a view it contributes', () => {

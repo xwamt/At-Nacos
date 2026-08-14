@@ -4,6 +4,7 @@
   "description": "%atNacos.description%",
   "version": "0.1.0",
   "publisher": "local",
+  "icon": "media/at-nacos-icon.png",
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
@@ -113,6 +114,33 @@
       {
         "command": "atNacos.showServiceSubscribers",
         "title": "%atNacos.command.showServiceSubscribers.title%"
+      },
+      {
+        "command": "atNacos.editConfig",
+        "title": "%atNacos.command.editConfig.title%",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "atNacos.publishConfig",
+        "title": "%atNacos.command.publishConfig.title%",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "atNacos.deleteConfig",
+        "title": "%atNacos.command.deleteConfig.title%",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "atNacos.enableServiceInstance",
+        "title": "%atNacos.command.enableServiceInstance.title%"
+      },
+      {
+        "command": "atNacos.disableServiceInstance",
+        "title": "%atNacos.command.disableServiceInstance.title%"
+      },
+      {
+        "command": "atNacos.installMcpConfig",
+        "title": "%atNacos.command.installMcpConfig.title%"
       }
     ],
     "menus": {
@@ -148,9 +176,51 @@
         {
           "command": "atNacos.showServiceSubscribers",
           "when": "false"
+        },
+        {
+          "command": "atNacos.editConfig",
+          "when": "false"
+        },
+        {
+          "command": "atNacos.publishConfig",
+          "when": "false"
+        },
+        {
+          "command": "atNacos.deleteConfig",
+          "when": "false"
+        },
+        {
+          "command": "atNacos.enableServiceInstance",
+          "when": "false"
+        },
+        {
+          "command": "atNacos.disableServiceInstance",
+          "when": "false"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "atNacos.publishConfig",
+          "when": "resourceScheme == nacos-draft",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
+        {
+          "command": "atNacos.editConfig",
+          "when": "viewItem == atNacos.config",
+          "group": "atNacos.modify@1"
+        },
+        {
+          "command": "atNacos.publishConfig",
+          "when": "viewItem == atNacos.config",
+          "group": "atNacos.modify@2"
+        },
+        {
+          "command": "atNacos.deleteConfig",
+          "when": "viewItem == atNacos.config",
+          "group": "atNacos.modify@3"
+        },
         {
           "command": "atNacos.showConfigHistory",
           "when": "viewItem =~ /^atNacos\\.config\\b/",
@@ -175,6 +245,16 @@
           "command": "atNacos.showServiceSubscribers",
           "when": "viewItem =~ /^atNacos\\.service\\b/",
           "group": "atNacos.inspect@1"
+        },
+        {
+          "command": "atNacos.enableServiceInstance",
+          "when": "viewItem == atNacos.serviceInstance.disabled",
+          "group": "atNacos.modify@1"
+        },
+        {
+          "command": "atNacos.disableServiceInstance",
+          "when": "viewItem == atNacos.serviceInstance.enabled",
+          "group": "atNacos.modify@2"
         }
       ],
       "view/title": [
@@ -242,8 +322,9 @@
     ]
   },
   "scripts": {
-    "build": "node esbuild.config.mjs",
-    "watch": "node esbuild.config.mjs --watch",
+    "build": "node scripts/copy-hub.mjs && node esbuild.config.mjs",
+    "watch": "node scripts/copy-hub.mjs && node esbuild.config.mjs --watch",
+    "package": "npm run build && node scripts/package.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

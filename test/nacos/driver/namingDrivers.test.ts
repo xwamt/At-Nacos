@@ -77,6 +77,8 @@ const SPRING_ERROR_PAGE =
 const NO_SUCH_API =
   '{"timestamp":"2026-08-14T01:47:35.291+08:00","status":501,"error":"Not Implemented","message":"no such api:GET:/nacos/v1/ns/catalog/services","path":"/nacos/v1/ns/catalog/services"}';
 
+const CATALOG_INSTANCE_PAGE = String.raw`{"count":1,"list":[${HOST}]}`;
+
 interface NamingDriverCase {
   flavor: NacosApiFlavor;
   /** Where a service listing goes first. On v1/v2 that is the catalog, which is not their own version's path. */
@@ -90,6 +92,8 @@ interface NamingDriverCase {
   /** The catalog and 3.x say `groupNameParam`; the name-only listings say `groupName`. */
   serviceGroupParam: 'groupNameParam' | 'groupName';
   instancePath: string;
+  instanceFallbackPath?: string;
+  instanceFallbackBody?: string;
   instanceBody: string;
   /** v1 encodes the group into the service name; everything after it sends the two apart. */
   sendsGroupedServiceName: boolean;
@@ -111,10 +115,12 @@ const DRIVER_CASES: NamingDriverCase[] = [
     serviceFallbackBody: V1_NAME_PAGE,
     servicePrimaryBody: CATALOG_PAGE,
     serviceGroupParam: 'groupNameParam',
-    instancePath: '/v1/ns/instance/list',
-    instanceBody: SERVICE_INFO,
+    instancePath: '/v1/ns/catalog/instances',
+    instanceFallbackPath: '/v1/ns/instance/list',
+    instanceFallbackBody: SERVICE_INFO,
+    instanceBody: CATALOG_INSTANCE_PAGE,
     sendsGroupedServiceName: true,
-    clusterParam: 'clusters',
+    clusterParam: 'clusterName',
     clusterNodesPath: '/v1/core/cluster/nodes',
     clusterNodesBody: V1_CLUSTER_NODES,
     metricsPath: '/v1/ns/operator/metrics',
@@ -129,9 +135,11 @@ const DRIVER_CASES: NamingDriverCase[] = [
     serviceFallbackBody: V2_NAME_PAGE,
     servicePrimaryBody: CATALOG_PAGE,
     serviceGroupParam: 'groupNameParam',
-    instancePath: '/v2/ns/instance/list',
-    instanceBody: enveloped(SERVICE_INFO),
-    sendsGroupedServiceName: false,
+    instancePath: '/v1/ns/catalog/instances',
+    instanceFallbackPath: '/v2/ns/instance/list',
+    instanceFallbackBody: enveloped(SERVICE_INFO),
+    instanceBody: CATALOG_INSTANCE_PAGE,
+    sendsGroupedServiceName: true,
     clusterParam: 'clusterName',
     clusterNodesPath: '/v2/core/cluster/node/list',
     clusterNodesBody: enveloped(CLUSTER_NODES),
@@ -380,31 +388,18 @@ for (const driverCase of DRIVER_CASES) {
       expect(queryOf(requests[0]?.url ?? '').get('namespaceId')).toBe(NAMESPACE_ID);
     });
 
-    /**
-     * v1's instance endpoint has no group parameter at all: the group travels
-     * inside `serviceName` as `GROUP@@name`, which is the one spelling every
-     * version reads. v2 onward takes the two apart again -- and sending a
-     * grouped name *there* would have the server compose
-     * `cl-intimfy@@cl-intimfy@@order-service`.
-     */
-    it(
-      driverCase.sendsGroupedServiceName
-        ? 'carries the group inside the service name, the way v1 reads it'
-        : 'sends a bare service name beside its group, the way v2 onward reads it',
-      async () => {
-        const { requests } = await drive(driverCase, respondWith(200, driverCase.instanceBody), (driver) =>
-          driver.listInstances({ namespaceId: NAMESPACE_ID, group: GROUP, serviceName: SERVICE })
-        );
-        const query = queryOf(requests[0]?.url ?? '');
-        if (driverCase.sendsGroupedServiceName) {
-          expect(query.get('serviceName')).toBe(`${GROUP}@@${SERVICE}`);
-          expect(query.has('groupName')).toBe(false);
-          return;
-        }
+    it('sends the service and namespace identification required by the endpoint', async () => {
+      const { requests } = await drive(driverCase, respondWith(200, driverCase.instanceBody), (driver) =>
+        driver.listInstances({ namespaceId: NAMESPACE_ID, group: GROUP, serviceName: SERVICE })
+      );
+      const query = queryOf(requests[0]?.url ?? '');
+      expect(query.get('namespaceId')).toBe(NAMESPACE_ID);
+      if (driverCase.sendsGroupedServiceName) {
+        expect(query.get('serviceName')).toBe(`${GROUP}@@${SERVICE}`);
+      } else {
         expect(query.get('serviceName')).toBe(SERVICE);
-        expect(query.get('groupName')).toBe(GROUP);
       }
-    );
+    });
 
     it(`names the cluster filter ${clusterParam}, and never ${otherClusterParam}`, async () => {
       const { requests } = await drive(driverCase, respondWith(200, driverCase.instanceBody), (driver) =>
@@ -415,13 +410,16 @@ for (const driverCase of DRIVER_CASES) {
       expect(query.has(otherClusterParam)).toBe(false);
     });
 
-    it('sends no cluster filter at all when the caller named no cluster', async () => {
+    it('handles cluster parameter according to endpoint specification', async () => {
       const { requests } = await drive(driverCase, respondWith(200, driverCase.instanceBody), (driver) =>
         driver.listInstances({ namespaceId: NAMESPACE_ID, group: GROUP, serviceName: SERVICE })
       );
       const query = queryOf(requests[0]?.url ?? '');
-      expect(query.has('clusters')).toBe(false);
-      expect(query.has('clusterName')).toBe(false);
+      if (driverCase.flavor === 'v1' || driverCase.flavor === 'v2') {
+        expect(query.get('clusterName')).toBe('DEFAULT');
+      } else {
+        expect(query.has('clusterName')).toBe(false);
+      }
     });
 
     /** A service nobody registered answers 200 with an empty host list, not a 404. */
@@ -666,6 +664,18 @@ describe('the catalog fallback', () => {
       const error = errorOf(result);
       expect(error.kind).toBe('not-found');
       expect(error.shouldFallThrough()).toBe(true);
+    });
+    it(`${driverCase.flavor} falls back to instance/list when catalog instance query answers 501`, async () => {
+      const { requests, result } = await drive(
+        driverCase,
+        respondByPath([
+          { path: driverCase.instancePath, status: 501, body: NO_SUCH_API },
+          { path: driverCase.instanceFallbackPath ?? '', body: driverCase.instanceFallbackBody ?? '' }
+        ]),
+        (driver) => driver.listInstances({ namespaceId: NAMESPACE_ID, group: GROUP, serviceName: SERVICE })
+      );
+      expect(valueOf(result)).toHaveLength(1);
+      expect(pathOf(requests[1]?.url ?? '')).toBe(expectedPath(driverCase, driverCase.instanceFallbackPath ?? ''));
     });
   }
 

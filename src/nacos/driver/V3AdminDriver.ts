@@ -7,7 +7,9 @@ import {
   type NacosConfigHistoryListQuery,
   type NacosConfigHistoryQuery,
   type NacosConfigListQuery,
+  type NacosConfigPublish,
   type NacosDriver,
+  type NacosInstanceHealthUpdate,
   type NacosInstanceQuery,
   type NacosServiceListQuery
 } from './NacosDriver';
@@ -20,6 +22,7 @@ import {
   fetchServicePage,
   fetchSubscribers
 } from './naming';
+import { deleteConfigAt, publishConfigAt, updateInstanceHealthAt } from './writes';
 import type {
   NacosClusterNode,
   NacosConfigDetail,
@@ -90,6 +93,9 @@ const FIRST_SUBSCRIBER_PAGE = { query: { pageNo: '1', pageSize: '100' } };
 const SERVICE_LIST_PATH = '/v3/admin/ns/service/list';
 const INSTANCE_LIST_PATH = '/v3/admin/ns/instance/list';
 
+/** The listing's path without `/list`: one controller, PUT for the update. */
+const INSTANCE_PATH = '/v3/admin/ns/instance';
+
 /** The server nodes live under `core`, not under the naming module's `ns`. */
 const CLUSTER_NODES_PATH = '/v3/admin/core/cluster/node/list';
 
@@ -147,5 +153,21 @@ export class V3AdminDriver implements NacosDriver {
 
   getServerMetrics(): Promise<NacosServerMetrics> {
     return fetchServerMetrics(this.http, METRICS_PATH);
+  }
+
+  /**
+   * 3.x split the reader's two config paths but not the writer's: the publish
+   * and the delete share the detail endpoint's address and differ by method.
+   */
+  publishConfig(request: NacosConfigPublish): Promise<void> {
+    return publishConfigAt(this.http, this.flavor, CONFIG_DETAIL_PATH, request);
+  }
+
+  deleteConfig(ref: NacosConfigRef): Promise<void> {
+    return deleteConfigAt(this.http, this.flavor, CONFIG_DETAIL_PATH, ref);
+  }
+
+  updateInstanceHealth(request: NacosInstanceHealthUpdate): Promise<void> {
+    return updateInstanceHealthAt(this.http, this.flavor, INSTANCE_PATH, request);
   }
 }

@@ -105,12 +105,72 @@ export interface NacosConfigHistoryQuery extends NacosConfigRef {
 }
 
 /**
+ * One configuration, as it is to be stored.
+ *
+ * A publish is an upsert of the **whole row**, not a patch: every version
+ * writes back all of the columns the request bound, so a field this omits is
+ * a field the server overwrites with nothing. That is why so little here is
+ * optional.
+ *
+ * `type` is required for that reason and is the sharpest case of it.
+ * 2.3.2 ends its publish handler with `if (!ConfigType.isValidType(type))
+ * configForm.setType(getDefaultType())`, and the default is `text` -- so a
+ * publish without one turns a YAML configuration into a plain-text
+ * configuration, and the next reader opens it with no syntax highlighting.
+ * The caller supplies it; nothing down here invents one, because a guess made
+ * from the dataId would be indistinguishable from what the publisher chose.
+ *
+ * `appName` and `description` are optional because a configuration really can
+ * have neither, and they are sent as empty strings when absent -- which is
+ * the same thing the server would store. A republish that means to keep them
+ * has to carry them through.
+ */
+export interface NacosConfigPublish extends NacosConfigRef {
+  /** May be empty. Nacos itself rejects a blank body, but that verdict is the server's to give. */
+  content: string;
+  /** `yaml` | `properties` | `json` | `xml` | `html` | `text`, as `getConfig` reported it. */
+  type: string;
+  appName?: string;
+  description?: string;
+}
+
+/**
+ * One instance taken out of, or put back into, its service's rotation.
+ *
+ * The whole instance travels rather than the address and a flag, and that is
+ * the same trap `type` is. Nacos has no endpoint that flips one field: the
+ * update **rebuilds the instance from the request** and every attribute the
+ * request leaves out takes the builder's default -- `weight` becomes 1,
+ * `healthy` becomes true, and the metadata map is emptied (verified in
+ * 2.3.2's `HttpRequestInstanceBuilder` and in 3.x's `InstanceForm`). So a
+ * request carrying only `enabled` would take an instance offline and silently
+ * reset its weight and drop its metadata on the way.
+ *
+ * `instance` is therefore meant to be exactly what `listInstances` last
+ * reported, with nothing edited out of it.
+ */
+export interface NacosInstanceHealthUpdate {
+  service: NacosServiceRef;
+  /** As `listInstances` reported it. Everything in it is sent back verbatim. */
+  instance: NacosInstance;
+  /** false takes the instance out of rotation; Nacos stops handing it to clients. */
+  enabled: boolean;
+}
+
+/**
  * M1 defined the namespace capability, M2 the two configuration ones, M3 the
- * naming and cluster ones, and M4 a config's history and the two answers to
- * "who is using this". Later milestones widen this interface as they need to,
- * and every widening has to bring all four implementations along with it --
- * TypeScript enforces that, which is exactly why the interface is kept
- * narrow.
+ * naming and cluster ones, M4 a config's history and the two answers to "who
+ * is using this", and M5 the three that change something. Later milestones
+ * widen this interface as they need to, and every widening has to bring all
+ * four implementations along with it -- TypeScript enforces that, which is
+ * exactly why the interface is kept narrow.
+ *
+ * **Nothing here knows what a read-only instance is.** That switch is a
+ * property of how this workspace has configured a server, not of the server,
+ * and it is enforced above -- once in the tree, which hides the commands, and
+ * once in `confirmWrite`, which refuses them. A driver that checked it as
+ * well would put one safety rule in two layers, which is how a rule ends up
+ * with a path where neither copy runs.
  */
 export interface NacosDriver {
   readonly flavor: NacosApiFlavor;
@@ -138,6 +198,29 @@ export interface NacosDriver {
   listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]>;
   listClusterNodes(): Promise<NacosClusterNode[]>;
   getServerMetrics(): Promise<NacosServerMetrics>;
+  /**
+   * Creates the configuration or overwrites it, which is one endpoint on
+   * every version -- Nacos has no separate create.
+   *
+   * Answers nothing. A write's only result is that it happened, and the
+   * server has three ways of saying it did not (a non-2xx, a business `code`,
+   * and HTTP 200 carrying `false`); folding those into a returned boolean
+   * would let a caller ignore the refusal by ignoring the value.
+   */
+  publishConfig(request: NacosConfigPublish): Promise<void>;
+  deleteConfig(ref: NacosConfigRef): Promise<void>;
+  /**
+   * Takes one instance out of its service's rotation, or puts it back.
+   *
+   * **There is no rollback capability beside these**, deliberately. Nacos has
+   * no endpoint that restores a past version: rolling back is reading the old
+   * content and publishing it under the current dataId, which produces a
+   * *new* history row rather than erasing the ones after it. Composing that
+   * from `getConfigHistory` and `publishConfig` is the layer above's job,
+   * because the confirmation dialog is the only place that semantics can be
+   * explained to the person authorizing it.
+   */
+  updateInstanceHealth(request: NacosInstanceHealthUpdate): Promise<void>;
 }
 
 /**

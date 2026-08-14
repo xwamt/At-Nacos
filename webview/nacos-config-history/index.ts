@@ -63,6 +63,14 @@ document.addEventListener('click', (event) => {
   if (!(target instanceof Element)) {
     return;
   }
+  const rollback = target.closest('.version-rollback');
+  if (rollback instanceof HTMLElement) {
+    const id = rollback.dataset.versionId;
+    if (id) {
+      vscode.postMessage({ type: 'rollback', id });
+    }
+    return;
+  }
   const action = target.closest('.version-action');
   if (!(action instanceof HTMLElement)) {
     return;

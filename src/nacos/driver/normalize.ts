@@ -552,12 +552,21 @@ export function normalizeServiceSummary(entry: unknown, scope: NacosServiceScope
  * initializer and so has no default to borrow.
  */
 export function normalizeInstance(entry: unknown): NacosInstance {
-  if (!isRecord(entry) || typeof entry.ip !== 'string' || entry.ip.length === 0 || typeof entry.port !== 'number') {
+  if (!isRecord(entry) || typeof entry.ip !== 'string' || entry.ip.length === 0) {
+    throw new NacosApiError('invalid-response', 'Nacos returned an instance with no ip:port address.');
+  }
+  const port =
+    typeof entry.port === 'number'
+      ? entry.port
+      : typeof entry.port === 'string'
+        ? parseInt(entry.port, 10)
+        : Number.NaN;
+  if (Number.isNaN(port)) {
     throw new NacosApiError('invalid-response', 'Nacos returned an instance with no ip:port address.');
   }
   return {
     ip: entry.ip,
-    port: entry.port,
+    port,
     healthy: entry.healthy !== false,
     enabled: entry.enabled !== false,
     weight: optionalNumber(entry.weight) ?? 1,
@@ -599,7 +608,22 @@ function instanceArrayIn(data: unknown): unknown[] | undefined {
   if (Array.isArray(data.hosts)) {
     return data.hosts;
   }
-  return Array.isArray(data.pageItems) ? data.pageItems : undefined;
+  if (Array.isArray(data.list)) {
+    return data.list;
+  }
+  if (Array.isArray(data.pageItems)) {
+    return data.pageItems;
+  }
+  if (Array.isArray(data.instances)) {
+    return data.instances;
+  }
+  if (Array.isArray(data.items)) {
+    return data.items;
+  }
+  if (isRecord(data.serviceInfo) && Array.isArray(data.serviceInfo.hosts)) {
+    return data.serviceInfo.hosts;
+  }
+  return undefined;
 }
 
 /**

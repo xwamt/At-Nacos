@@ -26,7 +26,17 @@ export type NacosCapability =
   | 'instances'
   | 'subscribers'
   | 'cluster-nodes'
-  | 'server-metrics';
+  | 'server-metrics'
+  /**
+   * M5's three writes, and three entries rather than one for the same reason
+   * the reads are split: 3.x's admin API judges each of them separately, so a
+   * 403 that sends one write to the console API says nothing about where the
+   * others should go, and a shared entry would let either evict the other's
+   * winner.
+   */
+  | 'config-publish'
+  | 'config-delete'
+  | 'instance-health';
 
 /** How one driver in the chain declined, in the terms the chain builder reasons about. */
 export interface NacosDriverRefusal {

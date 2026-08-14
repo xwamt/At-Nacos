@@ -409,6 +409,29 @@ export interface RecordedContentProvider {
 
 const contentProviders: RecordedContentProvider[] = [];
 
+export class FileSystemError extends Error {
+  constructor(message?: string) {
+    super(message);
+    this.name = 'FileSystemError';
+  }
+
+  static FileNotFound(messageOrUri?: string | Uri): FileSystemError {
+    return new FileSystemError(typeof messageOrUri === 'string' ? messageOrUri : 'File not found');
+  }
+
+  static NoPermissions(message?: string): FileSystemError {
+    return new FileSystemError(message ?? 'No permissions');
+  }
+}
+
+export interface RecordedFileSystemProvider {
+  scheme: string;
+  provider: unknown;
+  disposed: boolean;
+}
+
+const fileSystemProviders: RecordedFileSystemProvider[] = [];
+
 export const workspace = {
   registerTextDocumentContentProvider: (scheme: string, provider: unknown) => {
     const record: RecordedContentProvider = { scheme, provider, disposed: false };
@@ -418,6 +441,19 @@ export const workspace = {
         record.disposed = true;
       }
     };
+  },
+  registerFileSystemProvider: (scheme: string, provider: unknown, _options?: { isReadonly?: boolean }) => {
+    const record: RecordedFileSystemProvider = { scheme, provider, disposed: false };
+    fileSystemProviders.push(record);
+    return {
+      dispose: () => {
+        record.disposed = true;
+      }
+    };
+  },
+  __getFileSystemProviders: (): RecordedFileSystemProvider[] => fileSystemProviders,
+  __clearFileSystemProviders: (): void => {
+    fileSystemProviders.length = 0;
   },
   __getContentProviders: (): RecordedContentProvider[] => contentProviders,
   __clearContentProviders: (): void => {

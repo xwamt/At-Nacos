@@ -366,6 +366,62 @@ describe('NacosClient', () => {
   });
 
   /**
+   * M5's three writes get three cache entries rather than one, for the reason
+   * the reads do: 3.x's admin API answers a non-administrator with 403 on
+   * every one of them independently, and the console API it falls through to
+   * has an instance endpoint but is a different origin -- so a fall-through
+   * on one write must not evict the driver another had already settled on.
+   */
+  it('publishes a config through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => true);
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    await new NacosClient(resolver, serverState(2)).publishConfig({
+      namespaceId: 'uat',
+      group: 'g',
+      dataId: 'a.yml',
+      content: 'a: 1',
+      type: 'yaml'
+    });
+    expect(http.calls.map((call) => call.path)).toEqual(['/v1/cs/configs']);
+    expect(resolver.snapshot()).toEqual({ 'config-publish': 'v2' });
+  });
+
+  it('deletes a config through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => true);
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    await new NacosClient(resolver, serverState(2)).deleteConfig({
+      namespaceId: 'uat',
+      group: 'g',
+      dataId: 'a.yml'
+    });
+    expect(resolver.snapshot()).toEqual({ 'config-delete': 'v2' });
+  });
+
+  it('updates an instance through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => ({ code: 0, data: 'ok' }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    await new NacosClient(resolver, serverState(2)).updateInstanceHealth({
+      service: { namespaceId: 'uat', group: 'g', serviceName: 's' },
+      instance: {
+        ip: '10.0.0.7',
+        port: 8080,
+        healthy: true,
+        enabled: true,
+        weight: 1,
+        clusterName: 'DEFAULT',
+        ephemeral: true,
+        metadata: {}
+      },
+      enabled: false
+    });
+    expect(http.calls.map((call) => call.path)).toEqual(['/v2/ns/instance']);
+    expect(resolver.snapshot()).toEqual({ 'instance-health': 'v2' });
+  });
+
+  /**
    * Three of v2's five new endpoints do not exist on a real 2.3.2 --
    * `/v2/ns/service/subscribers` and `/v2/cs/config/listener` answer 404, and
    * `/v2/cs/history/list` demands the v1 spelling of `group`. So the v2
@@ -487,6 +543,9 @@ function stubDriver(flavor: NacosApiFlavor): NacosDriver {
     getConfigHistory: unused,
     listConfigListeners: unused,
     getService: unused,
-    listSubscribers: unused
+    listSubscribers: unused,
+    publishConfig: unused,
+    deleteConfig: unused,
+    updateInstanceHealth: unused
   };
 }

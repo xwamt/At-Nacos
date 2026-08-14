@@ -4,7 +4,9 @@ import type {
   NacosConfigHistoryListQuery,
   NacosConfigHistoryQuery,
   NacosConfigListQuery,
+  NacosConfigPublish,
   NacosDriver,
+  NacosInstanceHealthUpdate,
   NacosInstanceQuery,
   NacosServiceListQuery
 } from './driver/NacosDriver';
@@ -188,5 +190,35 @@ export class NacosClient {
 
   getServerMetrics(): Promise<NacosServerMetrics> {
     return this.resolver.run('server-metrics', (driver) => driver.getServerMetrics());
+  }
+
+  /**
+   * The three that change something, and the reason they can go through the
+   * same chain the reads do.
+   *
+   * A resolver walks to the next driver only on 403, 404 and 410, and none of
+   * those three can be the answer to a write that partly happened: they are
+   * the server saying it has no such endpoint, or that this account may not
+   * use it. A refused write -- HTTP 200 carrying `false`, which is how Nacos
+   * declines one -- is raised as `api-error` by the driver precisely so that
+   * it does *not* fall through, because retrying a write is the one retry
+   * nobody wants done for them.
+   *
+   * **No `rollbackConfig` here, and there will not be one.** Nacos has no
+   * endpoint that restores a version: rolling back is reading a past version
+   * and publishing it, which appends to the history rather than truncating
+   * it. That composition belongs above this layer, next to the confirmation
+   * dialog that has to explain it.
+   */
+  publishConfig(request: NacosConfigPublish): Promise<void> {
+    return this.resolver.run('config-publish', (driver) => driver.publishConfig(request));
+  }
+
+  deleteConfig(ref: NacosConfigRef): Promise<void> {
+    return this.resolver.run('config-delete', (driver) => driver.deleteConfig(ref));
+  }
+
+  updateInstanceHealth(request: NacosInstanceHealthUpdate): Promise<void> {
+    return this.resolver.run('instance-health', (driver) => driver.updateInstanceHealth(request));
   }
 }

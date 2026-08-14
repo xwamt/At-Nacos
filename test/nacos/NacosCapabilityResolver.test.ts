@@ -24,7 +24,10 @@ function driver(flavor: NacosApiFlavor, behavior: () => Promise<unknown>): Nacos
     listInstances: behavior as never,
     listSubscribers: behavior as never,
     listClusterNodes: behavior as never,
-    getServerMetrics: behavior as never
+    getServerMetrics: behavior as never,
+    publishConfig: behavior as never,
+    deleteConfig: behavior as never,
+    updateInstanceHealth: behavior as never
   };
 }
 

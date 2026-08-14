@@ -40,6 +40,7 @@ export interface ConfigHistoryView {
 export interface RenderConfigHistoryOptions {
   instanceLabel: string;
   ref: NacosConfigRef;
+  readOnly?: boolean;
   /** Absent while the first fetch is still in flight. */
   snapshot?: ConfigHistorySnapshot;
 }
@@ -47,6 +48,7 @@ export interface RenderConfigHistoryOptions {
 export interface ConfigHistoryMessageOptions {
   instanceLabel: string;
   ref: NacosConfigRef;
+  readOnly?: boolean;
   /** Read again on every refresh. */
   load: () => Promise<ConfigHistorySnapshot>;
   /** Wraps a view in the document to serve; `open` binds this to `renderWebviewHtml`. */
@@ -61,14 +63,17 @@ export interface ConfigHistoryMessageOptions {
   shownVersions: () => NacosConfigHistoryEntry[];
   /** Opens the native diff of one version against the current content. */
   openDiff: (entry: NacosConfigHistoryEntry) => Promise<void>;
+  /** Rolls back to the past version when requested and allowed. */
+  rollback?: (entry: NacosConfigHistoryEntry) => Promise<void>;
 }
 
 export interface ConfigHistoryPanelOptions {
-  instance: { id: string; label: string };
+  instance: { id: string; label: string; readOnly?: boolean };
   ref: NacosConfigRef;
   /** Built per open and per refresh, so an edited instance takes effect immediately. */
   connect: () => Promise<ConfigHistoryClient>;
   openDiff: (entry: NacosConfigHistoryEntry) => Promise<void>;
+  rollback?: (entry: NacosConfigHistoryEntry) => Promise<void>;
 }
 
 export class ConfigHistoryPanel {
@@ -98,6 +103,7 @@ export class ConfigHistoryPanel {
     const messageOptions: ConfigHistoryMessageOptions = {
       instanceLabel: options.instance.label,
       ref: options.ref,
+      readOnly: options.instance.readOnly,
       load: async () => {
         const snapshot = await loadConfigHistory(options.connect, options.ref);
         shown = snapshot.entries;
@@ -114,7 +120,8 @@ export class ConfigHistoryPanel {
           view.data
         ),
       shownVersions: () => shown,
-      openDiff: options.openDiff
+      openDiff: options.openDiff,
+      rollback: options.rollback
     };
     panel.webview.onDidReceiveMessage(async (message: unknown) => {
       await handleConfigHistoryMessage(message, panel, messageOptions);
@@ -124,7 +131,7 @@ export class ConfigHistoryPanel {
     // Nacos server costs a probe and a round trip, and a menu item that opens
     // nothing for several seconds reads as one that did nothing.
     panel.webview.html = messageOptions.renderDocument(
-      renderConfigHistory({ instanceLabel: options.instance.label, ref: options.ref })
+      renderConfigHistory({ instanceLabel: options.instance.label, ref: options.ref, readOnly: options.instance.readOnly })
     );
     panel.webview.html = messageOptions.renderDocument(await configHistoryView(messageOptions));
   }
@@ -142,6 +149,13 @@ export async function handleConfigHistoryMessage(
   const type = messageType(message);
   if (type === 'refresh') {
     panel.webview.html = options.renderDocument(await configHistoryView(options));
+    return true;
+  }
+  if (type === 'rollback') {
+    const entry = options.shownVersions().find((shown) => shown.id === diffVersionId(message));
+    if (entry && options.rollback) {
+      await options.rollback(entry).catch(() => undefined);
+    }
     return true;
   }
   if (type !== 'diff') {
@@ -177,7 +191,7 @@ export async function loadConfigHistory(
 
 /** Never rejects: the view is the only place a failure here can be read. */
 async function configHistoryView(options: ConfigHistoryMessageOptions): Promise<ConfigHistoryView> {
-  const base = { instanceLabel: options.instanceLabel, ref: options.ref };
+  const base = { instanceLabel: options.instanceLabel, ref: options.ref, readOnly: options.readOnly };
   try {
     return renderConfigHistory({ ...base, snapshot: await options.load() });
   } catch (error) {
@@ -185,14 +199,14 @@ async function configHistoryView(options: ConfigHistoryMessageOptions): Promise<
   }
 }
 
-/** The id a `diff` message named, if it named one at all. */
+/** The id a `diff` or `rollback` message named, if it named one at all. */
 function diffVersionId(message: unknown): string | undefined {
   const { id } = message as { id?: unknown };
   return typeof id === 'string' && id.length > 0 ? id : undefined;
 }
 
 export function renderConfigHistory(options: RenderConfigHistoryOptions): ConfigHistoryView {
-  const { instanceLabel, ref, snapshot } = options;
+  const { instanceLabel, ref, snapshot, readOnly } = options;
   const body = `<main class="panel-shell">
 ${renderPanelHeader({
   title: configHistoryTitle(ref),
@@ -202,7 +216,7 @@ ${renderPanelHeader({
     instance: instanceLabel
   })
 })}
-${renderPanelSection(t('Versions'), renderVersionSection(snapshot))}
+${renderPanelSection(t('Versions'), renderVersionSection(snapshot, readOnly))}
 </main>`;
 
   return {
@@ -218,7 +232,7 @@ ${renderPanelSection(t('Versions'), renderVersionSection(snapshot))}
   };
 }
 
-function renderVersionSection(snapshot: ConfigHistorySnapshot | undefined): string {
+function renderVersionSection(snapshot: ConfigHistorySnapshot | undefined, readOnly?: boolean): string {
   if (!snapshot) {
     return loadingNote();
   }
@@ -237,7 +251,7 @@ function renderVersionSection(snapshot: ConfigHistorySnapshot | undefined): stri
       )
     );
   }
-  const parts = [renderVersionTable(snapshot.entries)];
+  const parts = [renderVersionTable(snapshot.entries, readOnly)];
   if (snapshot.totalCount > snapshot.entries.length) {
     parts.push(
       note(
@@ -251,7 +265,7 @@ function renderVersionSection(snapshot: ConfigHistorySnapshot | undefined): stri
   return parts.join('\n    ');
 }
 
-function renderVersionTable(entries: NacosConfigHistoryEntry[]): string {
+function renderVersionTable(entries: NacosConfigHistoryEntry[], readOnly?: boolean): string {
   return `<table class="version-table">
       <thead>
         <tr>
@@ -264,21 +278,32 @@ function renderVersionTable(entries: NacosConfigHistoryEntry[]): string {
         </tr>
       </thead>
       <tbody>
-      ${entries.map((entry) => renderVersion(entry)).join('\n      ')}
+      ${entries.map((entry) => renderVersion(entry, readOnly)).join('\n      ')}
       </tbody>
     </table>`;
 }
 
-function renderVersion(entry: NacosConfigHistoryEntry): string {
+function renderVersion(entry: NacosConfigHistoryEntry, readOnly?: boolean): string {
+  const rollbackBtn = readOnly
+    ? ''
+    : `<button class="version-rollback" type="button" data-version-id="${escapeAttr(
+        entry.id
+      )}">${escapeAttr(t('Roll back'))}</button>`;
+
   return `<tr class="version-row">
           <td class="version-id">${escapeAttr(entry.id)}</td>
           <td>${renderOperation(entry.opType)}</td>
           <td>${renderTime(entry.modifiedAt)}</td>
           <td>${renderText(entry.srcIp)}</td>
           <td>${renderText(entry.srcUser)}</td>
-          <td><button class="version-action" type="button" data-version-id="${escapeAttr(
-            entry.id
-          )}">${escapeAttr(t('Compare with current'))}</button></td>
+          <td>
+            <div class="version-actions-cell">
+              <button class="version-action" type="button" data-version-id="${escapeAttr(
+                entry.id
+              )}">${escapeAttr(t('Compare with current'))}</button>
+              ${rollbackBtn}
+            </div>
+          </td>
         </tr>`;
 }
 

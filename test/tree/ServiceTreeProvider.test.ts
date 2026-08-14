@@ -539,7 +539,22 @@ describe('ServiceTreeProvider instance level', () => {
       vscode.TreeItemCollapsibleState.None,
       vscode.TreeItemCollapsibleState.None
     ]);
-    expect(instances.map((item) => item.contextValue)).toEqual(['atNacos.serviceInstance', 'atNacos.serviceInstance']);
+    expect(instances.map((item) => item.contextValue)).toEqual([
+      'atNacos.serviceInstance.enabled',
+      'atNacos.serviceInstance.enabled'
+    ]);
+  });
+
+  it('marks disabled instances with atNacos.serviceInstance.disabled contextValue', async () => {
+    const { client } = recordingClient({
+      services: pagesOf([service('cl-intimfy', 'merchant-admin')]),
+      instances: () => [host('192.168.99.92', 8088, { enabled: false })]
+    });
+    const provider = providerFor(client);
+
+    const { instances } = await expandFirstService(provider);
+
+    expect(instances[0].contextValue).toBe('atNacos.serviceInstance.disabled');
   });
 
   it('asks for the instances of exactly the service the node stands for', async () => {
@@ -581,7 +596,7 @@ describe('ServiceTreeProvider instance level', () => {
 
     const { instances } = await expandFirstService(provider);
 
-    expect(instances[0].contextValue).toBe('atNacos.serviceInstance.readonly');
+    expect(instances[0].contextValue).toBe('atNacos.serviceInstance.enabled.readonly');
   });
 
   it('shows the cluster and the weight beside an instance, which is what routing turns on', async () => {

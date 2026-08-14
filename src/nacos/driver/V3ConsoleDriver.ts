@@ -7,7 +7,9 @@ import {
   type NacosConfigHistoryListQuery,
   type NacosConfigHistoryQuery,
   type NacosConfigListQuery,
+  type NacosConfigPublish,
   type NacosDriver,
+  type NacosInstanceHealthUpdate,
   type NacosInstanceQuery,
   type NacosServiceListQuery
 } from './NacosDriver';
@@ -20,6 +22,7 @@ import {
   fetchSubscribers,
   missingCapability
 } from './naming';
+import { deleteConfigAt, publishConfigAt, updateInstanceHealthAt } from './writes';
 import type {
   NacosClusterNode,
   NacosConfigDetail,
@@ -59,6 +62,14 @@ const CONFIG_LISTENER_PATH = '/v3/console/cs/config/listener';
 const SERVICE_LIST_PATH = '/v3/console/ns/service/list';
 const SERVICE_DETAIL_PATH = '/v3/console/ns/service';
 const INSTANCE_LIST_PATH = '/v3/console/ns/instance/list';
+
+/**
+ * The console module's instance controller has exactly two mappings: the
+ * listing and this PUT. It cannot register or deregister -- which is fine,
+ * since taking an instance out of rotation is the only instance write this
+ * project has.
+ */
+const INSTANCE_PATH = '/v3/console/ns/instance';
 const SUBSCRIBERS_PATH = '/v3/console/ns/service/subscribers';
 
 /** `nodes`, where the admin API says `node/list`. The console module spells its own paths. */
@@ -151,6 +162,18 @@ export class V3ConsoleDriver implements NacosDriver {
         "Nacos 3.x's console API has no naming metrics endpoint; only the admin API reports them, so there is nothing to ask on the console origin."
       )
     );
+  }
+
+  publishConfig(request: NacosConfigPublish): Promise<void> {
+    return publishConfigAt(this.http, this.flavor, CONFIG_DETAIL_PATH, request, this.onConsoleOrigin());
+  }
+
+  deleteConfig(ref: NacosConfigRef): Promise<void> {
+    return deleteConfigAt(this.http, this.flavor, CONFIG_DETAIL_PATH, ref, this.onConsoleOrigin());
+  }
+
+  updateInstanceHealth(request: NacosInstanceHealthUpdate): Promise<void> {
+    return updateInstanceHealthAt(this.http, this.flavor, INSTANCE_PATH, request, this.onConsoleOrigin());
   }
 
   /**

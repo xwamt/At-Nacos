@@ -191,9 +191,53 @@ export async function fetchInstances(
   return normalizeInstanceList(payload, path);
 }
 
+/**
+ * 1.x/2.x catalog instance listing: console-dedicated endpoint that returns all instances
+ * regardless of enabled/disabled/healthy status.
+ */
+export async function fetchCatalogInstances(
+  http: Pick<NacosHttpClient, 'requestJson'>,
+  path: string,
+  query: NacosInstanceQuery,
+  options?: NacosRequestOptions
+): Promise<NacosInstance[]> {
+  const clusterName = query.cluster || 'DEFAULT';
+  const payload = await http.requestJson<unknown>('GET', path, {
+    ...options,
+    query: {
+      ...options?.query,
+      namespaceId: query.namespaceId,
+      groupName: query.group,
+      serviceName: query.group ? `${query.group}@@${query.serviceName}` : query.serviceName,
+      clusterName,
+      pageNo: '1',
+      pageSize: '500'
+    }
+  });
+  return normalizeInstanceList(payload, path);
+}
+
+/**
+ * Attempts catalog instance query first (returns all offline/online instances).
+ * Falls back to client open-api endpoint if catalog is unavailable (e.g. 404/410).
+ */
+export async function listInstancesPreferringCatalog(
+  fetchCatalog: () => Promise<NacosInstance[]>,
+  fetchFallback: () => Promise<NacosInstance[]>
+): Promise<NacosInstance[]> {
+  try {
+    return await fetchCatalog();
+  } catch (error) {
+    if (!(error instanceof NacosApiError)) {
+      throw error;
+    }
+    return await fetchFallback();
+  }
+}
+
 function instanceParams(flavor: NacosApiFlavor, query: NacosInstanceQuery): Record<string, string> {
   const cluster = query.cluster === undefined ? {} : { [clusterParamName(flavor)]: query.cluster };
-  return { ...serviceIdentityParams(flavor, query), ...cluster };
+  return { ...serviceIdentityParams(flavor, query), healthyOnly: 'false', ...cluster };
 }
 
 /**
@@ -209,8 +253,14 @@ function instanceParams(flavor: NacosApiFlavor, query: NacosInstanceQuery): Reco
  *
  * v2 onward takes the two apart, and sending a grouped name *there* makes the
  * server compose the group in twice.
+ *
+ * Exported for the instance *write*, which addresses an instance exactly as
+ * the listing does and must not grow a second opinion about how: the update
+ * endpoint is the same controller as the listing on every version, so a write
+ * that named its service differently from the read that found it would be
+ * addressing something else.
  */
-function serviceIdentityParams(flavor: NacosApiFlavor, ref: NacosServiceRef): Record<string, string> {
+export function serviceIdentityParams(flavor: NacosApiFlavor, ref: NacosServiceRef): Record<string, string> {
   if (flavor === 'v1') {
     return { namespaceId: ref.namespaceId, serviceName: groupedServiceName(ref) };
   }

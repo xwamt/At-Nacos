@@ -19,6 +19,12 @@
   "atNacos.command.compareAcrossEnvironments.title": "AT Nacos: Compare Across Environments",
   "atNacos.command.showConfigListeners.title": "AT Nacos: Show Configuration Listeners",
   "atNacos.command.showServiceSubscribers.title": "AT Nacos: Show Service Subscribers",
+  "atNacos.command.editConfig.title": "AT Nacos: Edit Configuration",
+  "atNacos.command.publishConfig.title": "AT Nacos: Publish Configuration",
+  "atNacos.command.deleteConfig.title": "AT Nacos: Delete Configuration",
+  "atNacos.command.enableServiceInstance.title": "AT Nacos: Enable Instance",
+  "atNacos.command.disableServiceInstance.title": "AT Nacos: Disable Instance",
+  "atNacos.command.installMcpConfig.title": "AT Nacos: Install MCP Configuration",
   "atNacos.welcome.configs": "No Nacos instance is configured yet.\n[Add Instance](command:atNacos.addInstance)",
   "atNacos.welcome.services": "No Nacos instance is configured yet. Add one to browse its registered services.\n[Add Instance](command:atNacos.addInstance)"
 }

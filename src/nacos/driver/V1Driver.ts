@@ -7,12 +7,15 @@ import {
   type NacosConfigHistoryListQuery,
   type NacosConfigHistoryQuery,
   type NacosConfigListQuery,
+  type NacosConfigPublish,
   type NacosDriver,
+  type NacosInstanceHealthUpdate,
   type NacosInstanceQuery,
   type NacosServiceListQuery
 } from './NacosDriver';
 import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners } from './history';
 import {
+  fetchCatalogInstances,
   fetchCatalogServices,
   fetchClusterNodes,
   fetchInstances,
@@ -20,8 +23,10 @@ import {
   fetchServiceDetail,
   fetchServiceNames,
   fetchSubscribers,
+  listInstancesPreferringCatalog,
   listServicesPreferringCounts
 } from './naming';
+import { deleteConfigAt, publishConfigAt, updateInstanceHealthAt } from './writes';
 import type {
   NacosClusterNode,
   NacosConfigDetail,
@@ -91,9 +96,17 @@ const SUBSCRIBERS_PATH = '/v1/ns/service/subscribers';
  * compatibility switch off.
  */
 const CATALOG_SERVICES_PATH = '/v1/ns/catalog/services';
+const CATALOG_INSTANCES_PATH = '/v1/ns/catalog/instances';
 const SERVICE_LIST_PATH = '/v1/ns/service/list';
 
 const INSTANCE_LIST_PATH = '/v1/ns/instance/list';
+
+/**
+ * And the same path without `/list` is where an instance is written -- one
+ * controller, told apart by the method: PUT updates, POST registers, DELETE
+ * deregisters. Only the update is reachable from here.
+ */
+const INSTANCE_PATH = '/v1/ns/instance';
 
 /**
  * `/v1/core/cluster/nodes`, not `/v1/ns/operator/servers` -- the latter is in
@@ -146,7 +159,10 @@ export class V1Driver implements NacosDriver {
   }
 
   listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]> {
-    return fetchInstances(this.http, this.flavor, INSTANCE_LIST_PATH, query);
+    return listInstancesPreferringCatalog(
+      () => fetchCatalogInstances(this.http, CATALOG_INSTANCES_PATH, query),
+      () => fetchInstances(this.http, this.flavor, INSTANCE_LIST_PATH, query)
+    );
   }
 
   listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]> {
@@ -159,5 +175,17 @@ export class V1Driver implements NacosDriver {
 
   getServerMetrics(): Promise<NacosServerMetrics> {
     return fetchServerMetrics(this.http, METRICS_PATH);
+  }
+
+  publishConfig(request: NacosConfigPublish): Promise<void> {
+    return publishConfigAt(this.http, this.flavor, CONFIG_PATH, request);
+  }
+
+  deleteConfig(ref: NacosConfigRef): Promise<void> {
+    return deleteConfigAt(this.http, this.flavor, CONFIG_PATH, ref);
+  }
+
+  updateInstanceHealth(request: NacosInstanceHealthUpdate): Promise<void> {
+    return updateInstanceHealthAt(this.http, this.flavor, INSTANCE_PATH, request);
   }
 }

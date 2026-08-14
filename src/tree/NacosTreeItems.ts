@@ -334,10 +334,8 @@ export class ServiceInstanceTreeItem extends vscode.TreeItem {
       service.serviceName,
       address
     );
-    // Not `atNacos.instance`: that context value already belongs to the Nacos
-    // server node at the root, and a menu contributed for one would appear on
-    // the other.
-    this.contextValue = contextValueFor('serviceInstance', instance);
+    const stateKind = serviceInstance.enabled ? 'serviceInstance.enabled' : 'serviceInstance.disabled';
+    this.contextValue = contextValueFor(stateKind, instance);
     this.iconPath = instanceHealthIcon(serviceInstance);
     this.description = instanceDescription(serviceInstance);
     this.tooltip = instanceTooltip(serviceInstance);
@@ -360,18 +358,24 @@ function instanceHealthIcon(serviceInstance: NacosInstance): vscode.ThemeIcon {
 }
 
 /**
- * The two fields that decide where a request lands. `normalizeInstance`
- * leaves the cluster name empty when the entry omitted it, and a description
- * reading "cluster , weight 1" looks like a rendering bug rather than like a
- * missing field.
+ * The fields that decide where a request lands and whether it accepts traffic.
  */
 function instanceDescription(serviceInstance: NacosInstance): string {
-  return serviceInstance.clusterName
-    ? t('cluster {cluster}, weight {weight}', {
+  const parts: string[] = [];
+  if (!serviceInstance.enabled) {
+    parts.push(t('disabled'));
+  }
+  if (serviceInstance.clusterName) {
+    parts.push(
+      t('cluster {cluster}, weight {weight}', {
         cluster: serviceInstance.clusterName,
         weight: serviceInstance.weight
       })
-    : t('weight {weight}', { weight: serviceInstance.weight });
+    );
+  } else {
+    parts.push(t('weight {weight}', { weight: serviceInstance.weight }));
+  }
+  return parts.join(', ');
 }
 
 function instanceTooltip(serviceInstance: NacosInstance): string {

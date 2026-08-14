@@ -28,12 +28,13 @@ describe('openConfigDocument', () => {
     });
   });
 
-  it('shows the document it opened', async () => {
+  it('shows the document it opened in non-preview mode (pinned tab)', async () => {
     const shown = vi.spyOn(vscode.window, 'showTextDocument');
 
     await openConfigDocument('instance-1', summary());
 
     expect(shown).toHaveBeenCalledTimes(1);
+    expect(shown).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ preview: false }));
   });
 });
 

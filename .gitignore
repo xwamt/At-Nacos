@@ -12,6 +12,12 @@ coverage/
 *.vsix
 .package-work/
 
+# Temporary / probe scripts and local workspace files
+probe-*.mjs
+verify_*.mjs
+verify_*.ts
+*.code-workspace
+
 # Local workspace / agent state
 .worktrees/
 .superpowers/

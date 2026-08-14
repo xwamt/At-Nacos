@@ -180,7 +180,14 @@ tbody tr + tr td {
   background: color-mix(in srgb, var(--vscode-errorForeground) 18%, transparent);
 }
 
-.version-action {
+.version-actions-cell {
+  display: inline-flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.version-action,
+.version-rollback {
   color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
   background: var(--vscode-button-secondaryBackground, transparent);
   border: 1px solid var(--vscode-panel-border);
@@ -190,11 +197,13 @@ tbody tr + tr td {
   cursor: pointer;
 }
 
-.version-action:hover {
+.version-action:hover,
+.version-rollback:hover {
   background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
 }
 
-.version-action:focus {
+.version-action:focus,
+.version-rollback:focus {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 1px;
 }

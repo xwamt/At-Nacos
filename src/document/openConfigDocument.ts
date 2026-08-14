@@ -22,9 +22,13 @@ import { buildConfigUri } from './configUri';
  * rejection means that table is wrong and should be seen rather than shown as
  * an unhighlighted document.
  */
-export async function openConfigDocument(instanceId: string, config: NacosConfigSummary): Promise<vscode.TextDocument> {
+export async function openConfigDocument(
+  instanceId: string,
+  config: NacosConfigSummary,
+  options?: vscode.TextDocumentShowOptions
+): Promise<vscode.TextDocument> {
   const opened = await vscode.workspace.openTextDocument(buildConfigUri(instanceId, config));
   const document = await vscode.languages.setTextDocumentLanguage(opened, configLanguageId(config));
-  await vscode.window.showTextDocument(document);
+  await vscode.window.showTextDocument(document, { preview: false, ...options });
   return document;
 }

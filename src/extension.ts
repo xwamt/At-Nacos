@@ -1,14 +1,29 @@
 import * as vscode from 'vscode';
+import { detectHostApp } from '@at-series/mcp-hub';
+import { NacosAgentToolService } from './agent/NacosAgentToolService';
+import { BridgeServer } from './mcp/BridgeServer';
+import { syncPackagedHub } from './mcp/hubSync';
+import {
+  ensureAtSeriesConfigForCurrentIde,
+  uninstallAtSeriesConfigForCurrentIde
+} from './mcp/McpConfigInstaller';
 import { NacosInstanceConfigManager } from './config/NacosInstanceConfigManager';
 import type { NacosInstanceConfig } from './config/schema';
 import { NACOS_CONFIG_SCHEME } from './document/configUri';
+import { NACOS_DRAFT_SCHEME, parseDraftUri } from './document/draftUri';
 import {
   compareConfigAcrossEnvironments,
   diffWithPreviousVersion,
   openConfigVersionDiff
 } from './document/diffConfig';
 import { NacosConfigDocumentProvider } from './document/NacosConfigDocumentProvider';
+import { NacosDraftFileSystemProvider } from './document/NacosDraftFileSystemProvider';
 import { openConfigDocument } from './document/openConfigDocument';
+import { openDraftDocument } from './document/openDraftDocument';
+import { deleteConfig } from './write/deleteConfig';
+import { publishConfig } from './write/publishConfig';
+import { rollbackConfig } from './write/rollbackConfig';
+import { toggleServiceInstanceEnabled } from './write/updateInstanceHealth';
 import { t } from './i18n/t';
 import { NacosCapabilityResolver } from './nacos/NacosCapabilityResolver';
 import { NacosCertTrustStore } from './nacos/NacosCertTrustStore';
@@ -29,6 +44,7 @@ import {
   type ConfigTreeItem,
   type NacosTreeItem,
   type NamespaceTreeItem,
+  type ServiceInstanceTreeItem,
   type ServiceTreeItem
 } from './tree/NacosTreeItems';
 import { ServiceTreeProvider } from './tree/ServiceTreeProvider';
@@ -173,6 +189,12 @@ export function activate(context: vscode.ExtensionContext): void {
     configDocumentProvider
   );
 
+  const draftFileSystemProvider = new NacosDraftFileSystemProvider();
+  const draftFileSystemRegistration = vscode.workspace.registerFileSystemProvider(
+    NACOS_DRAFT_SCHEME,
+    draftFileSystemProvider
+  );
+
   const openInstanceForm: OpenInstanceForm = (existing) =>
     NacosInstanceFormPanel.open(context, configManager, refreshTreeViews, existing, {
       // The form's default probe constructs its own client with neither a
@@ -185,6 +207,51 @@ export function activate(context: vscode.ExtensionContext): void {
           certVerifier: createInteractiveCertVerifier(certTrustStore),
           log
         })
+    });
+
+  const hostEnv = {
+    appName: vscode.env.appName,
+    appRoot: vscode.env.appRoot,
+    uriScheme: vscode.env.uriScheme,
+    extensionPath: context.extensionUri.fsPath
+  };
+  const hostApp = detectHostApp(hostEnv);
+  const currentWorkspaceFolder = () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  const hubReady = syncPackagedHub(context)
+    .then((result) => {
+      log.info(`hub-sync: ok (updated=${result.updated}, active=${result.activeVersion})`);
+      return result;
+    })
+    .catch((error) => {
+      log.error(`hub-sync: failed: ${formatError(error)}`);
+    });
+
+  const nacosAgentToolService = new NacosAgentToolService({
+    configManager,
+    certTrustStore,
+    createClient: (instance, certVerifier) =>
+      createNacosClient(configManager, instance, certTrustStore, log),
+    log
+  });
+
+  const bridgeServer = new BridgeServer({
+    hostApp,
+    pluginVersion:
+      typeof context.extension?.packageJSON?.version === 'string'
+        ? context.extension.packageJSON.version
+        : undefined,
+    toolService: nacosAgentToolService,
+    log
+  });
+  void bridgeServer.start().catch((error) => {
+    log.error(`bridge: failed to start: ${formatError(error)}`);
+  });
+
+  void hubReady
+    .then(() => ensureAtSeriesConfigForCurrentIde({ ...hostEnv, workspaceFolder: currentWorkspaceFolder() }))
+    .catch((error) => {
+      log.error(`mcp-config: could not be updated: ${formatError(error)}`);
     });
 
   // Both instance commands report their own failures. They are user-initiated
@@ -382,7 +449,7 @@ export function activate(context: vscode.ExtensionContext): void {
     async (item: ConfigTreeItem) => {
       try {
         await ConfigHistoryPanel.open(context, {
-          instance: { id: item.instance.id, label: item.instance.label },
+          instance: { id: item.instance.id, label: item.instance.label, readOnly: item.instance.readOnly },
           // The summary the node holds, which is the ref M2 builds the
           // current version's address from -- so the right-hand side of a
           // diff is the same buffer as the tab a click on the node opens.
@@ -394,7 +461,29 @@ export function activate(context: vscode.ExtensionContext): void {
           openDiff: (entry) =>
             reportDiffFailure(item.config.dataId, 'showConfigHistory', () =>
               openConfigVersionDiff(item.instance.id, item.config, entry)
-            )
+            ),
+          rollback: async (entry) => {
+            try {
+              const instance = await configManager.getInstance(item.instance.id);
+              if (!instance) {
+                return;
+              }
+              await rollbackConfig({
+                instance,
+                ref: item.config,
+                entry,
+                connect: () => connectToInstance(item.instance.id, item.instance.label),
+                refreshDocument: (instId, ref) => configDocumentProvider.refresh(instId, ref),
+                onRollback: () => refreshTreeViews()
+              });
+            } catch (error) {
+              const message = formatError(error);
+              log.error(`rollbackConfig: ${message}`);
+              await vscode.window.showErrorMessage(
+                t('Could not roll back the configuration {dataId}: {message}', { dataId: item.config.dataId, message })
+              );
+            }
+          }
         });
       } catch (error) {
         const message = formatError(error);
@@ -478,10 +567,179 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
+  const editConfigCommand = vscode.commands.registerCommand(
+    'atNacos.editConfig',
+    async (item: ConfigTreeItem) => {
+      try {
+        const instance = await configManager.getInstance(item.instance.id);
+        if (!instance) {
+          return;
+        }
+        await openDraftDocument({
+          instance,
+          ref: item.config,
+          draftProvider: draftFileSystemProvider,
+          connect: () => connectToInstance(item.instance.id, item.instance.label)
+        });
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`editConfig: ${message}`);
+        await vscode.window.showErrorMessage(
+          t('Could not edit the configuration {dataId}: {message}', { dataId: item.config.dataId, message })
+        );
+      }
+    }
+  );
+
+  const publishConfigCommand = vscode.commands.registerCommand(
+    'atNacos.publishConfig',
+    async (item?: ConfigTreeItem) => {
+      try {
+        let instanceId: string | undefined = item?.instance.id;
+        let ref = item?.config;
+
+        if (!instanceId || !ref) {
+          const activeUri = vscode.window.activeTextEditor?.document.uri;
+          if (activeUri) {
+            const target = parseDraftUri(activeUri);
+            if (target) {
+              instanceId = target.instanceId;
+              ref = target.ref;
+            }
+          }
+        }
+
+        if (!instanceId || !ref) {
+          return;
+        }
+
+        const instance = await configManager.getInstance(instanceId);
+        if (!instance) {
+          return;
+        }
+
+        await publishConfig({
+          instance,
+          ref,
+          draftProvider: draftFileSystemProvider,
+          connect: () => connectToInstance(instance.id, instance.label),
+          refreshDocument: (instId, targetRef) => configDocumentProvider.refresh(instId, targetRef),
+          onPublished: () => refreshTreeViews()
+        });
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`publishConfig: ${message}`);
+        const dataId = item?.config.dataId ?? '';
+        await vscode.window.showErrorMessage(
+          t('Could not publish the configuration {dataId}: {message}', { dataId, message })
+        );
+      }
+    }
+  );
+
+  const deleteConfigCommand = vscode.commands.registerCommand(
+    'atNacos.deleteConfig',
+    async (item: ConfigTreeItem) => {
+      try {
+        const instance = await configManager.getInstance(item.instance.id);
+        if (!instance) {
+          return;
+        }
+        await deleteConfig({
+          instance,
+          ref: item.config,
+          connect: () => connectToInstance(item.instance.id, item.instance.label),
+          draftProvider: draftFileSystemProvider,
+          refreshDocument: (instId, targetRef) => configDocumentProvider.refresh(instId, targetRef),
+          onDeleted: () => refreshTreeViews()
+        });
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`deleteConfig: ${message}`);
+        await vscode.window.showErrorMessage(
+          t('Could not delete the configuration {dataId}: {message}', { dataId: item.config.dataId, message })
+        );
+      }
+    }
+  );
+
+  const enableServiceInstanceCommand = vscode.commands.registerCommand(
+    'atNacos.enableServiceInstance',
+    async (item: ServiceInstanceTreeItem) => {
+      try {
+        const instance = await configManager.getInstance(item.instance.id);
+        if (!instance) {
+          return;
+        }
+        await toggleServiceInstanceEnabled({
+          instance,
+          serviceRef: item.service,
+          serviceInstance: item.serviceInstance,
+          enabled: true,
+          connect: () => connectToInstance(item.instance.id, item.instance.label),
+          onUpdated: () => refreshTreeViews()
+        });
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`enableServiceInstance: ${message}`);
+        const address = `${item.serviceInstance.ip}:${item.serviceInstance.port}`;
+        await vscode.window.showErrorMessage(
+          t('Could not update instance state for {address}: {message}', { address, message })
+        );
+      }
+    }
+  );
+
+  const disableServiceInstanceCommand = vscode.commands.registerCommand(
+    'atNacos.disableServiceInstance',
+    async (item: ServiceInstanceTreeItem) => {
+      try {
+        const instance = await configManager.getInstance(item.instance.id);
+        if (!instance) {
+          return;
+        }
+        await toggleServiceInstanceEnabled({
+          instance,
+          serviceRef: item.service,
+          serviceInstance: item.serviceInstance,
+          enabled: false,
+          connect: () => connectToInstance(item.instance.id, item.instance.label),
+          onUpdated: () => refreshTreeViews()
+        });
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`disableServiceInstance: ${message}`);
+        const address = `${item.serviceInstance.ip}:${item.serviceInstance.port}`;
+        await vscode.window.showErrorMessage(
+          t('Could not update instance state for {address}: {message}', { address, message })
+        );
+      }
+    }
+  );
+
+  const installMcpConfigCommand = vscode.commands.registerCommand('atNacos.installMcpConfig', async () => {
+    try {
+      await syncPackagedHub(context);
+      const res = await ensureAtSeriesConfigForCurrentIde({
+        ...hostEnv,
+        workspaceFolder: currentWorkspaceFolder()
+      });
+      if (res?.updated) {
+        await vscode.window.showInformationMessage(t('AT Series MCP configuration installed successfully.'));
+      } else {
+        await vscode.window.showInformationMessage(t('AT Series MCP configuration is already up to date.'));
+      }
+    } catch (error) {
+      const message = formatError(error);
+      log.error(`installMcpConfig: ${message}`);
+      await vscode.window.showErrorMessage(t('Could not install MCP configuration: {message}', { message }));
+    }
+  });
+
   // VS Code awaits the promise `deactivate()` returns. It does NOT await the
   // `dispose()` of anything in `context.subscriptions` -- it calls each one and
   // moves on. Nothing in this milestone needs that guarantee: the channel, the
-  // two views, the document provider and the eight commands all dispose
+  // two views, the document provider and the commands all dispose
   // synchronously, so they are pushed below. The seam exists anyway, and is guarded against a second
   // call, because the shutdown steps that do need awaiting arrive later -- the
   // MCP bridge has to finish unpublishing its registry record or the Hub pays
@@ -499,6 +757,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // Not a `context.subscriptions` entry: a panel outlives that array, and
       // the message handler behind its Refresh button does not outlive this
       // host. Left open, it would keep a button that does nothing at all.
+      await bridgeServer.stop().catch(() => undefined);
       disposeOpenPanels();
       log.info('deactivate: AT Nacos shut down');
     }
@@ -517,6 +776,8 @@ export function activate(context: vscode.ExtensionContext): void {
     // open document is subscribed to.
     configDocumentProvider,
     configDocumentRegistration,
+    draftFileSystemProvider,
+    draftFileSystemRegistration,
     refreshConfigsCommand,
     refreshServicesCommand,
     filterConfigsCommand,
@@ -529,7 +790,13 @@ export function activate(context: vscode.ExtensionContext): void {
     diffWithPreviousCommand,
     compareAcrossEnvironmentsCommand,
     showConfigListenersCommand,
-    showServiceSubscribersCommand
+    showServiceSubscribersCommand,
+    editConfigCommand,
+    publishConfigCommand,
+    deleteConfigCommand,
+    enableServiceInstanceCommand,
+    disableServiceInstanceCommand,
+    installMcpConfigCommand
   );
 }
 
