@@ -84,10 +84,18 @@ describe('atNacos configuration document wiring', () => {
 
   it('opens the configuration a tree node names, at the address that addresses it', async () => {
     const opened = vi.spyOn(vscode.workspace, 'openTextDocument');
+    const withProgress = vi.spyOn(vscode.window, 'withProgress');
     activate(extensionContext());
 
     await run('atNacos.openConfig', 'instance-1', summary());
 
+    expect(withProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Loading configuration application-uat.yml...'
+      }),
+      expect.any(Function)
+    );
     expect(parseConfigUri(opened.mock.calls[0]?.[0] as vscode.Uri)).toEqual({
       instanceId: 'instance-1',
       ref: { namespaceId: 'uat', group: 'cl-intimfy', dataId: 'application-uat.yml' }

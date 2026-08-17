@@ -54,10 +54,12 @@ describe('WriteCommands integration', () => {
     fixtureWindow.__clearLogChannels();
     fixtureWorkspace.__clearContentProviders();
     fixtureWorkspace.__clearFileSystemProviders();
+    fixtureWorkspace.__clearDocumentListeners();
   });
 
   afterEach(async () => {
     await deactivate();
+    fixtureWorkspace.__clearDocumentListeners();
     vi.restoreAllMocks();
   });
 
@@ -157,4 +159,91 @@ describe('WriteCommands integration', () => {
       })
     );
   });
+
+  it('triggers publishConfig when a dirty draft document is saved', async () => {
+    const publishSpy = vi.spyOn(publishModule, 'publishConfig').mockResolvedValue(true);
+    vi.spyOn(NacosInstanceConfigManager.prototype, 'getInstance').mockResolvedValue(instance as never);
+
+    activate(extensionContext());
+
+    const draftProvider = fixtureWorkspace
+      .__getFileSystemProviders()
+      .find((p) => p.scheme === 'nacos-draft')?.provider as unknown as {
+        initDraft: (instId: string, ref: unknown, detail: unknown) => vscode.Uri;
+        writeFile: (uri: vscode.Uri, content: Uint8Array, options: unknown) => void;
+      };
+    expect(draftProvider).toBeDefined();
+
+    const uri = draftProvider.initDraft('inst-1', configSummary, {
+      ...configSummary,
+      content: 'original: true'
+    });
+
+    // Make the draft dirty
+    draftProvider.writeFile(uri, Buffer.from('modified: true'), { create: false, overwrite: true });
+
+    // Fire save document event
+    fixtureWorkspace.__fireDidSaveTextDocument({ uri } as vscode.TextDocument);
+
+    // Wait a tick for async handler
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(publishSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance: expect.objectContaining({ id: 'inst-1' }),
+        ref: expect.objectContaining({
+          dataId: 'app.yaml',
+          group: 'DEFAULT_GROUP',
+          namespaceId: 'dev'
+        })
+      })
+    );
+  });
+
+  it('does not trigger publishConfig when a clean draft document is saved', async () => {
+    const publishSpy = vi.spyOn(publishModule, 'publishConfig').mockResolvedValue(true);
+    vi.spyOn(NacosInstanceConfigManager.prototype, 'getInstance').mockResolvedValue(instance as never);
+
+    activate(extensionContext());
+
+    const draftProvider = fixtureWorkspace
+      .__getFileSystemProviders()
+      .find((p) => p.scheme === 'nacos-draft')?.provider as unknown as {
+        initDraft: (instId: string, ref: unknown, detail: unknown) => vscode.Uri;
+      };
+
+    const uri = draftProvider.initDraft('inst-1', configSummary, {
+      ...configSummary,
+      content: 'original: true'
+    });
+
+    // Fire save without modifying content
+    fixtureWorkspace.__fireDidSaveTextDocument({ uri } as vscode.TextDocument);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
+  it('cleans up draft entry when a clean draft document is closed', async () => {
+    activate(extensionContext());
+
+    const draftProvider = fixtureWorkspace
+      .__getFileSystemProviders()
+      .find((p) => p.scheme === 'nacos-draft')?.provider as unknown as {
+        initDraft: (instId: string, ref: unknown, detail: unknown) => vscode.Uri;
+        getDraft: (uri: vscode.Uri) => unknown;
+      };
+
+    const uri = draftProvider.initDraft('inst-1', configSummary, {
+      ...configSummary,
+      content: 'original: true'
+    });
+
+    expect(draftProvider.getDraft(uri)).toBeDefined();
+
+    fixtureWorkspace.__fireDidCloseTextDocument({ uri } as vscode.TextDocument);
+
+    expect(draftProvider.getDraft(uri)).toBeUndefined();
+  });
 });
+

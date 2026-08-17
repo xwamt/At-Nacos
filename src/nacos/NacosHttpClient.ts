@@ -13,6 +13,7 @@ export interface NacosHttpClientOptions {
   baseUrl: string;
   certVerifier?: NacosCertVerifier;
   timeoutMs?: number;
+  agent?: http.Agent | https.Agent;
   /**
    * Diagnostics only. The classified kind and status are what separate "this
    * version has no such endpoint" from "your token expired" from "Nacos is
@@ -20,6 +21,20 @@ export interface NacosHttpClientOptions {
    */
   log?: AtNacosLog;
 }
+
+const defaultHttpAgent = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30_000,
+  maxSockets: 30,
+  maxFreeSockets: 10
+});
+
+const defaultHttpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30_000,
+  maxSockets: 30,
+  maxFreeSockets: 10
+});
 
 export interface NacosRequestOptions {
   query?: Record<string, string | undefined>;
@@ -237,6 +252,7 @@ export class NacosHttpClient {
 
       const isHttps = target.protocol === 'https:';
       const client: typeof http | typeof https = isHttps ? https : http;
+      const agent = this.options.agent ?? (isHttps ? defaultHttpsAgent : defaultHttpAgent);
       const headers: Record<string, string> = { accept: defaultAccept, ...options.headers };
       if (payload) {
         headers['content-type'] = payload.contentType;
@@ -251,6 +267,7 @@ export class NacosHttpClient {
         {
           method,
           headers,
+          agent,
           timeout: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
           rejectUnauthorized: usesCertVerifier ? false : undefined
         },

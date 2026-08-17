@@ -208,5 +208,11 @@
   "Could not update instance state for {address}: {message}": "无法更新实例 {address} 的状态：{message}",
   "AT Series MCP configuration installed successfully.": "AT Series MCP 配置安装成功。",
   "AT Series MCP configuration is already up to date.": "AT Series MCP 配置已是最新状态。",
-  "Could not install MCP configuration: {message}": "无法安装 MCP 配置：{message}"
+  "Could not install MCP configuration: {message}": "无法安装 MCP 配置：{message}",
+  "Loading configuration {dataId}...": "正在加载配置 {dataId}…",
+  "Opening draft for {dataId}...": "正在打开 {dataId} 的编辑草稿…",
+  "Loading version diff for {dataId}...": "正在加载 {dataId} 的版本差异…",
+  "Comparing configuration {dataId}...": "正在比对配置 {dataId}…",
+  "Loading more configurations...": "正在加载更多配置…",
+  "Loading more services...": "正在加载更多服务…"
 }

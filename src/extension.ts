@@ -28,6 +28,7 @@ import { t } from './i18n/t';
 import { NacosCapabilityResolver } from './nacos/NacosCapabilityResolver';
 import { NacosCertTrustStore } from './nacos/NacosCertTrustStore';
 import { NacosClient, buildChainAdvice, buildDriverChain } from './nacos/NacosClient';
+import { NacosClientPool } from './nacos/NacosClientPool';
 import { NacosHttpClient } from './nacos/NacosHttpClient';
 import { createAuthStrategy } from './nacos/auth/createAuthStrategy';
 import { withAuth } from './nacos/auth/withAuth';
@@ -50,6 +51,7 @@ import {
 import { ServiceTreeProvider } from './tree/ServiceTreeProvider';
 import { formatError } from './utils/errors';
 import { createRedactedLog, type AtNacosLog } from './utils/logger';
+import { withLoadingProgress } from './utils/notifications';
 import { ClusterStatusPanel } from './webview/ClusterStatusPanel';
 import { ConfigHistoryPanel } from './webview/ConfigHistoryPanel';
 import { ConfigListenersPanel } from './webview/ConfigListenersPanel';
@@ -161,17 +163,20 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const configManager = new NacosInstanceConfigManager(context.globalState, context.secrets, log);
   const certTrustStore = new NacosCertTrustStore(context.globalState, log);
+  const clientPool = new NacosClientPool();
 
-  const configTreeProvider = new ConfigTreeProvider(configManager, (instance) =>
-    createNacosClient(configManager, instance, certTrustStore, log)
-  );
-  const serviceTreeProvider = new ServiceTreeProvider(configManager, (instance) =>
-    createNacosClient(configManager, instance, certTrustStore, log)
-  );
+  const getOrCreateClient = (instance: NacosInstanceConfig): Promise<NacosClient> =>
+    clientPool.getClient(instance, (inst) =>
+      createNacosClient(configManager, inst, certTrustStore, log)
+    );
+
+  const configTreeProvider = new ConfigTreeProvider(configManager, getOrCreateClient);
+  const serviceTreeProvider = new ServiceTreeProvider(configManager, getOrCreateClient);
   // Both trees, always: an instance is a root node in each of them, so a save
   // or a delete that redrew only one would leave the other showing a server
   // that no longer exists.
   const refreshTreeViews = (): void => {
+    clientPool.clear();
     configTreeProvider.refresh();
     serviceTreeProvider.refresh();
   };
@@ -181,9 +186,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // tab left open across a reload is asked for its content during startup.
   // With no provider registered by then the tab reads "cannot open ... no text
   // editor content provider" and stays that way until it is closed.
-  const configDocumentProvider = new NacosConfigDocumentProvider(configManager, (instance) =>
-    createNacosClient(configManager, instance, certTrustStore, log)
-  );
+  const configDocumentProvider = new NacosConfigDocumentProvider(configManager, getOrCreateClient);
   const configDocumentRegistration = vscode.workspace.registerTextDocumentContentProvider(
     NACOS_CONFIG_SCHEME,
     configDocumentProvider
@@ -230,8 +233,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const nacosAgentToolService = new NacosAgentToolService({
     configManager,
     certTrustStore,
-    createClient: (instance, certVerifier) =>
-      createNacosClient(configManager, instance, certTrustStore, log),
+    createClient: (instance) => getOrCreateClient(instance),
     log
   });
 
@@ -290,9 +292,11 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   const refreshConfigsCommand = vscode.commands.registerCommand('atNacos.refreshConfigs', () => {
+    clientPool.clear();
     configTreeProvider.refresh();
   });
   const refreshServicesCommand = vscode.commands.registerCommand('atNacos.refreshServices', () => {
+    clientPool.clear();
     serviceTreeProvider.refresh();
   });
 
@@ -322,7 +326,10 @@ export function activate(context: vscode.ExtensionContext): void {
     OPEN_CONFIG_COMMAND,
     async (instanceId: string, config: NacosConfigSummary) => {
       try {
-        await openConfigDocument(instanceId, config);
+        await withLoadingProgress(
+          t('Loading configuration {dataId}...', { dataId: config.dataId }),
+          () => openConfigDocument(instanceId, config)
+        );
       } catch (error) {
         // The read itself cannot land here: the content provider answers every
         // failure with readable text in the buffer, precisely so that a
@@ -342,7 +349,9 @@ export function activate(context: vscode.ExtensionContext): void {
     LOAD_MORE_CONFIGS_COMMAND,
     async (namespace: NamespaceTreeItem) => {
       try {
-        await configTreeProvider.loadMore(namespace);
+        await withLoadingProgress(t('Loading more configurations...'), () =>
+          configTreeProvider.loadMore(namespace)
+        );
       } catch (error) {
         // `loadMore` rejects instead of rendering an error node, deliberately:
         // an error node under the namespace would replace the pages the user
@@ -362,7 +371,9 @@ export function activate(context: vscode.ExtensionContext): void {
     LOAD_MORE_SERVICES_COMMAND,
     async (namespace: NamespaceTreeItem) => {
       try {
-        await serviceTreeProvider.loadMore(namespace);
+        await withLoadingProgress(t('Loading more services...'), () =>
+          serviceTreeProvider.loadMore(namespace)
+        );
       } catch (error) {
         const message = formatError(error);
         log.error(`loadMoreServices: ${message}`);
@@ -420,13 +431,16 @@ export function activate(context: vscode.ExtensionContext): void {
         })
       );
     }
-    return createNacosClient(configManager, instance, certTrustStore, log);
+    return getOrCreateClient(instance);
   };
 
   /** One wording for both ways an earlier version is reached: the history panel's row, and the command. */
   const reportDiffFailure = async (dataId: string, command: string, run: () => Promise<void>): Promise<void> => {
     try {
-      await run();
+      await withLoadingProgress(
+        t('Loading version diff for {dataId}...', { dataId }),
+        run
+      );
     } catch (error) {
       const message = formatError(error);
       log.error(`${command}: ${message}`);
@@ -517,7 +531,7 @@ export function activate(context: vscode.ExtensionContext): void {
           // The instance the pick answered with, rather than one read back by
           // id: `listInstances` produced it a moment ago, and there is no
           // panel here to outlive it.
-          connect: (instance) => createNacosClient(configManager, instance, certTrustStore, log)
+          connect: (instance) => getOrCreateClient(instance)
         });
       } catch (error) {
         const message = formatError(error);
@@ -575,12 +589,16 @@ export function activate(context: vscode.ExtensionContext): void {
         if (!instance) {
           return;
         }
-        await openDraftDocument({
-          instance,
-          ref: item.config,
-          draftProvider: draftFileSystemProvider,
-          connect: () => connectToInstance(item.instance.id, item.instance.label)
-        });
+        await withLoadingProgress(
+          t('Opening draft for {dataId}...', { dataId: item.config.dataId }),
+          () =>
+            openDraftDocument({
+              instance,
+              ref: item.config,
+              draftProvider: draftFileSystemProvider,
+              connect: () => connectToInstance(item.instance.id, item.instance.label)
+            })
+        );
       } catch (error) {
         const message = formatError(error);
         log.error(`editConfig: ${message}`);
@@ -636,6 +654,66 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
   );
+
+  const inFlightPublish = new Set<string>();
+
+  const saveDocumentListener = vscode.workspace.onDidSaveTextDocument(async (document) => {
+    if (document.uri.scheme !== NACOS_DRAFT_SCHEME) {
+      return;
+    }
+    const target = parseDraftUri(document.uri);
+    if (!target) {
+      return;
+    }
+    if (!draftFileSystemProvider.isDirty(target)) {
+      return;
+    }
+
+    const draftKey = document.uri.toString();
+    if (inFlightPublish.has(draftKey)) {
+      return;
+    }
+    inFlightPublish.add(draftKey);
+
+    try {
+      const instance = await configManager.getInstance(target.instanceId);
+      if (!instance) {
+        return;
+      }
+      await publishConfig({
+        instance,
+        ref: target.ref,
+        draftProvider: draftFileSystemProvider,
+        connect: () => connectToInstance(instance.id, instance.label),
+        refreshDocument: (instId, targetRef) => configDocumentProvider.refresh(instId, targetRef),
+        onPublished: () => refreshTreeViews()
+      });
+    } catch (error) {
+      const message = formatError(error);
+      log.error(`saveDocumentPublish: ${message}`);
+      await vscode.window.showErrorMessage(
+        t('Could not publish the configuration {dataId}: {message}', {
+          dataId: target.ref.dataId,
+          message
+        })
+      );
+    } finally {
+      inFlightPublish.delete(draftKey);
+    }
+  });
+
+  const closeDocumentListener = vscode.workspace.onDidCloseTextDocument((document) => {
+    if (document.uri.scheme !== NACOS_DRAFT_SCHEME) {
+      return;
+    }
+    const target = parseDraftUri(document.uri);
+    if (!target) {
+      return;
+    }
+    if (!draftFileSystemProvider.isDirty(target)) {
+      draftFileSystemProvider.deleteDraft(target);
+    }
+  });
 
   const deleteConfigCommand = vscode.commands.registerCommand(
     'atNacos.deleteConfig',
@@ -796,7 +874,9 @@ export function activate(context: vscode.ExtensionContext): void {
     deleteConfigCommand,
     enableServiceInstanceCommand,
     disableServiceInstanceCommand,
-    installMcpConfigCommand
+    installMcpConfigCommand,
+    saveDocumentListener,
+    closeDocumentListener
   );
 }
 

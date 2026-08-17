@@ -80,7 +80,7 @@ npm run build
 # 打包 VSIX 插件
 npm run package
 ```
-打包成功后，将在根目录下生成 `at-nacos-0.1.0.vsix`。
+打包成功后，将在根目录下生成 `at-nacos-0.1.1.vsix`。
 
 ---
 
@@ -88,7 +88,7 @@ npm run package
 
 1. 打开 VS Code 或 Cursor。
 2. 进入扩展视图（Extensions），点击右上角 **`⋯` (更多操作) -> 从 VSIX 安装... (Install from VSIX...)**。
-3. 选择生成的 `at-nacos-0.1.0.vsix` 文件完成安装。
+3. 选择生成的 `at-nacos-0.1.1.vsix` 文件完成安装。
 4. 在左侧活动栏点击 **AT Nacos** 图标，点击 **「添加 Nacos 实例」** 即可开始使用。
 
 ---

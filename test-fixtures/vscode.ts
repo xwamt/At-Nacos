@@ -468,6 +468,10 @@ export const workspace = {
   onDidCloseTextDocument: didCloseTextDocument.event,
   __fireDidSaveTextDocument: (document: TextDocument) => didSaveTextDocument.fire(document),
   __fireDidCloseTextDocument: (document: TextDocument) => didCloseTextDocument.fire(document),
+  __clearDocumentListeners: (): void => {
+    didSaveTextDocument.dispose();
+    didCloseTextDocument.dispose();
+  },
   getConfiguration: () => ({
     get: <T>(_key: string, defaultValue: T): T => defaultValue
   })

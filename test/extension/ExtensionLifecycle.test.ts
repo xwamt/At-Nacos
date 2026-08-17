@@ -81,7 +81,7 @@ describe('atNacos extension lifecycle', () => {
 
     activate(context);
 
-    expect(context.subscriptions).toHaveLength(28);
+    expect(context.subscriptions).toHaveLength(30);
     for (const subscription of context.subscriptions) {
       expect(typeof subscription.dispose).toBe('function');
     }

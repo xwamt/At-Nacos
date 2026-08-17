@@ -5,6 +5,7 @@ import { NacosApiError } from '../nacos/NacosApiError';
 import type { NacosClient } from '../nacos/NacosClient';
 import type { NacosConfigHistoryEntry, NacosConfigRef, NacosNamespace } from '../nacos/driver/normalize';
 import { formatTimestamp } from '../utils/time';
+import { withLoadingProgress } from '../utils/notifications';
 import { buildConfigHistoryUri, buildConfigUri } from './configUri';
 
 /** Which server a configuration is on, and where on it. */
@@ -117,27 +118,32 @@ export async function compareConfigAcrossEnvironments(options: CompareAcrossEnvi
   }
 
   const targetRef = { ...options.source.ref, namespaceId: namespace.namespaceId };
-  if (!(await hasConfig(client, targetRef))) {
-    await vscode.window.showInformationMessage(
-      t('{instance} has no configuration {dataId} in group {group} under namespace {namespace}.', {
-        dataId: targetRef.dataId,
-        group: targetRef.group,
-        instance: target.label,
-        namespace: namespaceAddress(namespace.namespaceId)
-      })
-    );
-    return;
-  }
+  await withLoadingProgress(
+    t('Comparing configuration {dataId}...', { dataId: targetRef.dataId }),
+    async () => {
+      if (!(await hasConfig(client, targetRef))) {
+        await vscode.window.showInformationMessage(
+          t('{instance} has no configuration {dataId} in group {group} under namespace {namespace}.', {
+            dataId: targetRef.dataId,
+            group: targetRef.group,
+            instance: target.label,
+            namespace: namespaceAddress(namespace.namespaceId)
+          })
+        );
+        return;
+      }
 
-  await vscode.commands.executeCommand(
-    'vscode.diff',
-    buildConfigUri(options.source.instance.id, options.source.ref),
-    buildConfigUri(target.id, targetRef),
-    t('{dataId}: {source} compared with {target}', {
-      dataId: targetRef.dataId,
-      source: environmentAddress(options.source.instance.label, options.source.ref.namespaceId),
-      target: environmentAddress(target.label, namespace.namespaceId)
-    })
+      await vscode.commands.executeCommand(
+        'vscode.diff',
+        buildConfigUri(options.source.instance.id, options.source.ref),
+        buildConfigUri(target.id, targetRef),
+        t('{dataId}: {source} compared with {target}', {
+          dataId: targetRef.dataId,
+          source: environmentAddress(options.source.instance.label, options.source.ref.namespaceId),
+          target: environmentAddress(target.label, namespace.namespaceId)
+        })
+      );
+    }
   );
 }
 
