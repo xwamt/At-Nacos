@@ -330,7 +330,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@at-series/mcp-hub": "file:../at-series-mcp-hub/packages/mcp-hub",
+    "@at-series/mcp-hub": "^0.3.2",
     "zod": "^3.25.76"
   },
   "devDependencies": {
