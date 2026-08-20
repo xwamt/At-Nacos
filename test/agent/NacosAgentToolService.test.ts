@@ -341,6 +341,10 @@ describe('NacosAgentToolService', () => {
       pageNo: 1,
       pageSize: 100
     });
+    if (res.ok) {
+      const page = res.result as { items: Array<Record<string, unknown>> };
+      expect(page.items[0]).not.toHaveProperty('content');
+    }
   });
 
   it('nacos_get_config_history redacts unless raw is true', async () => {
@@ -356,6 +360,20 @@ describe('NacosAgentToolService', () => {
       const data = redacted.result as { content: string; isRedacted: boolean };
       expect(data.isRedacted).toBe(true);
       expect(data.content).not.toContain('super-secret-password');
+    }
+
+    const raw = await service.invoke('nacos_get_config_history', {
+      instanceId: 'inst-allowed',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml',
+      nid: '203',
+      raw: true
+    });
+    expect(raw.ok).toBe(true);
+    if (raw.ok) {
+      const data = raw.result as { content: string; isRedacted: boolean };
+      expect(data.isRedacted).toBe(false);
+      expect(data.content).toContain('super-secret-password');
     }
   });
 
@@ -385,6 +403,21 @@ describe('NacosAgentToolService', () => {
       group: 'DEFAULT_GROUP',
       dataId: 'db.yaml',
       aggregation: false
+    });
+  });
+
+  it('nacos_list_config_listeners defaults aggregation to true', async () => {
+    const { service, client } = createMockDeps();
+    await service.invoke('nacos_list_config_listeners', {
+      instanceId: 'inst-allowed',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml'
+    });
+    expect(client.listConfigListeners).toHaveBeenCalledWith({
+      namespaceId: '',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml',
+      aggregation: true
     });
   });
 
