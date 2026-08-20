@@ -288,12 +288,13 @@ function historyRecordId(value: unknown): string | undefined {
  * verbatim on a real 2.3.2 -- so reading the correct spelling alone would
  * find nothing on every server in existence. The corrected spelling is read
  * as well, because a typo in a field name is the kind of thing that
- * eventually gets fixed, and the cost of covering that is one alternative.
+ * eventually gets fixed. 3.x `ConfigListenerInfo` renamed the map to
+ * `listenersStatus`, which is the Maintainer SDK / Admin API shape.
  *
  * An empty map is the ordinary answer, not a failure: it is what a config
  * nobody is watching returns, and also -- measured -- what a dataId nobody
- * ever published returns. Only a response with neither spelling of the map at
- * all is a shape this cannot read.
+ * ever published returns. Only a response with none of these maps at all is
+ * a shape this cannot read.
  */
 export function normalizeConfigListeners(payload: unknown, endpoint: string): NacosConfigListener[] {
   const data = unwrapData<unknown>(payload);
@@ -322,8 +323,8 @@ export function parseGroupKey(groupKey: string): { dataId: string; group: string
 }
 
 /**
- * The configurations one client IP currently holds, keyed by GroupKey in the
- * same misspelled `lisentersGroupkeyStatus` map the forward listener query uses.
+ * The configurations one client IP currently holds. 1.x/2.x key them in
+ * `lisentersGroupkeyStatus`; 3.x `ConfigListenerInfo` uses `listenersStatus`.
  */
 export function normalizeListenedConfigs(payload: unknown, endpoint: string): NacosListenedConfig[] {
   const data = unwrapData<unknown>(payload);
@@ -344,7 +345,8 @@ function listenerStatusIn(data: unknown): Record<string, unknown> | undefined {
   if (!isRecord(data)) {
     return undefined;
   }
-  const status = data.lisentersGroupkeyStatus ?? data.listenersGroupkeyStatus;
+  const status =
+    data.lisentersGroupkeyStatus ?? data.listenersGroupkeyStatus ?? data.listenersStatus;
   return isRecord(status) ? status : undefined;
 }
 

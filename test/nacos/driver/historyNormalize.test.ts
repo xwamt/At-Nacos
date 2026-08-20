@@ -312,6 +312,15 @@ describe('normalizeConfigListeners', () => {
     ).toEqual([{ ip: '10.0.0.7', md5: 'md5' }]);
   });
 
+  it('reads 3.x ConfigListenerInfo listenersStatus', () => {
+    expect(
+      normalizeConfigListeners(
+        { code: 0, data: { queryType: 'config', listenersStatus: { '10.0.0.7': 'md5' } } },
+        '/v3/admin/cs/config/listener'
+      )
+    ).toEqual([{ ip: '10.0.0.7', md5: 'md5' }]);
+  });
+
   /** If a future Nacos ever fixes its own typo, the listeners must not vanish. */
   it('accepts the corrected spelling too', () => {
     expect(

@@ -735,6 +735,12 @@ describe('the console driver keeps M4 on the console origin', () => {
       path: '/v3/console/cs/config/listener'
     },
     {
+      name: 'the reverse listeners',
+      body: enveloped(LISTENER_STATUS),
+      run: (driver) => driver.listListenedConfigs({ namespaceId: NAMESPACE_ID, ip: '10.0.0.8' }),
+      path: '/v3/console/cs/config/listener/ip'
+    },
+    {
       name: 'the service detail',
       body: consoleCase.serviceDetailBody,
       run: (driver) => driver.getService(SERVICE_REF),

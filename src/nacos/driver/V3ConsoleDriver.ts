@@ -62,7 +62,12 @@ const CONFIG_HISTORY_DETAIL_PATH = '/v3/console/cs/history';
 
 /** The one that only asks for READ where the admin API's asks for WRITE (§9). */
 const CONFIG_LISTENER_PATH = '/v3/console/cs/config/listener';
-const LISTENED_CONFIGS_PATH = '/v3/console/cs/listener';
+/**
+ * Reverse lookup lives on the same console config controller, not a
+ * prefix-swapped `/v3/console/cs/listener`. Official Console API: GET
+ * `/v3/console/cs/config/listener/ip`.
+ */
+const LISTENED_CONFIGS_PATH = '/v3/console/cs/config/listener/ip';
 
 const SERVICE_LIST_PATH = '/v3/console/ns/service/list';
 const SERVICE_DETAIL_PATH = '/v3/console/ns/service';

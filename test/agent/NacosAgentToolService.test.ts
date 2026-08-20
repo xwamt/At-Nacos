@@ -444,6 +444,20 @@ describe('NacosAgentToolService', () => {
     });
   });
 
+  it('nacos_list_listened_configs forwards aggregation false', async () => {
+    const { service, client } = createMockDeps();
+    await service.invoke('nacos_list_listened_configs', {
+      instanceId: 'inst-allowed',
+      ip: '10.0.0.8',
+      aggregation: false
+    });
+    expect(client.listListenedConfigs).toHaveBeenCalledWith({
+      namespaceId: '',
+      ip: '10.0.0.8',
+      aggregation: false
+    });
+  });
+
   it('nacos_list_service_subscribers defaults group and aggregation', async () => {
     const { service, client } = createMockDeps();
     await service.invoke('nacos_list_service_subscribers', {
