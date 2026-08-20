@@ -22,6 +22,7 @@ import {
   type NacosConfigHistoryEntry,
   type NacosConfigListener,
   type NacosConfigRef,
+  type NacosListenedConfig,
   type NacosConfigSummary,
   type NacosInstance,
   type NacosNamespace,
@@ -133,6 +134,12 @@ export interface NacosListenerQuery extends NacosConfigRef {
   aggregation?: boolean;
 }
 
+export interface NacosListenedConfigQuery {
+  namespaceId: string;
+  ip: string;
+  aggregation?: boolean;
+}
+
 export interface NacosSubscriberQuery extends NacosServiceRef {
   aggregation?: boolean;
 }
@@ -219,6 +226,7 @@ export interface NacosDriver {
    */
   getConfigHistory(query: NacosConfigHistoryQuery): Promise<NacosConfigDetail>;
   listConfigListeners(query: NacosListenerQuery): Promise<NacosConfigListener[]>;
+  listListenedConfigs(query: NacosListenedConfigQuery): Promise<NacosListenedConfig[]>;
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>>;
   getService(ref: NacosServiceRef): Promise<NacosServiceDetail>;
   /**

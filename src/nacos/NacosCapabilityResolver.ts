@@ -21,6 +21,11 @@ export type NacosCapability =
   | 'config-history'
   | 'config-history-detail'
   | 'config-listeners'
+  /**
+   * Reverse of config-listeners: the configs one client IP holds. A 404 on
+   * one must not evict the winner the other had already found.
+   */
+  | 'listened-configs'
   | 'services'
   | 'service-detail'
   | 'instances'

@@ -11,11 +11,12 @@ import {
   type NacosDriver,
   type NacosInstanceHealthUpdate,
   type NacosInstanceQuery,
+  type NacosListenedConfigQuery,
   type NacosListenerQuery,
   type NacosServiceListQuery,
   type NacosSubscriberQuery
 } from './NacosDriver';
-import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners } from './history';
+import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners, fetchListenedConfigs } from './history';
 import {
   fetchClusterNodes,
   fetchInstances,
@@ -30,6 +31,7 @@ import type {
   NacosConfigDetail,
   NacosConfigHistoryEntry,
   NacosConfigListener,
+  NacosListenedConfig,
   NacosConfigRef,
   NacosConfigSummary,
   NacosInstance,
@@ -60,6 +62,7 @@ const CONFIG_HISTORY_DETAIL_PATH = '/v3/console/cs/history';
 
 /** The one that only asks for READ where the admin API's asks for WRITE (§9). */
 const CONFIG_LISTENER_PATH = '/v3/console/cs/config/listener';
+const LISTENED_CONFIGS_PATH = '/v3/console/cs/listener';
 
 const SERVICE_LIST_PATH = '/v3/console/ns/service/list';
 const SERVICE_DETAIL_PATH = '/v3/console/ns/service';
@@ -123,6 +126,10 @@ export class V3ConsoleDriver implements NacosDriver {
 
   listConfigListeners(query: NacosListenerQuery): Promise<NacosConfigListener[]> {
     return fetchConfigListeners(this.http, this.flavor, CONFIG_LISTENER_PATH, query, this.onConsoleOrigin());
+  }
+
+  listListenedConfigs(query: NacosListenedConfigQuery): Promise<NacosListenedConfig[]> {
+    return fetchListenedConfigs(this.http, this.flavor, LISTENED_CONFIGS_PATH, query, this.onConsoleOrigin());
   }
 
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {

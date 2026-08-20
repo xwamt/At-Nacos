@@ -4,6 +4,7 @@ import {
   type NacosApiFlavor,
   type NacosConfigHistoryListQuery,
   type NacosConfigHistoryQuery,
+  type NacosListenedConfigQuery,
   type NacosListenerQuery
 } from './NacosDriver';
 import {
@@ -11,11 +12,13 @@ import {
   namespaceParamName,
   normalizeConfigHistoryEntry,
   normalizeConfigListeners,
+  normalizeListenedConfigs,
   normalizePaged,
   type NacosConfigDetail,
   type NacosConfigHistoryEntry,
   type NacosConfigListener,
   type NacosConfigRef,
+  type NacosListenedConfig,
   type Paged
 } from './normalize';
 
@@ -114,6 +117,28 @@ export async function fetchConfigListeners(
     }
   });
   return normalizeConfigListeners(payload, path);
+}
+
+/** The configurations one client IP currently holds. */
+export async function fetchListenedConfigs(
+  http: Pick<NacosHttpClient, 'requestJson'>,
+  endpointFlavor: NacosApiFlavor,
+  path: string,
+  query: NacosListenedConfigQuery,
+  options?: NacosRequestOptions
+): Promise<NacosListenedConfig[]> {
+  const payload = await http.requestJson<unknown>('GET', path, {
+    ...options,
+    query: {
+      ...options?.query,
+      ip: query.ip,
+      [namespaceParamName(endpointFlavor, 'config')]: query.namespaceId,
+      ...(endpointFlavor === 'v3-admin' || endpointFlavor === 'v3-console'
+        ? { aggregation: query.aggregation === false ? 'false' : 'true' }
+        : {})
+    }
+  });
+  return normalizeListenedConfigs(payload, path);
 }
 
 /**

@@ -13,7 +13,8 @@ import {
   nacosListNamespacesSchema,
   nacosListServiceInstancesSchema,
   nacosListServiceSubscribersSchema,
-  nacosListServicesSchema
+  nacosListServicesSchema,
+  nacosListListenedConfigsSchema
 } from '../../src/mcp/bridgeSchemas';
 
 describe('bridgeSchemas', () => {
@@ -205,6 +206,27 @@ describe('bridgeSchemas', () => {
     ).toBe(false);
   });
 
+  it('nacosListListenedConfigsSchema requires instanceId and ip', () => {
+    expect(
+      nacosListListenedConfigsSchema.safeParse({
+        instanceId: 'inst-1',
+        ip: '10.0.0.8'
+      }).success
+    ).toBe(true);
+    expect(
+      nacosListListenedConfigsSchema.safeParse({
+        instanceId: 'inst-1'
+      }).success
+    ).toBe(false);
+    expect(
+      nacosListListenedConfigsSchema.safeParse({
+        instanceId: 'inst-1',
+        ip: '10.0.0.8',
+        aggregation: false
+      }).success
+    ).toBe(true);
+  });
+
   it('contains schema for all catalog tools in BRIDGE_SCHEMAS_BY_TOOL_NAME', () => {
     expect(Object.keys(BRIDGE_SCHEMAS_BY_TOOL_NAME).sort()).toEqual([
       'nacos_get_cluster_nodes',
@@ -215,6 +237,7 @@ describe('bridgeSchemas', () => {
       'nacos_list_config_listeners',
       'nacos_list_configs',
       'nacos_list_instances',
+      'nacos_list_listened_configs',
       'nacos_list_namespaces',
       'nacos_list_service_instances',
       'nacos_list_service_subscribers',

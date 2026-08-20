@@ -339,6 +339,21 @@ describe('NacosClient', () => {
     expect(resolver.snapshot()).toEqual({ 'config-listeners': 'v2' });
   });
 
+  it('reads the listened configs through the resolver, under its own capability', async () => {
+    const http = recordingHttp(() => ({
+      collectStatus: 200,
+      lisentersGroupkeyStatus: { 'db.yaml+DEFAULT_GROUP+dev': 'abc' }
+    }));
+    const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
+
+    const configs = await new NacosClient(resolver, serverState(2)).listListenedConfigs({
+      namespaceId: 'dev',
+      ip: '10.0.0.8'
+    });
+    expect(configs).toEqual([{ dataId: 'db.yaml', group: 'DEFAULT_GROUP', md5: 'abc' }]);
+    expect(resolver.snapshot()).toEqual({ 'listened-configs': 'v2' });
+  });
+
   it('reads a service detail through the resolver, under its own capability', async () => {
     const http = recordingHttp(() => ({ code: 0, data: { namespace: 'uat', serviceName: 's', groupName: 'g' } }));
     const resolver = new NacosCapabilityResolver(buildDriverChain(2, http.client, undefined));
@@ -542,6 +557,7 @@ function stubDriver(flavor: NacosApiFlavor): NacosDriver {
     listConfigHistory: unused,
     getConfigHistory: unused,
     listConfigListeners: unused,
+    listListenedConfigs: unused,
     getService: unused,
     listSubscribers: unused,
     publishConfig: unused,

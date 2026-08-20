@@ -121,6 +121,15 @@ export const nacosListServiceSubscribersSchema = z
   })
   .strict();
 
+export const nacosListListenedConfigsSchema = z
+  .object({
+    instanceId: z.string().min(1),
+    namespaceId: z.string().optional(),
+    ip: z.string().min(1),
+    aggregation: z.boolean().optional()
+  })
+  .strict();
+
 export type NacosListInstancesInput = z.infer<typeof nacosListInstancesSchema>;
 export type NacosListNamespacesInput = z.infer<typeof nacosListNamespacesSchema>;
 export type NacosListConfigsInput = z.infer<typeof nacosListConfigsSchema>;
@@ -133,6 +142,7 @@ export type NacosListConfigHistoryInput = z.infer<typeof nacosListConfigHistoryS
 export type NacosGetConfigHistoryInput = z.infer<typeof nacosGetConfigHistorySchema>;
 export type NacosListConfigListenersInput = z.infer<typeof nacosListConfigListenersSchema>;
 export type NacosListServiceSubscribersInput = z.infer<typeof nacosListServiceSubscribersSchema>;
+export type NacosListListenedConfigsInput = z.infer<typeof nacosListListenedConfigsSchema>;
 
 export const NACOS_LIST_INSTANCES_INPUT_SCHEMA: JsonSchemaObject = {
   type: 'object',
@@ -462,6 +472,30 @@ export const NACOS_LIST_SERVICE_SUBSCRIBERS_INPUT_SCHEMA: JsonSchemaObject = {
   additionalProperties: false
 };
 
+export const NACOS_LIST_LISTENED_CONFIGS_INPUT_SCHEMA: JsonSchemaObject = {
+  type: 'object',
+  properties: {
+    instanceId: {
+      type: 'string',
+      description: 'Nacos instance ID.'
+    },
+    namespaceId: {
+      type: 'string',
+      description: 'Optional namespace ID (defaults to public namespace).'
+    },
+    ip: {
+      type: 'string',
+      description: 'Client IP whose listened configurations should be listed.'
+    },
+    aggregation: {
+      type: 'boolean',
+      description: 'Whether to aggregate listened configs across the Nacos cluster (default true).'
+    }
+  },
+  required: ['instanceId', 'ip'],
+  additionalProperties: false
+};
+
 export const BRIDGE_SCHEMAS_BY_TOOL_NAME: Record<string, z.ZodTypeAny> = {
   nacos_list_instances: nacosListInstancesSchema,
   nacos_list_namespaces: nacosListNamespacesSchema,
@@ -474,6 +508,7 @@ export const BRIDGE_SCHEMAS_BY_TOOL_NAME: Record<string, z.ZodTypeAny> = {
   nacos_list_config_history: nacosListConfigHistorySchema,
   nacos_get_config_history: nacosGetConfigHistorySchema,
   nacos_list_config_listeners: nacosListConfigListenersSchema,
+  nacos_list_listened_configs: nacosListListenedConfigsSchema,
   nacos_list_service_subscribers: nacosListServiceSubscribersSchema
 };
 

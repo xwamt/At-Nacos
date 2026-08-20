@@ -114,7 +114,7 @@ describe('BridgeServer', () => {
     const res = await makeRequest('/tools', { token: server.getToken() });
     expect(res.status).toBe(200);
     const body = res.body as { tools: { name: string }[] };
-    expect(body.tools).toHaveLength(12);
+    expect(body.tools).toHaveLength(13);
   });
 
   it('handles POST /invoke for registered tools', async () => {

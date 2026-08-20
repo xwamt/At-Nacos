@@ -19,6 +19,7 @@ function driver(flavor: NacosApiFlavor, behavior: () => Promise<unknown>): Nacos
     listConfigHistory: behavior as never,
     getConfigHistory: behavior as never,
     listConfigListeners: behavior as never,
+    listListenedConfigs: behavior as never,
     listServices: behavior as never,
     getService: behavior as never,
     listInstances: behavior as never,

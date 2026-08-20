@@ -11,11 +11,12 @@ import {
   type NacosDriver,
   type NacosInstanceHealthUpdate,
   type NacosInstanceQuery,
+  type NacosListenedConfigQuery,
   type NacosListenerQuery,
   type NacosServiceListQuery,
   type NacosSubscriberQuery
 } from './NacosDriver';
-import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners } from './history';
+import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners, fetchListenedConfigs } from './history';
 import {
   fetchCatalogInstances,
   fetchCatalogServices,
@@ -34,6 +35,7 @@ import type {
   NacosConfigDetail,
   NacosConfigHistoryEntry,
   NacosConfigListener,
+  NacosListenedConfig,
   NacosConfigRef,
   NacosConfigSummary,
   NacosInstance,
@@ -96,6 +98,7 @@ const SEARCH_ACCURATE = { query: { search: 'accurate' } };
 
 /** Measured on a real 2.3.2: `/v2/cs/config/listener` does not exist -- HTTP 404, Spring's own error page. */
 const CONFIG_LISTENER_PATH = '/v1/cs/configs/listener';
+const LISTENED_CONFIGS_PATH = '/v1/cs/listener';
 
 /** v2 does have its own service detail, and it is the shape §6.7 describes: `clusterMap` and `serviceName`. */
 const SERVICE_DETAIL_PATH = '/v2/ns/service';
@@ -161,6 +164,10 @@ export class V2Driver implements NacosDriver {
 
   listConfigListeners(query: NacosListenerQuery): Promise<NacosConfigListener[]> {
     return fetchConfigListeners(this.http, CONFIG_ENDPOINT_FLAVOR, CONFIG_LISTENER_PATH, query);
+  }
+
+  listListenedConfigs(query: NacosListenedConfigQuery): Promise<NacosListenedConfig[]> {
+    return fetchListenedConfigs(this.http, CONFIG_ENDPOINT_FLAVOR, LISTENED_CONFIGS_PATH, query);
   }
 
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {

@@ -16,6 +16,7 @@ import {
   nacosListConfigListenersSchema,
   nacosListConfigsSchema,
   nacosListInstancesSchema,
+  nacosListListenedConfigsSchema,
   nacosListNamespacesSchema,
   nacosListServiceInstancesSchema,
   nacosListServiceSubscribersSchema,
@@ -28,6 +29,7 @@ import {
   type NacosListConfigListenersInput,
   type NacosListConfigsInput,
   type NacosListInstancesInput,
+  type NacosListListenedConfigsInput,
   type NacosListNamespacesInput,
   type NacosListServiceInstancesInput,
   type NacosListServiceSubscribersInput,
@@ -49,6 +51,7 @@ export type NacosApiClientLike = Pick<
   | 'listConfigHistory'
   | 'getConfigHistory'
   | 'listConfigListeners'
+  | 'listListenedConfigs'
   | 'listSubscribers'
 >;
 
@@ -119,6 +122,10 @@ export class NacosAgentToolService {
       case 'nacos_list_config_listeners':
         return this.handleParsed(nacosListConfigListenersSchema, args, (input) =>
           this.listConfigListeners(input)
+        );
+      case 'nacos_list_listened_configs':
+        return this.handleParsed(nacosListListenedConfigsSchema, args, (input) =>
+          this.listListenedConfigs(input)
         );
       case 'nacos_list_service_subscribers':
         return this.handleParsed(nacosListServiceSubscribersSchema, args, (input) =>
@@ -418,6 +425,19 @@ export class NacosAgentToolService {
       aggregation: input.aggregation ?? true
     });
     return { ok: true, result: { listeners } };
+  }
+
+  private async listListenedConfigs(input: NacosListListenedConfigsInput): Promise<ToolInvokeResult> {
+    const resolved = await this.resolveInstance(input.instanceId);
+    if (!resolved.ok) {
+      return resolved.failure;
+    }
+    const configs = await resolved.client.listListenedConfigs({
+      namespaceId: input.namespaceId ?? '',
+      ip: input.ip,
+      aggregation: input.aggregation ?? true
+    });
+    return { ok: true, result: { configs } };
   }
 
   private async listServiceSubscribers(input: NacosListServiceSubscribersInput): Promise<ToolInvokeResult> {

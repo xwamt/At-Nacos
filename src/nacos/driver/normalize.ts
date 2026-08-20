@@ -165,6 +165,13 @@ export interface NacosConfigListener {
   md5: string;
 }
 
+/** One configuration a given client IP is currently listening to. */
+export interface NacosListenedConfig {
+  group: string;
+  dataId: string;
+  md5: string;
+}
+
 /**
  * One entry of a config listing, with the content taken out.
  *
@@ -298,6 +305,39 @@ export function normalizeConfigListeners(payload: unknown, endpoint: string): Na
     );
   }
   return Object.entries(stringMap(status)).map(([ip, md5]) => ({ ip, md5 }));
+}
+
+/**
+ * Nacos GroupKey is `dataId+group` or `dataId+group+tenant`. The first two
+ * segments are identity; anything after the second plus is tenant and is
+ * dropped. `requestJson` already decoded the JSON string, so this does not
+ * URL-decode again.
+ */
+export function parseGroupKey(groupKey: string): { dataId: string; group: string } {
+  const parts = groupKey.split('+');
+  if (parts.length < 2) {
+    return { dataId: groupKey, group: '' };
+  }
+  return { dataId: parts[0] ?? groupKey, group: parts[1] ?? '' };
+}
+
+/**
+ * The configurations one client IP currently holds, keyed by GroupKey in the
+ * same misspelled `lisentersGroupkeyStatus` map the forward listener query uses.
+ */
+export function normalizeListenedConfigs(payload: unknown, endpoint: string): NacosListenedConfig[] {
+  const data = unwrapData<unknown>(payload);
+  const status = listenerStatusIn(data);
+  if (status === undefined) {
+    throw new NacosApiError(
+      'invalid-response',
+      `Nacos returned no listener status for ${endpoint}: the response carried ${describePayload(data)}.`
+    );
+  }
+  return Object.entries(stringMap(status)).map(([groupKey, md5]) => {
+    const { dataId, group } = parseGroupKey(groupKey);
+    return { dataId, group, md5 };
+  });
 }
 
 function listenerStatusIn(data: unknown): Record<string, unknown> | undefined {

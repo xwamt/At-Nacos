@@ -11,11 +11,12 @@ import {
   type NacosDriver,
   type NacosInstanceHealthUpdate,
   type NacosInstanceQuery,
+  type NacosListenedConfigQuery,
   type NacosListenerQuery,
   type NacosServiceListQuery,
   type NacosSubscriberQuery
 } from './NacosDriver';
-import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners } from './history';
+import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners, fetchListenedConfigs } from './history';
 import {
   fetchCatalogInstances,
   fetchCatalogServices,
@@ -34,6 +35,7 @@ import type {
   NacosConfigDetail,
   NacosConfigHistoryEntry,
   NacosConfigListener,
+  NacosListenedConfig,
   NacosConfigRef,
   NacosConfigSummary,
   NacosInstance,
@@ -83,6 +85,7 @@ const SEARCH_ACCURATE = { query: { search: 'accurate' } };
  * than the clients holding one config).
  */
 const CONFIG_LISTENER_PATH = '/v1/cs/configs/listener';
+const LISTENED_CONFIGS_PATH = '/v1/cs/listener';
 
 const SERVICE_DETAIL_PATH = '/v1/ns/service';
 const SUBSCRIBERS_PATH = '/v1/ns/service/subscribers';
@@ -147,6 +150,10 @@ export class V1Driver implements NacosDriver {
 
   listConfigListeners(query: NacosListenerQuery): Promise<NacosConfigListener[]> {
     return fetchConfigListeners(this.http, this.flavor, CONFIG_LISTENER_PATH, query);
+  }
+
+  listListenedConfigs(query: NacosListenedConfigQuery): Promise<NacosListenedConfig[]> {
+    return fetchListenedConfigs(this.http, this.flavor, LISTENED_CONFIGS_PATH, query);
   }
 
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {

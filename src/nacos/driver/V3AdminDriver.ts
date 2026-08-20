@@ -11,11 +11,12 @@ import {
   type NacosDriver,
   type NacosInstanceHealthUpdate,
   type NacosInstanceQuery,
+  type NacosListenedConfigQuery,
   type NacosListenerQuery,
   type NacosServiceListQuery,
   type NacosSubscriberQuery
 } from './NacosDriver';
-import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners } from './history';
+import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners, fetchListenedConfigs } from './history';
 import {
   fetchClusterNodes,
   fetchInstances,
@@ -30,6 +31,7 @@ import type {
   NacosConfigDetail,
   NacosConfigHistoryEntry,
   NacosConfigListener,
+  NacosListenedConfig,
   NacosConfigRef,
   NacosConfigSummary,
   NacosInstance,
@@ -75,6 +77,7 @@ const CONFIG_HISTORY_DETAIL_PATH = '/v3/admin/cs/history';
  * this one capability.
  */
 const CONFIG_LISTENER_PATH = '/v3/admin/cs/config/listener';
+const LISTENED_CONFIGS_PATH = '/v3/admin/cs/listener';
 
 const SERVICE_DETAIL_PATH = '/v3/admin/ns/service';
 const SUBSCRIBERS_PATH = '/v3/admin/ns/service/subscribers';
@@ -131,6 +134,10 @@ export class V3AdminDriver implements NacosDriver {
 
   listConfigListeners(query: NacosListenerQuery): Promise<NacosConfigListener[]> {
     return fetchConfigListeners(this.http, this.flavor, CONFIG_LISTENER_PATH, query);
+  }
+
+  listListenedConfigs(query: NacosListenedConfigQuery): Promise<NacosListenedConfig[]> {
+    return fetchListenedConfigs(this.http, this.flavor, LISTENED_CONFIGS_PATH, query);
   }
 
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {

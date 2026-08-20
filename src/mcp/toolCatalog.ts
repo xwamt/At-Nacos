@@ -8,6 +8,7 @@ import {
   NACOS_LIST_CONFIG_LISTENERS_INPUT_SCHEMA,
   NACOS_LIST_CONFIGS_INPUT_SCHEMA,
   NACOS_LIST_INSTANCES_INPUT_SCHEMA,
+  NACOS_LIST_LISTENED_CONFIGS_INPUT_SCHEMA,
   NACOS_LIST_NAMESPACES_INPUT_SCHEMA,
   NACOS_LIST_SERVICE_INSTANCES_INPUT_SCHEMA,
   NACOS_LIST_SERVICE_SUBSCRIBERS_INPUT_SCHEMA,
@@ -120,6 +121,16 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
       'Nacos 3.x admin config-listener reads need WRITE, so the existing console fallback still applies.',
     risk: 'read',
     inputSchema: NACOS_LIST_CONFIG_LISTENERS_INPUT_SCHEMA
+  },
+  {
+    name: 'nacos_list_listened_configs',
+    title: 'List configs a client IP is listening to',
+    description:
+      'Reverse lookup of configs one client IP is listening to. ' +
+      'aggregation defaults to true (whether to aggregate across the cluster). ' +
+      'Distinct from nacos_list_config_listeners, which lists IPs for one config.',
+    risk: 'read',
+    inputSchema: NACOS_LIST_LISTENED_CONFIGS_INPUT_SCHEMA
   },
   {
     name: 'nacos_list_service_subscribers',

@@ -124,6 +124,7 @@ function createMockDeps(clientOverrides: Partial<NacosApiClientLike> = {}) {
       content: 'password: super-secret-password'
     }),
     listConfigListeners: vi.fn().mockResolvedValue([{ ip: '10.0.0.1', md5: 'abc' }]),
+    listListenedConfigs: vi.fn().mockResolvedValue([]),
     listSubscribers: vi.fn().mockResolvedValue([
       { ip: '10.0.0.1', port: 0, group: 'DEFAULT_GROUP', serviceName: 'order-service', namespaceId: 'dev' }
     ]),
@@ -417,6 +418,28 @@ describe('NacosAgentToolService', () => {
       namespaceId: '',
       group: 'DEFAULT_GROUP',
       dataId: 'db.yaml',
+      aggregation: true
+    });
+  });
+
+  it('nacos_list_listened_configs requires ip', async () => {
+    const { service } = createMockDeps();
+    const res = await service.invoke('nacos_list_listened_configs', { instanceId: 'inst-allowed' });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.code).toBe('VALIDATION_ERROR');
+    }
+  });
+
+  it('nacos_list_listened_configs forwards ip and aggregation', async () => {
+    const { service, client } = createMockDeps();
+    await service.invoke('nacos_list_listened_configs', {
+      instanceId: 'inst-allowed',
+      ip: '10.0.0.8'
+    });
+    expect(client.listListenedConfigs).toHaveBeenCalledWith({
+      namespaceId: '',
+      ip: '10.0.0.8',
       aggregation: true
     });
   });
