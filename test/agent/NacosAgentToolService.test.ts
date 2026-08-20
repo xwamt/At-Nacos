@@ -110,6 +110,18 @@ function createMockDeps(clientOverrides: Partial<NacosApiClientLike> = {}) {
       serviceCount: 10,
       instanceCount: 20
     }),
+    listInstances: vi.fn().mockResolvedValue([
+      {
+        ip: '192.168.1.10',
+        port: 8080,
+        healthy: true,
+        enabled: true,
+        weight: 1,
+        clusterName: 'DEFAULT',
+        ephemeral: true,
+        metadata: {}
+      }
+    ]),
     ...clientOverrides
   };
 
@@ -256,6 +268,37 @@ describe('NacosAgentToolService', () => {
 
     const clusterRes = await service.invoke('nacos_get_cluster_nodes', { instanceId: 'inst-allowed' });
     expect(clusterRes.ok).toBe(true);
+  });
+
+  it('nacos_get_service fills DEFAULT_GROUP and does not call listInstances', async () => {
+    const { service, client } = createMockDeps();
+    const res = await service.invoke('nacos_get_service', {
+      instanceId: 'inst-allowed',
+      serviceName: 'order-service'
+    });
+    expect(res.ok).toBe(true);
+    expect(client.getService).toHaveBeenCalledWith({
+      namespaceId: '',
+      group: 'DEFAULT_GROUP',
+      serviceName: 'order-service'
+    });
+    expect(client.listInstances).not.toHaveBeenCalled();
+  });
+
+  it('nacos_list_service_instances lists instances for one service', async () => {
+    const { service, client } = createMockDeps();
+    const res = await service.invoke('nacos_list_service_instances', {
+      instanceId: 'inst-allowed',
+      serviceName: 'order-service',
+      cluster: 'DEFAULT'
+    });
+    expect(res.ok).toBe(true);
+    expect(client.listInstances).toHaveBeenCalledWith({
+      namespaceId: '',
+      group: 'DEFAULT_GROUP',
+      serviceName: 'order-service',
+      cluster: 'DEFAULT'
+    });
   });
 
   it('returns VALIDATION_ERROR when input schema fails', async () => {

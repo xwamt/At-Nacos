@@ -58,8 +58,18 @@ export const nacosGetServiceSchema = z
   .object({
     instanceId: z.string().min(1),
     namespaceId: z.string().optional(),
-    group: z.string().min(1),
+    group: z.string().min(1).optional(),
     serviceName: z.string().min(1)
+  })
+  .strict();
+
+export const nacosListServiceInstancesSchema = z
+  .object({
+    instanceId: z.string().min(1),
+    namespaceId: z.string().optional(),
+    group: z.string().min(1).optional(),
+    serviceName: z.string().min(1),
+    cluster: z.string().optional()
   })
   .strict();
 
@@ -75,6 +85,7 @@ export type NacosListConfigsInput = z.infer<typeof nacosListConfigsSchema>;
 export type NacosGetConfigInput = z.infer<typeof nacosGetConfigSchema>;
 export type NacosListServicesInput = z.infer<typeof nacosListServicesSchema>;
 export type NacosGetServiceInput = z.infer<typeof nacosGetServiceSchema>;
+export type NacosListServiceInstancesInput = z.infer<typeof nacosListServiceInstancesSchema>;
 export type NacosGetClusterNodesInput = z.infer<typeof nacosGetClusterNodesSchema>;
 
 export const NACOS_LIST_INSTANCES_INPUT_SCHEMA: JsonSchemaObject = {
@@ -231,14 +242,42 @@ export const NACOS_GET_SERVICE_INPUT_SCHEMA: JsonSchemaObject = {
     },
     group: {
       type: 'string',
-      description: 'Service group name.'
+      description: 'Optional service group name (defaults to DEFAULT_GROUP).'
     },
     serviceName: {
       type: 'string',
       description: 'Service name.'
     }
   },
-  required: ['instanceId', 'group', 'serviceName'],
+  required: ['instanceId', 'serviceName'],
+  additionalProperties: false
+};
+
+export const NACOS_LIST_SERVICE_INSTANCES_INPUT_SCHEMA: JsonSchemaObject = {
+  type: 'object',
+  properties: {
+    instanceId: {
+      type: 'string',
+      description: 'Nacos instance ID.'
+    },
+    namespaceId: {
+      type: 'string',
+      description: 'Optional namespace ID.'
+    },
+    group: {
+      type: 'string',
+      description: 'Optional service group name (defaults to DEFAULT_GROUP).'
+    },
+    serviceName: {
+      type: 'string',
+      description: 'Service name whose registered hosts should be listed.'
+    },
+    cluster: {
+      type: 'string',
+      description: 'Optional cluster name forwarded as NacosInstanceQuery.cluster.'
+    }
+  },
+  required: ['instanceId', 'serviceName'],
   additionalProperties: false
 };
 
@@ -261,6 +300,7 @@ export const BRIDGE_SCHEMAS_BY_TOOL_NAME: Record<string, z.ZodTypeAny> = {
   nacos_get_config: nacosGetConfigSchema,
   nacos_list_services: nacosListServicesSchema,
   nacos_get_service: nacosGetServiceSchema,
+  nacos_list_service_instances: nacosListServiceInstancesSchema,
   nacos_get_cluster_nodes: nacosGetClusterNodesSchema
 };
 

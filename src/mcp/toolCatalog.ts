@@ -6,6 +6,7 @@ import {
   NACOS_LIST_CONFIGS_INPUT_SCHEMA,
   NACOS_LIST_INSTANCES_INPUT_SCHEMA,
   NACOS_LIST_NAMESPACES_INPUT_SCHEMA,
+  NACOS_LIST_SERVICE_INSTANCES_INPUT_SCHEMA,
   NACOS_LIST_SERVICES_INPUT_SCHEMA
 } from './bridgeSchemas';
 
@@ -19,7 +20,7 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
     name: 'nacos_list_instances',
     title: 'List Nacos instances',
     description:
-      'List configured Nacos instances that have "Allow Agent background access" enabled, as [{id, label, serverUrl}]. ' +
+      'List configured plugin instances (Nacos connections with "Allow Agent background access" enabled), as [{id, label, serverUrl}], not Nacos service hosts. ' +
       'Credentials are never returned. Call this first to discover valid instanceId values for other nacos_* tools.',
     risk: 'read',
     inputSchema: NACOS_LIST_INSTANCES_INPUT_SCHEMA
@@ -62,11 +63,22 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
   },
   {
     name: 'nacos_get_service',
-    title: 'Get Nacos service and instance details',
+    title: 'Get Nacos service metadata',
     description:
-      'Get detailed service information along with its registered service instances (IP, port, health, weight, cluster, metadata).',
+      'Get Nacos service metadata (protect threshold, clusters, metadata), not including instance list. ' +
+      'Use nacos_list_service_instances to list registered hosts. Group defaults to DEFAULT_GROUP.',
     risk: 'read',
     inputSchema: NACOS_GET_SERVICE_INPUT_SCHEMA
+  },
+  {
+    name: 'nacos_list_service_instances',
+    title: 'List Nacos service instances',
+    description:
+      'List registered Nacos service hosts (IP, port, health, weight, cluster, metadata) for one service. ' +
+      'Group defaults to DEFAULT_GROUP. Optional cluster maps to NacosInstanceQuery.cluster. ' +
+      'Distinct from nacos_list_instances, which lists configured plugin instances.',
+    risk: 'read',
+    inputSchema: NACOS_LIST_SERVICE_INSTANCES_INPUT_SCHEMA
   },
   {
     name: 'nacos_get_cluster_nodes',

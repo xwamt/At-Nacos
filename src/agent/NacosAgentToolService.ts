@@ -14,6 +14,7 @@ import {
   nacosListConfigsSchema,
   nacosListInstancesSchema,
   nacosListNamespacesSchema,
+  nacosListServiceInstancesSchema,
   nacosListServicesSchema,
   type NacosGetClusterNodesInput,
   type NacosGetConfigInput,
@@ -21,8 +22,11 @@ import {
   type NacosListConfigsInput,
   type NacosListInstancesInput,
   type NacosListNamespacesInput,
+  type NacosListServiceInstancesInput,
   type NacosListServicesInput
 } from '../mcp/bridgeSchemas';
+
+const DEFAULT_SERVICE_GROUP = 'DEFAULT_GROUP';
 
 export type NacosApiClientLike = Pick<
   NacosClient,
@@ -31,6 +35,7 @@ export type NacosApiClientLike = Pick<
   | 'getConfig'
   | 'listServices'
   | 'getService'
+  | 'listInstances'
   | 'listClusterNodes'
   | 'getServerMetrics'
 >;
@@ -89,6 +94,10 @@ export class NacosAgentToolService {
         return this.handleParsed(nacosListServicesSchema, args, (input) => this.listServices(input));
       case 'nacos_get_service':
         return this.handleParsed(nacosGetServiceSchema, args, (input) => this.getService(input));
+      case 'nacos_list_service_instances':
+        return this.handleParsed(nacosListServiceInstancesSchema, args, (input) =>
+          this.listServiceInstances(input)
+        );
       case 'nacos_get_cluster_nodes':
         return this.handleParsed(nacosGetClusterNodesSchema, args, (input) => this.getClusterNodes(input));
       default:
@@ -285,22 +294,31 @@ export class NacosAgentToolService {
     }
     const detail = await resolved.client.getService({
       namespaceId: input.namespaceId ?? '',
-      group: input.group,
+      group: input.group ?? DEFAULT_SERVICE_GROUP,
       serviceName: input.serviceName
     });
-
     if (!detail) {
       return {
         ok: false,
         code: 'NOT_FOUND',
-        message: `Service not found: group=${input.group}, serviceName=${input.serviceName}`
+        message: `Service not found: group=${input.group ?? DEFAULT_SERVICE_GROUP}, serviceName=${input.serviceName}`
       };
     }
+    return { ok: true, result: detail };
+  }
 
-    return {
-      ok: true,
-      result: detail
-    };
+  private async listServiceInstances(input: NacosListServiceInstancesInput): Promise<ToolInvokeResult> {
+    const resolved = await this.resolveInstance(input.instanceId);
+    if (!resolved.ok) {
+      return resolved.failure;
+    }
+    const instances = await resolved.client.listInstances({
+      namespaceId: input.namespaceId ?? '',
+      group: input.group ?? DEFAULT_SERVICE_GROUP,
+      serviceName: input.serviceName,
+      cluster: input.cluster
+    });
+    return { ok: true, result: { instances } };
   }
 
   private async getClusterNodes(input: NacosGetClusterNodesInput): Promise<ToolInvokeResult> {

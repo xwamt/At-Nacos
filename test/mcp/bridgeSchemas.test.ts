@@ -8,6 +8,7 @@ import {
   nacosListConfigsSchema,
   nacosListInstancesSchema,
   nacosListNamespacesSchema,
+  nacosListServiceInstancesSchema,
   nacosListServicesSchema
 } from '../../src/mcp/bridgeSchemas';
 
@@ -78,7 +79,7 @@ describe('bridgeSchemas', () => {
     ).toBe(true);
   });
 
-  it('nacosGetServiceSchema requires instanceId, group and serviceName', () => {
+  it('nacosGetServiceSchema requires instanceId and serviceName', () => {
     expect(
       nacosGetServiceSchema.safeParse({
         instanceId: 'inst-1',
@@ -87,7 +88,27 @@ describe('bridgeSchemas', () => {
       }).success
     ).toBe(true);
 
-    expect(nacosGetServiceSchema.safeParse({ instanceId: 'inst-1', serviceName: 'order-service' }).success).toBe(false);
+    expect(nacosGetServiceSchema.safeParse({ instanceId: 'inst-1' }).success).toBe(false);
+  });
+
+  it('nacosGetServiceSchema defaults group to optional', () => {
+    expect(
+      nacosGetServiceSchema.safeParse({
+        instanceId: 'inst-1',
+        serviceName: 'order-service'
+      }).success
+    ).toBe(true);
+  });
+
+  it('nacosListServiceInstancesSchema requires serviceName', () => {
+    expect(
+      nacosListServiceInstancesSchema.safeParse({
+        instanceId: 'inst-1',
+        serviceName: 'order-service',
+        cluster: 'DEFAULT'
+      }).success
+    ).toBe(true);
+    expect(nacosListServiceInstancesSchema.safeParse({ instanceId: 'inst-1' }).success).toBe(false);
   });
 
   it('nacosGetClusterNodesSchema requires instanceId', () => {
@@ -103,6 +124,7 @@ describe('bridgeSchemas', () => {
       'nacos_list_configs',
       'nacos_list_instances',
       'nacos_list_namespaces',
+      'nacos_list_service_instances',
       'nacos_list_services'
     ]);
   });
