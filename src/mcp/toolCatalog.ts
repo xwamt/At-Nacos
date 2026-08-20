@@ -35,7 +35,7 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
     title: 'List Nacos namespaces',
     description:
       'List namespaces on a Nacos instance, including namespaceId, display name, description, and configCount. ' +
-      'The default namespace uses an empty id on 1.x/2.x and the literal "public" on 3.x; both appear in this list.',
+      'Use the namespaceId this tool returns. The default namespace is an empty string on 1.x/2.x and the literal "public" on 3.x; do not substitute one for the other.',
     risk: 'read',
     inputSchema: NACOS_LIST_NAMESPACES_INPUT_SCHEMA
   },

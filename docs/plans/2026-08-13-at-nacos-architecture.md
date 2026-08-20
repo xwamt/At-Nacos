@@ -380,6 +380,7 @@ export type NacosApiFlavor = 'v1' | 'v2' | 'v3-admin' | 'v3-console';
 | 配置历史列表 | `GET {base}/v1/cs/history?search=accurate` | 同左；或 `GET {base}/v2/cs/history/list` | v1/v2 默认 410；`GET {srv}/v3/admin/cs/history/list` | `{srv}/v3/admin/cs/history/list` 或 `{con}/v3/console/cs/history/list` |
 | 配置历史详情 | `GET {base}/v1/cs/history?nid=` | 同左；或 `GET {base}/v2/cs/history?nid=` | v1/v2 默认 410；`GET {srv}/v3/admin/cs/history?nid=` | 同 3.0/3.1 或 console 版 |
 | 配置监听者 | `GET {base}/v1/cs/configs/listener` | 同左 | v1 默认 410；`GET {srv}/v3/admin/cs/config/listener` **需 WRITE 权限** | admin 版需 WRITE；`{con}/v3/console/cs/config/listener` 只需 READ |
+| 按 IP 反查已订阅配置 | `GET {base}/v1/cs/listener` | 同左（仍走 v1 路径） | `GET {srv}/v3/admin/cs/listener` | admin 同上；console 是 `{con}/v3/console/cs/config/listener/ip`，不是把 admin 路径换前缀 |
 | 命名空间列表 | `GET {base}/v1/console/namespaces` 免鉴权 | 同左；或 `GET {base}/v2/console/namespace/list` 免鉴权 | v1/v2 默认 410；`GET {srv}/v3/admin/core/namespace/list` 需管理员 | `{srv}/v3/admin/core/namespace/list`（管理员）或 `{con}/v3/console/core/namespace/list`（任意有效身份） |
 | 服务列表 | `GET {base}/v1/ns/service/list`（仅名字）或 `GET {base}/v1/ns/catalog/services`（带统计） | 同左；或 `GET {base}/v2/ns/service/list` | v1 service/list 可用；catalog 默认 410；`GET {srv}/v3/admin/ns/service/list` | `{srv}/v3/admin/ns/service/list` 或 `{con}/v3/console/ns/service/list` |
 | 服务详情 | `GET {base}/v1/ns/service` | 同左；或 `GET {base}/v2/ns/service` | v1 默认 410（ADMIN_API）；`GET {srv}/v3/admin/ns/service` | 同 3.0/3.1 或 console 版 |

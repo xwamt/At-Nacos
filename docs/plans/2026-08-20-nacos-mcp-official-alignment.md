@@ -1,5 +1,7 @@
 # AT Nacos —— 对齐官方 MCP 工具面 实现计划
 
+> **Status:** 已在 `feat/nacos-mcp-official-alignment` 落地（文档提交起算含 13 工具目录）。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把 `at.nacos` 的 MCP 只读工具面对齐 [nacos-group/nacos-mcp-server](https://github.com/nacos-group/nacos-mcp-server) 的 Admin API 切分与查询语义，同时保留多版本 Driver、Bearer、脱敏和集群节点这些产品优势。
