@@ -44,14 +44,20 @@
 - **运行时指标**：直观展示服务总数、实例总数、订阅者数、CPU 负载及内存使用率。
 
 ### 7. AI Agent 与 MCP 支持 (M6)
-- **内置 7 大只读 MCP 工具**：
-  1. `nacos_list_instances`：列出已配置的 Nacos 实例
-  2. `nacos_list_namespaces`：查询实例的命名空间列表
-  3. `nacos_list_configs`：查询配置列表
-  4. `nacos_get_config`：获取配置详细内容
-  5. `nacos_list_services`：查询服务发现列表
-  6. `nacos_get_service`：获取服务元数据与集群详情
-  7. `nacos_get_cluster_nodes`：查询集群节点拓扑与状态
+- **内置 13 个只读 MCP 工具**：
+  1. `nacos_list_instances`：列出已配置的插件连接（不是服务实例）
+  2. `nacos_list_namespaces`：查询命名空间（含默认命名空间）
+  3. `nacos_list_configs`：服务端过滤的配置列表（不含正文）
+  4. `nacos_get_config`：获取配置详细内容（默认脱敏）
+  5. `nacos_list_services`：查询注册服务（`serviceName` / `ignoreEmptyService`）
+  6. `nacos_get_service`：获取服务元数据（不含实例列表）
+  7. `nacos_list_service_instances`：列出某个服务的注册主机
+  8. `nacos_get_cluster_nodes`：查询集群节点拓扑与指标
+  9. `nacos_list_config_history`：配置历史列表
+  10. `nacos_get_config_history`：某一历史版本（默认脱敏）
+  11. `nacos_list_config_listeners`：某条配置的监听者
+  12. `nacos_list_service_subscribers`：某个服务的订阅者
+  13. `nacos_list_listened_configs`：按客户端 IP 反查已订阅配置
 - **敏感数据脱敏**：默认对密码、密钥、Token 等关键字内容执行星号脱敏，防止数据泄露。
 - **MCP Hub 互通**：支持通过 Bridge 本地桥接服务无缝接入 `@at-series/mcp-hub`。
 

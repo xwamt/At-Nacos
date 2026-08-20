@@ -34,7 +34,8 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
     name: 'nacos_list_namespaces',
     title: 'List Nacos namespaces',
     description:
-      'List namespaces available on a Nacos instance, including namespaceId, namespaceName, description, and configCount.',
+      'List namespaces on a Nacos instance, including namespaceId, display name, description, and configCount. ' +
+      'The default namespace uses an empty id on 1.x/2.x and the literal "public" on 3.x; both appear in this list.',
     risk: 'read',
     inputSchema: NACOS_LIST_NAMESPACES_INPUT_SCHEMA
   },
@@ -89,7 +90,9 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
     name: 'nacos_get_cluster_nodes',
     title: 'Get Nacos cluster nodes and metrics',
     description:
-      'Get Nacos server cluster node topology, server status, raft roles, and operational metrics.',
+      'Get Nacos server cluster node topology, server status, raft roles, and operational metrics. ' +
+      '3.x console serves nodes but has no metrics endpoint, so metrics may be omitted. ' +
+      'Requires only instanceId.',
     risk: 'read',
     inputSchema: NACOS_GET_CLUSTER_NODES_INPUT_SCHEMA
   },

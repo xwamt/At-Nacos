@@ -36,6 +36,10 @@ describe('toolCatalog', () => {
     const getService = AT_NACOS_TOOL_CATALOG.find((tool) => tool.name === 'nacos_get_service');
     expect(getService?.description).toMatch(/not including instance list|不含实例/i);
     expect(getService?.description).toContain('nacos_list_service_instances');
+    const namespaces = AT_NACOS_TOOL_CATALOG.find((tool) => tool.name === 'nacos_list_namespaces');
+    expect(namespaces?.description).toMatch(/public/i);
+    const clusterNodes = AT_NACOS_TOOL_CATALOG.find((tool) => tool.name === 'nacos_get_cluster_nodes');
+    expect(clusterNodes?.description).toMatch(/instanceId/);
     for (const tool of AT_NACOS_TOOL_CATALOG) {
       expect(tool.name).toMatch(/^nacos_[a-z0-9_]+$/);
       expect(tool.risk).toBe('read');
