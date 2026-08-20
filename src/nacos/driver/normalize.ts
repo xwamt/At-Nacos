@@ -68,6 +68,19 @@ export function groupParamName(flavor: NacosApiFlavor, module: NacosModule): 'gr
 }
 
 /**
+ * Which spelling of the config-tags filter an endpoint family expects.
+ *
+ * v1's list endpoint reads `config_tags`; v2 renamed it to `configTags` and
+ * v3 kept that. Getting this wrong is silent: the unknown parameter is
+ * dropped and the listing is unfiltered. Read the argument as the endpoint
+ * family, the same way `groupParamName` is: `V2Driver` reaches the v1 config
+ * endpoints, so its config requests have to ask as v1.
+ */
+export function configTagsParamName(flavor: NacosApiFlavor): 'config_tags' | 'configTags' {
+  return flavor === 'v1' ? 'config_tags' : 'configTags';
+}
+
+/**
  * Which spelling of the cluster filter an endpoint family expects.
  *
  * v1 takes **`clusters`**, plural and comma-separated, and splits it into a

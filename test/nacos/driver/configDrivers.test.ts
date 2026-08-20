@@ -238,6 +238,82 @@ for (const driverCase of DRIVER_CASES) {
       expect(query.get('dataId')).toBe('*uat*');
     });
 
+    it('sends a caller-supplied group instead of an empty one', async () => {
+      const { requests } = await drive(
+        driverCase,
+        respondWith(200, wrap(REAL_ACCURATE_PAGE)),
+        (driver) =>
+          driver.listConfigs({
+            namespaceId: NAMESPACE_ID,
+            pageNo: 1,
+            pageSize: 100,
+            group: GROUP,
+            dataId: DATA_ID,
+            searchMode: 'accurate'
+          })
+      );
+      const query = queryOf(requests[0]?.url ?? '');
+      expect(query.get(groupParam)).toBe(GROUP);
+      expect(query.get('dataId')).toBe(DATA_ID);
+      expect(query.get('search')).toBe('accurate');
+    });
+
+    it('does not wrap an explicit dataId in wildcards', async () => {
+      const { requests } = await drive(
+        driverCase,
+        respondWith(200, wrap(REAL_BLUR_PAGE)),
+        (driver) =>
+          driver.listConfigs({
+            namespaceId: NAMESPACE_ID,
+            pageNo: 1,
+            pageSize: 100,
+            dataId: 'app.yaml',
+            searchMode: 'blur'
+          })
+      );
+      expect(queryOf(requests[0]?.url ?? '').get('dataId')).toBe('app.yaml');
+    });
+
+    it('still wraps the tree search term when dataId is omitted', async () => {
+      const { requests } = await drive(
+        driverCase,
+        respondWith(200, wrap(REAL_BLUR_PAGE)),
+        (driver) =>
+          driver.listConfigs({
+            namespaceId: NAMESPACE_ID,
+            pageNo: 1,
+            pageSize: 100,
+            search: 'uat'
+          })
+      );
+      const query = queryOf(requests[0]?.url ?? '');
+      expect(query.get('search')).toBe('blur');
+      expect(query.get('dataId')).toBe('*uat*');
+    });
+
+    it('sends type, appName and the dialect-correct tags parameter only when set', async () => {
+      const { requests } = await drive(
+        driverCase,
+        respondWith(200, wrap(REAL_ACCURATE_PAGE)),
+        (driver) =>
+          driver.listConfigs({
+            namespaceId: NAMESPACE_ID,
+            pageNo: 1,
+            pageSize: 100,
+            type: 'yaml',
+            appName: 'order',
+            configTags: 'prod,core'
+          })
+      );
+      const query = queryOf(requests[0]?.url ?? '');
+      expect(query.get('type')).toBe('yaml');
+      expect(query.get('appName')).toBe('order');
+      const tagName = groupParam === 'group' ? 'config_tags' : 'configTags';
+      const otherTag = tagName === 'config_tags' ? 'configTags' : 'config_tags';
+      expect(query.get(tagName)).toBe('prod,core');
+      expect(query.has(otherTag)).toBe(false);
+    });
+
     it('normalizes a real 2.3.2 page', async () => {
       const { result } = await drive(driverCase, respondWith(200, wrap(REAL_ACCURATE_PAGE)), (driver) =>
         driver.listConfigs({ namespaceId: NAMESPACE_ID, pageNo: 1, pageSize: 100 })

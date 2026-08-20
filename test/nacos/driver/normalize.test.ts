@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NacosApiError } from '../../../src/nacos/NacosApiError';
 import {
+  configTagsParamName,
   groupParamName,
   namespaceParamName,
   normalizeConfigDetail,
@@ -88,6 +89,18 @@ describe('groupParamName', () => {
       const legacy = namespaceParamName(flavor, 'config') === 'tenant';
       expect(groupParamName(flavor, 'config') === 'group').toBe(legacy);
     }
+  });
+});
+
+describe('configTagsParamName', () => {
+  it('uses the v1 underscore spelling on v1 config endpoints', () => {
+    expect(configTagsParamName('v1')).toBe('config_tags');
+  });
+
+  it('uses camelCase from v2 onward, including both 3.x flavors', () => {
+    expect(configTagsParamName('v2')).toBe('configTags');
+    expect(configTagsParamName('v3-admin')).toBe('configTags');
+    expect(configTagsParamName('v3-console')).toBe('configTags');
   });
 });
 

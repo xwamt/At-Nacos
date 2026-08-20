@@ -8,6 +8,7 @@ import {
 import { isRecord } from '../jsonGuards';
 import { isSpringErrorPage } from './springErrorPage';
 import {
+  configTagsParamName,
   groupParamName,
   namespaceParamName,
   normalizeConfigDetail,
@@ -37,23 +38,35 @@ export type NacosApiFlavor = 'v1' | 'v2' | 'v3-admin' | 'v3-console';
 /**
  * One page of one namespace's configs.
  *
- * `search` is the dataId substring a user typed into the filter, absent when
- * they have not. It is the only optional field because it is the only one the
- * tree can be without: a page needs a namespace to be a page of, and paging
- * that the caller does not control would put the 10MB responses this milestone
- * exists to avoid back on the table.
+ * `search` is the dataId substring a user typed into the tree filter, absent
+ * when they have not. The tree still only passes that plus paging: a page
+ * needs a namespace to be a page of, and paging that the caller does not
+ * control would put the 10MB responses this milestone exists to avoid back
+ * on the table.
  *
- * Neither the search mode nor the wildcards are the caller's business. Nacos
- * spells the same intent two incompatible ways -- `search=accurate` with an
- * empty dataId, or `search=blur` with a `*`-wrapped one -- and leaving that
- * choice up here would put a Nacos protocol detail in the tree.
+ * MCP callers set `searchMode` (and `group` / `dataId` / `type` / tags /
+ * `appName`) explicitly so the server filters. The tree does not: when
+ * `dataId` is unset, a non-empty `search` wraps itself in `*` and switches
+ * to blur; otherwise the request is accurate with empty dataId and group --
+ * Nacos's two incompatible spellings of "list these".
  */
 export interface NacosConfigListQuery {
   namespaceId: string;
   /** One-based, as Nacos counts. */
   pageNo: number;
   pageSize: number;
+  /**
+   * 树过滤器：有值则 blur，并把该字符串包成 `*term*` 作为 dataId。
+   * 仅当 `dataId` 未设时生效，避免和 MCP 的精确/通配 dataId 抢同一参数。
+   */
   search?: string;
+  group?: string;
+  dataId?: string;
+  /** 未设时：有树 `search` 则 blur，否则 accurate（与今天无过滤列举相同）。 */
+  searchMode?: 'accurate' | 'blur';
+  type?: string;
+  configTags?: string;
+  appName?: string;
 }
 
 /**
@@ -314,23 +327,41 @@ export async function fetchConfigPage(
  *
  * `dataId` and `group` are required `@RequestParam`s even when the caller
  * wants everything back, so they are sent empty rather than omitted -- a
- * missing one is a 400, not a wildcard.
+ * missing one is a 400, not a wildcard. A caller-supplied group or dataId is
+ * sent as-is; an explicit dataId is never wrapped in `*`.
  *
- * A search term switches the mode to `blur` and wraps itself in `*`, which is
- * the only way Nacos accepts a substring match. Nacos answers a blur search
- * with `type: null` on every item; that is expected and `configLanguageId`
- * covers it from the dataId suffix, so nothing here tries to compensate.
+ * A tree search term (no `dataId`, no `searchMode`) switches the mode to
+ * `blur` and wraps itself in `*`, which is the only way Nacos accepts a
+ * substring match. MCP can set `searchMode` itself. Nacos answers a blur
+ * search with `type: null` on every item; that is expected and
+ * `configLanguageId` covers it from the dataId suffix, so nothing here tries
+ * to compensate.
+ *
+ * `type`, `appName` and the dialect's tags parameter are omitted unless the
+ * caller set them: an empty filter is not a filter.
  */
 function configListParams(flavor: NacosApiFlavor, query: NacosConfigListQuery): Record<string, string> {
   const term = query.search?.trim();
-  return {
-    search: term ? 'blur' : 'accurate',
-    dataId: term ? `*${term}*` : '',
-    [groupParamName(flavor, 'config')]: '',
+  const searchMode = query.searchMode ?? (term ? 'blur' : 'accurate');
+  const dataId = query.dataId !== undefined ? query.dataId : term ? `*${term}*` : '';
+  const params: Record<string, string> = {
+    search: searchMode,
+    dataId,
+    [groupParamName(flavor, 'config')]: query.group ?? '',
     [namespaceParamName(flavor, 'config')]: query.namespaceId,
     pageNo: String(query.pageNo),
     pageSize: String(query.pageSize)
   };
+  if (query.type) {
+    params.type = query.type;
+  }
+  if (query.appName) {
+    params.appName = query.appName;
+  }
+  if (query.configTags) {
+    params[configTagsParamName(flavor)] = query.configTags;
+  }
+  return params;
 }
 
 /**
