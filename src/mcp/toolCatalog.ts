@@ -36,8 +36,8 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
     name: 'nacos_list_configs',
     title: 'List Nacos configurations',
     description:
-      'List configurations on a Nacos instance with optional filtering by namespaceId, group, and dataId. ' +
-      'Sensitive values in configuration contents are redacted by default.',
+      'List configuration metadata (no bodies). Filters run on the Nacos server. ' +
+      'Use nacos_get_config for configuration content.',
     risk: 'read',
     inputSchema: NACOS_LIST_CONFIGS_INPUT_SCHEMA
   },

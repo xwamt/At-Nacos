@@ -159,14 +159,34 @@ describe('NacosAgentToolService', () => {
     }
   });
 
-  it('nacos_list_configs redacts sensitive passwords by default', async () => {
-    const { service } = createMockDeps();
-    const res = await service.invoke('nacos_list_configs', { instanceId: 'inst-allowed' });
+  it('nacos_list_configs forwards filters to the client and omits content', async () => {
+    const { service, client } = createMockDeps();
+    const res = await service.invoke('nacos_list_configs', {
+      instanceId: 'inst-allowed',
+      namespaceId: 'dev',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml',
+      search: 'accurate',
+      type: 'yaml',
+      appName: 'order',
+      configTags: 'prod'
+    });
     expect(res.ok).toBe(true);
+    expect(client.listConfigs).toHaveBeenCalledWith({
+      namespaceId: 'dev',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml',
+      searchMode: 'accurate',
+      type: 'yaml',
+      appName: 'order',
+      configTags: 'prod',
+      pageNo: 1,
+      pageSize: 100
+    });
     if (res.ok) {
-      const data = res.result as { items: { content: string }[] };
-      expect(data.items[0].content).not.toContain('super-secret-password');
-      expect(data.items[0].content).toContain('[REDACTED]');
+      const data = res.result as { items: Array<Record<string, unknown>> };
+      expect(data.items[0]).not.toHaveProperty('content');
+      expect(JSON.stringify(data)).not.toContain('super-secret-password');
     }
   });
 

@@ -198,31 +198,26 @@ export class NacosAgentToolService {
     }
     const page = await resolved.client.listConfigs({
       namespaceId: input.namespaceId ?? '',
-      search: input.dataId,
+      group: input.group,
+      dataId: input.dataId,
+      searchMode: input.search,
+      type: input.type,
+      configTags: input.configTags,
+      appName: input.appName,
       pageNo: input.pageNo ?? 1,
       pageSize: input.pageSize ?? 100
     });
-
-    let items = page.items;
-    if (input.group) {
-      items = items.filter((item) => item.group === input.group);
-    }
-
-    const redactedItems = items.map((item) => {
-      const rawContent = (item as { content?: string }).content;
-      return {
-        ...item,
-        ...(typeof rawContent === 'string' ? { content: redactSensitiveText(rawContent) } : {})
-      };
+    const items = page.items.map((item) => {
+      const { content: _content, ...rest } = item as typeof item & { content?: string };
+      return rest;
     });
-
     return {
       ok: true,
       result: {
         totalCount: page.totalCount,
         pageNo: input.pageNo ?? 1,
         pageSize: input.pageSize ?? 100,
-        items: redactedItems
+        items
       }
     };
   }

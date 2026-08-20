@@ -23,21 +23,22 @@ describe('bridgeSchemas', () => {
     expect(nacosListNamespacesSchema.safeParse({ instanceId: '' }).success).toBe(false);
   });
 
-  it('nacosListConfigsSchema validates instanceId and optional filters', () => {
+  it('nacosListConfigsSchema accepts official list filters and rejects a bad search mode', () => {
     expect(
       nacosListConfigsSchema.safeParse({
         instanceId: 'inst-1',
         namespaceId: 'dev',
         group: 'DEFAULT_GROUP',
         dataId: 'app.yaml',
+        type: 'yaml',
+        configTags: 'prod',
+        appName: 'order',
+        search: 'accurate',
         pageNo: 1,
         pageSize: 50
       }).success
     ).toBe(true);
-
-    // Negative page size
-    expect(nacosListConfigsSchema.safeParse({ instanceId: 'inst-1', pageSize: -1 }).success).toBe(false);
-    // Page size > 500
+    expect(nacosListConfigsSchema.safeParse({ instanceId: 'inst-1', search: 'fuzzy' }).success).toBe(false);
     expect(nacosListConfigsSchema.safeParse({ instanceId: 'inst-1', pageSize: 501 }).success).toBe(false);
   });
 

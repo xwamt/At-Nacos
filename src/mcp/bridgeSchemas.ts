@@ -23,6 +23,10 @@ export const nacosListConfigsSchema = z
     namespaceId: z.string().optional(),
     group: z.string().optional(),
     dataId: z.string().optional(),
+    type: z.string().optional(),
+    configTags: z.string().optional(),
+    appName: z.string().optional(),
+    search: z.enum(['blur', 'accurate']).optional(),
     pageNo: z.number().int().positive().optional(),
     pageSize: z.number().int().positive().max(500).optional()
   })
@@ -102,11 +106,30 @@ export const NACOS_LIST_CONFIGS_INPUT_SCHEMA: JsonSchemaObject = {
     },
     group: {
       type: 'string',
-      description: 'Optional configuration group filter.'
+      description:
+        'Optional group forwarded to Nacos as-is. In blur mode, `*` is a wildcard per official Nacos rules.'
     },
     dataId: {
       type: 'string',
-      description: 'Optional data ID keyword filter.'
+      description:
+        'Optional dataId forwarded to Nacos as-is. In blur mode, `*` is a wildcard per official Nacos rules.'
+    },
+    type: {
+      type: 'string',
+      description: 'Optional configuration type filter (for example yaml, json, text).'
+    },
+    configTags: {
+      type: 'string',
+      description: 'Optional configuration tags forwarded to Nacos as-is.'
+    },
+    appName: {
+      type: 'string',
+      description: 'Optional application name forwarded to Nacos as-is.'
+    },
+    search: {
+      type: 'string',
+      enum: ['blur', 'accurate'],
+      description: 'Nacos list search mode: blur (prefix/suffix `*` wildcards allowed) or accurate.'
     },
     pageNo: {
       type: 'integer',
