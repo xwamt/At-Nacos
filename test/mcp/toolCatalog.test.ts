@@ -12,6 +12,10 @@ describe('toolCatalog', () => {
     const names = AT_NACOS_TOOL_CATALOG.map((tool) => tool.name);
     expect(names).toContain('nacos_list_service_instances');
     expect(names).toContain('nacos_list_instances');
+    expect(names).toContain('nacos_list_config_history');
+    expect(names).toContain('nacos_get_config_history');
+    expect(names).toContain('nacos_list_config_listeners');
+    expect(names).toContain('nacos_list_service_subscribers');
     const getService = AT_NACOS_TOOL_CATALOG.find((tool) => tool.name === 'nacos_get_service');
     expect(getService?.description).toMatch(/not including instance list|不含实例/i);
     expect(getService?.description).toContain('nacos_list_service_instances');

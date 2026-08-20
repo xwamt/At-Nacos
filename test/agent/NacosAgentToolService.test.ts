@@ -110,6 +110,23 @@ function createMockDeps(clientOverrides: Partial<NacosApiClientLike> = {}) {
         metadata: {}
       }
     ]),
+    listConfigHistory: vi.fn().mockResolvedValue({
+      totalCount: 1,
+      pageNumber: 1,
+      pagesAvailable: 1,
+      items: [{ id: '203', group: 'DEFAULT_GROUP', dataId: 'db.yaml', namespaceId: 'dev', opType: 'U' }]
+    }),
+    getConfigHistory: vi.fn().mockResolvedValue({
+      namespaceId: 'dev',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml',
+      type: 'yaml',
+      content: 'password: super-secret-password'
+    }),
+    listConfigListeners: vi.fn().mockResolvedValue([{ ip: '10.0.0.1', md5: 'abc' }]),
+    listSubscribers: vi.fn().mockResolvedValue([
+      { ip: '10.0.0.1', port: 0, group: 'DEFAULT_GROUP', serviceName: 'order-service', namespaceId: 'dev' }
+    ]),
     ...clientOverrides
   };
 
@@ -307,6 +324,82 @@ describe('NacosAgentToolService', () => {
         ]
       });
     }
+  });
+
+  it('nacos_list_config_history pages history without content', async () => {
+    const { service, client } = createMockDeps();
+    const res = await service.invoke('nacos_list_config_history', {
+      instanceId: 'inst-allowed',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml'
+    });
+    expect(res.ok).toBe(true);
+    expect(client.listConfigHistory).toHaveBeenCalledWith({
+      namespaceId: '',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml',
+      pageNo: 1,
+      pageSize: 100
+    });
+  });
+
+  it('nacos_get_config_history redacts unless raw is true', async () => {
+    const { service } = createMockDeps();
+    const redacted = await service.invoke('nacos_get_config_history', {
+      instanceId: 'inst-allowed',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml',
+      nid: '203'
+    });
+    expect(redacted.ok).toBe(true);
+    if (redacted.ok) {
+      const data = redacted.result as { content: string; isRedacted: boolean };
+      expect(data.isRedacted).toBe(true);
+      expect(data.content).not.toContain('super-secret-password');
+    }
+  });
+
+  it('nacos_get_config_history requires nid', async () => {
+    const { service } = createMockDeps();
+    const res = await service.invoke('nacos_get_config_history', {
+      instanceId: 'inst-allowed',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml'
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.code).toBe('VALIDATION_ERROR');
+    }
+  });
+
+  it('nacos_list_config_listeners forwards aggregation', async () => {
+    const { service, client } = createMockDeps();
+    await service.invoke('nacos_list_config_listeners', {
+      instanceId: 'inst-allowed',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml',
+      aggregation: false
+    });
+    expect(client.listConfigListeners).toHaveBeenCalledWith({
+      namespaceId: '',
+      group: 'DEFAULT_GROUP',
+      dataId: 'db.yaml',
+      aggregation: false
+    });
+  });
+
+  it('nacos_list_service_subscribers defaults group and aggregation', async () => {
+    const { service, client } = createMockDeps();
+    await service.invoke('nacos_list_service_subscribers', {
+      instanceId: 'inst-allowed',
+      serviceName: 'order-service'
+    });
+    expect(client.listSubscribers).toHaveBeenCalledWith({
+      namespaceId: '',
+      group: 'DEFAULT_GROUP',
+      serviceName: 'order-service',
+      aggregation: true
+    });
   });
 
   it('returns VALIDATION_ERROR when input schema fails', async () => {

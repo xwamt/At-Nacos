@@ -1,12 +1,16 @@
 import type { ToolCatalogEntry } from '@at-series/mcp-hub';
 import {
   NACOS_GET_CLUSTER_NODES_INPUT_SCHEMA,
+  NACOS_GET_CONFIG_HISTORY_INPUT_SCHEMA,
   NACOS_GET_CONFIG_INPUT_SCHEMA,
   NACOS_GET_SERVICE_INPUT_SCHEMA,
+  NACOS_LIST_CONFIG_HISTORY_INPUT_SCHEMA,
+  NACOS_LIST_CONFIG_LISTENERS_INPUT_SCHEMA,
   NACOS_LIST_CONFIGS_INPUT_SCHEMA,
   NACOS_LIST_INSTANCES_INPUT_SCHEMA,
   NACOS_LIST_NAMESPACES_INPUT_SCHEMA,
   NACOS_LIST_SERVICE_INSTANCES_INPUT_SCHEMA,
+  NACOS_LIST_SERVICE_SUBSCRIBERS_INPUT_SCHEMA,
   NACOS_LIST_SERVICES_INPUT_SCHEMA
 } from './bridgeSchemas';
 
@@ -87,5 +91,43 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
       'Get Nacos server cluster node topology, server status, raft roles, and operational metrics.',
     risk: 'read',
     inputSchema: NACOS_GET_CLUSTER_NODES_INPUT_SCHEMA
+  },
+  {
+    name: 'nacos_list_config_history',
+    title: 'List Nacos configuration history',
+    description:
+      'List configuration history metadata (no bodies) for a group and dataId. ' +
+      'Pagination defaults to pageNo 1 and pageSize 100 (max 500). ' +
+      'Use nacos_get_config_history for a specific revision body.',
+    risk: 'read',
+    inputSchema: NACOS_LIST_CONFIG_HISTORY_INPUT_SCHEMA
+  },
+  {
+    name: 'nacos_get_config_history',
+    title: 'Get Nacos configuration history detail',
+    description:
+      'Get one configuration history revision by nid. ' +
+      'Sensitive values (passwords, tokens, keys) are redacted by default; pass raw: true only when unredacted content is explicitly required.',
+    risk: 'read',
+    inputSchema: NACOS_GET_CONFIG_HISTORY_INPUT_SCHEMA
+  },
+  {
+    name: 'nacos_list_config_listeners',
+    title: 'List Nacos configuration listeners',
+    description:
+      'List clients currently listening to a configuration. ' +
+      'aggregation defaults to true (whether to aggregate across the cluster). ' +
+      'Nacos 3.x admin config-listener reads need WRITE, so the existing console fallback still applies.',
+    risk: 'read',
+    inputSchema: NACOS_LIST_CONFIG_LISTENERS_INPUT_SCHEMA
+  },
+  {
+    name: 'nacos_list_service_subscribers',
+    title: 'List Nacos service subscribers',
+    description:
+      'List subscribers of a registered service. Group defaults to DEFAULT_GROUP. ' +
+      'aggregation defaults to true (whether to aggregate across the cluster).',
+    risk: 'read',
+    inputSchema: NACOS_LIST_SERVICE_SUBSCRIBERS_INPUT_SCHEMA
   }
 ];

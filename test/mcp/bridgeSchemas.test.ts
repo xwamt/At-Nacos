@@ -3,12 +3,16 @@ import {
   BRIDGE_SCHEMAS_BY_TOOL_NAME,
   describeZodError,
   nacosGetClusterNodesSchema,
+  nacosGetConfigHistorySchema,
   nacosGetConfigSchema,
   nacosGetServiceSchema,
+  nacosListConfigHistorySchema,
+  nacosListConfigListenersSchema,
   nacosListConfigsSchema,
   nacosListInstancesSchema,
   nacosListNamespacesSchema,
   nacosListServiceInstancesSchema,
+  nacosListServiceSubscribersSchema,
   nacosListServicesSchema
 } from '../../src/mcp/bridgeSchemas';
 
@@ -116,15 +120,104 @@ describe('bridgeSchemas', () => {
     expect(nacosGetClusterNodesSchema.safeParse({}).success).toBe(false);
   });
 
-  it('contains schema for all 7 tools in BRIDGE_SCHEMAS_BY_TOOL_NAME', () => {
+  it('nacosGetConfigHistorySchema requires nid', () => {
+    expect(
+      nacosGetConfigHistorySchema.safeParse({
+        instanceId: 'inst-1',
+        group: 'DEFAULT_GROUP',
+        dataId: 'db.yaml',
+        nid: '203'
+      }).success
+    ).toBe(true);
+    expect(
+      nacosGetConfigHistorySchema.safeParse({
+        instanceId: 'inst-1',
+        group: 'DEFAULT_GROUP',
+        dataId: 'db.yaml'
+      }).success
+    ).toBe(false);
+  });
+
+  it('nacosListConfigHistorySchema rejects pageSize above 500', () => {
+    expect(
+      nacosListConfigHistorySchema.safeParse({
+        instanceId: 'inst-1',
+        group: 'DEFAULT_GROUP',
+        dataId: 'db.yaml',
+        pageSize: 500
+      }).success
+    ).toBe(true);
+    expect(
+      nacosListConfigHistorySchema.safeParse({
+        instanceId: 'inst-1',
+        group: 'DEFAULT_GROUP',
+        dataId: 'db.yaml',
+        pageSize: 501
+      }).success
+    ).toBe(false);
+  });
+
+  it('nacosListConfigListenersSchema accepts optional aggregation boolean', () => {
+    expect(
+      nacosListConfigListenersSchema.safeParse({
+        instanceId: 'inst-1',
+        group: 'DEFAULT_GROUP',
+        dataId: 'db.yaml'
+      }).success
+    ).toBe(true);
+    expect(
+      nacosListConfigListenersSchema.safeParse({
+        instanceId: 'inst-1',
+        group: 'DEFAULT_GROUP',
+        dataId: 'db.yaml',
+        aggregation: false
+      }).success
+    ).toBe(true);
+    expect(
+      nacosListConfigListenersSchema.safeParse({
+        instanceId: 'inst-1',
+        group: 'DEFAULT_GROUP',
+        dataId: 'db.yaml',
+        aggregation: 'no'
+      }).success
+    ).toBe(false);
+  });
+
+  it('nacosListServiceSubscribersSchema treats group as optional and aggregation as optional boolean', () => {
+    expect(
+      nacosListServiceSubscribersSchema.safeParse({
+        instanceId: 'inst-1',
+        serviceName: 'order-service'
+      }).success
+    ).toBe(true);
+    expect(
+      nacosListServiceSubscribersSchema.safeParse({
+        instanceId: 'inst-1',
+        serviceName: 'order-service',
+        group: 'DEFAULT_GROUP',
+        aggregation: true
+      }).success
+    ).toBe(true);
+    expect(
+      nacosListServiceSubscribersSchema.safeParse({
+        instanceId: 'inst-1'
+      }).success
+    ).toBe(false);
+  });
+
+  it('contains schema for all catalog tools in BRIDGE_SCHEMAS_BY_TOOL_NAME', () => {
     expect(Object.keys(BRIDGE_SCHEMAS_BY_TOOL_NAME).sort()).toEqual([
       'nacos_get_cluster_nodes',
       'nacos_get_config',
+      'nacos_get_config_history',
       'nacos_get_service',
+      'nacos_list_config_history',
+      'nacos_list_config_listeners',
       'nacos_list_configs',
       'nacos_list_instances',
       'nacos_list_namespaces',
       'nacos_list_service_instances',
+      'nacos_list_service_subscribers',
       'nacos_list_services'
     ]);
   });

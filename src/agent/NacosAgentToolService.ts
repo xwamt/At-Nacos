@@ -9,20 +9,28 @@ import { redactSensitiveText } from '../utils/redaction';
 import {
   describeZodError,
   nacosGetClusterNodesSchema,
+  nacosGetConfigHistorySchema,
   nacosGetConfigSchema,
   nacosGetServiceSchema,
+  nacosListConfigHistorySchema,
+  nacosListConfigListenersSchema,
   nacosListConfigsSchema,
   nacosListInstancesSchema,
   nacosListNamespacesSchema,
   nacosListServiceInstancesSchema,
+  nacosListServiceSubscribersSchema,
   nacosListServicesSchema,
   type NacosGetClusterNodesInput,
+  type NacosGetConfigHistoryInput,
   type NacosGetConfigInput,
   type NacosGetServiceInput,
+  type NacosListConfigHistoryInput,
+  type NacosListConfigListenersInput,
   type NacosListConfigsInput,
   type NacosListInstancesInput,
   type NacosListNamespacesInput,
   type NacosListServiceInstancesInput,
+  type NacosListServiceSubscribersInput,
   type NacosListServicesInput
 } from '../mcp/bridgeSchemas';
 
@@ -38,6 +46,10 @@ export type NacosApiClientLike = Pick<
   | 'listInstances'
   | 'listClusterNodes'
   | 'getServerMetrics'
+  | 'listConfigHistory'
+  | 'getConfigHistory'
+  | 'listConfigListeners'
+  | 'listSubscribers'
 >;
 
 export type NacosAgentClientFactory = (
@@ -100,6 +112,18 @@ export class NacosAgentToolService {
         );
       case 'nacos_get_cluster_nodes':
         return this.handleParsed(nacosGetClusterNodesSchema, args, (input) => this.getClusterNodes(input));
+      case 'nacos_list_config_history':
+        return this.handleParsed(nacosListConfigHistorySchema, args, (input) => this.listConfigHistory(input));
+      case 'nacos_get_config_history':
+        return this.handleParsed(nacosGetConfigHistorySchema, args, (input) => this.getConfigHistory(input));
+      case 'nacos_list_config_listeners':
+        return this.handleParsed(nacosListConfigListenersSchema, args, (input) =>
+          this.listConfigListeners(input)
+        );
+      case 'nacos_list_service_subscribers':
+        return this.handleParsed(nacosListServiceSubscribersSchema, args, (input) =>
+          this.listServiceSubscribers(input)
+        );
       default:
         return {
           ok: false,
@@ -336,5 +360,77 @@ export class NacosAgentToolService {
         metrics
       }
     };
+  }
+
+  private async listConfigHistory(input: NacosListConfigHistoryInput): Promise<ToolInvokeResult> {
+    const resolved = await this.resolveInstance(input.instanceId);
+    if (!resolved.ok) {
+      return resolved.failure;
+    }
+    const page = await resolved.client.listConfigHistory({
+      namespaceId: input.namespaceId ?? '',
+      group: input.group,
+      dataId: input.dataId,
+      pageNo: input.pageNo ?? 1,
+      pageSize: input.pageSize ?? 100
+    });
+    return { ok: true, result: page };
+  }
+
+  private async getConfigHistory(input: NacosGetConfigHistoryInput): Promise<ToolInvokeResult> {
+    const resolved = await this.resolveInstance(input.instanceId);
+    if (!resolved.ok) {
+      return resolved.failure;
+    }
+    const detail = await resolved.client.getConfigHistory({
+      namespaceId: input.namespaceId ?? '',
+      group: input.group,
+      dataId: input.dataId,
+      nid: input.nid
+    });
+    if (!detail) {
+      return {
+        ok: false,
+        code: 'NOT_FOUND',
+        message: `Configuration history not found: nid=${input.nid}`
+      };
+    }
+    const isRaw = input.raw === true;
+    return {
+      ok: true,
+      result: {
+        ...detail,
+        content: isRaw ? detail.content : redactSensitiveText(detail.content),
+        isRedacted: !isRaw
+      }
+    };
+  }
+
+  private async listConfigListeners(input: NacosListConfigListenersInput): Promise<ToolInvokeResult> {
+    const resolved = await this.resolveInstance(input.instanceId);
+    if (!resolved.ok) {
+      return resolved.failure;
+    }
+    const listeners = await resolved.client.listConfigListeners({
+      namespaceId: input.namespaceId ?? '',
+      group: input.group,
+      dataId: input.dataId,
+      aggregation: input.aggregation ?? true
+    });
+    return { ok: true, result: { listeners } };
+  }
+
+  private async listServiceSubscribers(input: NacosListServiceSubscribersInput): Promise<ToolInvokeResult> {
+    const resolved = await this.resolveInstance(input.instanceId);
+    if (!resolved.ok) {
+      return resolved.failure;
+    }
+    const subscribers = await resolved.client.listSubscribers({
+      namespaceId: input.namespaceId ?? '',
+      group: input.group ?? DEFAULT_SERVICE_GROUP,
+      serviceName: input.serviceName,
+      aggregation: input.aggregation ?? true
+    });
+    return { ok: true, result: { subscribers } };
   }
 }
