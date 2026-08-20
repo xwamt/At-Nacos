@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   BRIDGE_SCHEMAS_BY_TOOL_NAME,
   describeZodError,
+  NACOS_GET_CONFIG_INPUT_SCHEMA,
+  NACOS_LIST_CONFIGS_INPUT_SCHEMA,
+  NACOS_LIST_SERVICE_INSTANCES_INPUT_SCHEMA,
+  NACOS_LIST_SERVICES_INPUT_SCHEMA,
   nacosGetClusterNodesSchema,
   nacosGetConfigHistorySchema,
   nacosGetConfigSchema,
@@ -243,6 +247,36 @@ describe('bridgeSchemas', () => {
       'nacos_list_service_subscribers',
       'nacos_list_services'
     ]);
+  });
+
+  it('JSON Schema descriptions carry namespace, groupNameParam and listing-cost contracts', () => {
+    const configNs = NACOS_LIST_CONFIGS_INPUT_SCHEMA.properties?.namespaceId;
+    expect(typeof configNs === 'object' && configNs && 'description' in configNs ? configNs.description : '').not.toMatch(
+      /defaults to public namespace/i
+    );
+    expect(typeof configNs === 'object' && configNs && 'description' in configNs ? configNs.description : '').toMatch(
+      /nacos_list_namespaces/
+    );
+    const getConfigNs = NACOS_GET_CONFIG_INPUT_SCHEMA.properties?.namespaceId;
+    expect(
+      typeof getConfigNs === 'object' && getConfigNs && 'description' in getConfigNs ? getConfigNs.description : ''
+    ).not.toMatch(/defaults to public namespace/i);
+    const search = NACOS_LIST_CONFIGS_INPUT_SCHEMA.properties?.search;
+    expect(typeof search === 'object' && search && 'description' in search ? search.description : '').toMatch(
+      /omit.*accurate/i
+    );
+    const pageSize = NACOS_LIST_CONFIGS_INPUT_SCHEMA.properties?.pageSize;
+    expect(typeof pageSize === 'object' && pageSize && 'description' in pageSize ? pageSize.description : '').toMatch(
+      /memory|context|expensive/i
+    );
+    const group = NACOS_LIST_SERVICES_INPUT_SCHEMA.properties?.group;
+    expect(typeof group === 'object' && group && 'description' in group ? group.description : '').toContain(
+      'groupNameParam'
+    );
+    const cluster = NACOS_LIST_SERVICE_INSTANCES_INPUT_SCHEMA.properties?.cluster;
+    expect(typeof cluster === 'object' && cluster && 'description' in cluster ? cluster.description : '').not.toContain(
+      'NacosInstanceQuery'
+    );
   });
 
   it('describeZodError formats error issues into human-readable string', () => {

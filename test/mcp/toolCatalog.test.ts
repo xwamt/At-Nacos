@@ -41,6 +41,22 @@ describe('toolCatalog', () => {
     expect(namespaces?.description).toMatch(/"public" on 3\.x/i);
     const clusterNodes = AT_NACOS_TOOL_CATALOG.find((tool) => tool.name === 'nacos_get_cluster_nodes');
     expect(clusterNodes?.description).toMatch(/metrics may be omitted/i);
+    const listConfigs = AT_NACOS_TOOL_CATALOG.find((tool) => tool.name === 'nacos_list_configs');
+    expect(listConfigs?.description).toMatch(/type/);
+    expect(listConfigs?.description).toMatch(/configTags/);
+    expect(listConfigs?.description).toMatch(/appName/);
+    expect(listConfigs?.description).toMatch(/omit search for accurate/i);
+    expect(listConfigs?.description).toMatch(/\*/);
+    expect(listConfigs?.description).toMatch(/no bodies|without bodies|strips it/i);
+    expect(listConfigs?.description).toMatch(/max 500/);
+    const listServices = AT_NACOS_TOOL_CATALOG.find((tool) => tool.name === 'nacos_list_services');
+    expect(listServices?.description).toContain('groupNameParam');
+    expect(listServices?.description).toContain('serviceNameParam');
+    expect(listServices?.description).toMatch(/withInstances is never exposed/i);
+    expect(listServices?.description).toMatch(/expensive|memory|cost/i);
+    const listServiceInstances = AT_NACOS_TOOL_CATALOG.find((tool) => tool.name === 'nacos_list_service_instances');
+    expect(listServiceInstances?.description).not.toContain('NacosInstanceQuery');
+    expect(listServiceInstances?.description).toMatch(/omit.*cluster|every cluster/i);
     for (const tool of AT_NACOS_TOOL_CATALOG) {
       expect(tool.name).toMatch(/^nacos_[a-z0-9_]+$/);
       expect(tool.risk).toBe('read');

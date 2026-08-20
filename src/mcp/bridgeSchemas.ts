@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import type { JsonSchemaObject } from '@at-series/mcp-hub';
 
+/** Agents must use the id `nacos_list_namespaces` returns; "public" is not portable. */
+const NAMESPACE_ID_DESCRIPTION =
+  'Optional namespace ID. Omit for the instance default (empty string on 1.x/2.x). Use the namespaceId from nacos_list_namespaces; do not send "public" on 1.x/2.x.';
+
+const PAGE_SIZE_DESCRIPTION =
+  'Page size (default 100, max 500). Larger pages cost more memory and model context; prefer filters over max pageSize.';
+
 /**
  * Server-side input validation for every AT Nacos MCP tool (M6).
  * Every tool except `nacos_list_instances` requires `instanceId`.
@@ -171,7 +178,7 @@ export const NACOS_LIST_CONFIGS_INPUT_SCHEMA: JsonSchemaObject = {
     },
     namespaceId: {
       type: 'string',
-      description: 'Optional namespace ID (defaults to public namespace).'
+      description: NAMESPACE_ID_DESCRIPTION
     },
     group: {
       type: 'string',
@@ -198,7 +205,8 @@ export const NACOS_LIST_CONFIGS_INPUT_SCHEMA: JsonSchemaObject = {
     search: {
       type: 'string',
       enum: ['blur', 'accurate'],
-      description: 'Nacos list search mode: blur (prefix/suffix `*` wildcards allowed) or accurate.'
+      description:
+        'Nacos list search mode: blur (prefix/suffix `*` wildcards allowed) or accurate. Omit for accurate (this plugin default, not official blur).'
     },
     pageNo: {
       type: 'integer',
@@ -209,7 +217,7 @@ export const NACOS_LIST_CONFIGS_INPUT_SCHEMA: JsonSchemaObject = {
       type: 'integer',
       minimum: 1,
       maximum: 500,
-      description: 'Page size (default 100, max 500).'
+      description: PAGE_SIZE_DESCRIPTION
     }
   },
   required: ['instanceId'],
@@ -225,7 +233,7 @@ export const NACOS_GET_CONFIG_INPUT_SCHEMA: JsonSchemaObject = {
     },
     namespaceId: {
       type: 'string',
-      description: 'Optional namespace ID (defaults to public namespace).'
+      description: NAMESPACE_ID_DESCRIPTION
     },
     group: {
       type: 'string',
@@ -253,11 +261,12 @@ export const NACOS_LIST_SERVICES_INPUT_SCHEMA: JsonSchemaObject = {
     },
     namespaceId: {
       type: 'string',
-      description: 'Optional namespace ID.'
+      description: NAMESPACE_ID_DESCRIPTION
     },
     group: {
       type: 'string',
-      description: 'Optional group name.'
+      description:
+        'Optional group forwarded as official groupNameParam (prefix/suffix match). Omit or blank means every group.'
     },
     serviceName: {
       type: 'string',
@@ -278,7 +287,7 @@ export const NACOS_LIST_SERVICES_INPUT_SCHEMA: JsonSchemaObject = {
       type: 'integer',
       minimum: 1,
       maximum: 500,
-      description: 'Page size (default 100, max 500).'
+      description: PAGE_SIZE_DESCRIPTION
     }
   },
   required: ['instanceId'],
@@ -294,7 +303,7 @@ export const NACOS_GET_SERVICE_INPUT_SCHEMA: JsonSchemaObject = {
     },
     namespaceId: {
       type: 'string',
-      description: 'Optional namespace ID.'
+      description: NAMESPACE_ID_DESCRIPTION
     },
     group: {
       type: 'string',
@@ -318,7 +327,7 @@ export const NACOS_LIST_SERVICE_INSTANCES_INPUT_SCHEMA: JsonSchemaObject = {
     },
     namespaceId: {
       type: 'string',
-      description: 'Optional namespace ID.'
+      description: NAMESPACE_ID_DESCRIPTION
     },
     group: {
       type: 'string',
@@ -330,7 +339,7 @@ export const NACOS_LIST_SERVICE_INSTANCES_INPUT_SCHEMA: JsonSchemaObject = {
     },
     cluster: {
       type: 'string',
-      description: 'Optional cluster name forwarded as NacosInstanceQuery.cluster.'
+      description: 'Optional cluster of the service. Omit to list hosts in every cluster.'
     }
   },
   required: ['instanceId', 'serviceName'],
@@ -358,7 +367,7 @@ export const NACOS_LIST_CONFIG_HISTORY_INPUT_SCHEMA: JsonSchemaObject = {
     },
     namespaceId: {
       type: 'string',
-      description: 'Optional namespace ID (defaults to public namespace).'
+      description: NAMESPACE_ID_DESCRIPTION
     },
     group: {
       type: 'string',
@@ -377,7 +386,7 @@ export const NACOS_LIST_CONFIG_HISTORY_INPUT_SCHEMA: JsonSchemaObject = {
       type: 'integer',
       minimum: 1,
       maximum: 500,
-      description: 'Page size (default 100, max 500).'
+      description: PAGE_SIZE_DESCRIPTION
     }
   },
   required: ['instanceId', 'group', 'dataId'],
@@ -393,7 +402,7 @@ export const NACOS_GET_CONFIG_HISTORY_INPUT_SCHEMA: JsonSchemaObject = {
     },
     namespaceId: {
       type: 'string',
-      description: 'Optional namespace ID (defaults to public namespace).'
+      description: NAMESPACE_ID_DESCRIPTION
     },
     group: {
       type: 'string',
@@ -425,7 +434,7 @@ export const NACOS_LIST_CONFIG_LISTENERS_INPUT_SCHEMA: JsonSchemaObject = {
     },
     namespaceId: {
       type: 'string',
-      description: 'Optional namespace ID (defaults to public namespace).'
+      description: NAMESPACE_ID_DESCRIPTION
     },
     group: {
       type: 'string',
@@ -453,7 +462,7 @@ export const NACOS_LIST_SERVICE_SUBSCRIBERS_INPUT_SCHEMA: JsonSchemaObject = {
     },
     namespaceId: {
       type: 'string',
-      description: 'Optional namespace ID.'
+      description: NAMESPACE_ID_DESCRIPTION
     },
     group: {
       type: 'string',
@@ -481,7 +490,7 @@ export const NACOS_LIST_LISTENED_CONFIGS_INPUT_SCHEMA: JsonSchemaObject = {
     },
     namespaceId: {
       type: 'string',
-      description: 'Optional namespace ID (defaults to public namespace).'
+      description: NAMESPACE_ID_DESCRIPTION
     },
     ip: {
       type: 'string',

@@ -43,7 +43,10 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
     name: 'nacos_list_configs',
     title: 'List Nacos configurations',
     description:
-      'List configuration metadata (no bodies). Filters run on the Nacos server. ' +
+      'List configuration metadata (no bodies — 1.x/2.x listings include content on the wire; this tool strips it). ' +
+      'Server-side filters: group, dataId, type, configTags, appName. ' +
+      'search is blur or accurate; omit search for accurate. blur allows * wildcards on group/dataId. ' +
+      'Pagination defaults to pageNo 1 and pageSize 100 (max 500); large pages are expensive. ' +
       'Use nacos_get_config for configuration content.',
     risk: 'read',
     inputSchema: NACOS_LIST_CONFIGS_INPUT_SCHEMA
@@ -62,8 +65,10 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
     title: 'List Nacos registered services',
     description:
       'List registered services on a Nacos instance with healthy and total instance counts. ' +
+      'Optional group maps to official groupNameParam (prefix/suffix); omit for every group. ' +
       'Optional serviceName maps to official serviceNameParam (prefix/suffix). ' +
-      'Empty services are hidden by default (ignoreEmptyService); withInstances is never exposed.',
+      'Empty services are hidden by default (ignoreEmptyService). withInstances is never exposed — expanding every host on the listing is expensive; use nacos_list_service_instances for one service. ' +
+      'Pagination defaults to pageNo 1 and pageSize 100 (max 500).',
     risk: 'read',
     inputSchema: NACOS_LIST_SERVICES_INPUT_SCHEMA
   },
@@ -81,7 +86,7 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
     title: 'List Nacos service instances',
     description:
       'List registered Nacos service hosts (IP, port, health, weight, cluster, metadata) for one service. ' +
-      'Group defaults to DEFAULT_GROUP. Optional cluster maps to NacosInstanceQuery.cluster. ' +
+      'Group defaults to DEFAULT_GROUP. Omit cluster to list every cluster of the service. ' +
       'Distinct from nacos_list_instances, which lists configured plugin instances.',
     risk: 'read',
     inputSchema: NACOS_LIST_SERVICE_INSTANCES_INPUT_SCHEMA
