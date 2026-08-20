@@ -80,19 +80,7 @@ function createMockDeps(clientOverrides: Partial<NacosApiClientLike> = {}) {
       namespaceId: 'dev',
       protectThreshold: 0,
       metadata: {},
-      selector: { type: 'none' },
-      hosts: [
-        {
-          ip: '192.168.1.10',
-          port: 8080,
-          healthy: true,
-          enabled: true,
-          weight: 1,
-          clusterName: 'DEFAULT',
-          ephemeral: true,
-          metadata: {}
-        }
-      ]
+      selector: { type: 'none' }
     }),
     listClusterNodes: vi.fn().mockResolvedValue([
       {
@@ -283,6 +271,10 @@ describe('NacosAgentToolService', () => {
       serviceName: 'order-service'
     });
     expect(client.listInstances).not.toHaveBeenCalled();
+    if (res.ok) {
+      expect(res.result).not.toHaveProperty('hosts');
+      expect(res.result).not.toHaveProperty('instances');
+    }
   });
 
   it('nacos_list_service_instances lists instances for one service', async () => {
@@ -299,6 +291,22 @@ describe('NacosAgentToolService', () => {
       serviceName: 'order-service',
       cluster: 'DEFAULT'
     });
+    if (res.ok) {
+      expect(res.result).toEqual({
+        instances: [
+          {
+            ip: '192.168.1.10',
+            port: 8080,
+            healthy: true,
+            enabled: true,
+            weight: 1,
+            clusterName: 'DEFAULT',
+            ephemeral: true,
+            metadata: {}
+          }
+        ]
+      });
+    }
   });
 
   it('returns VALIDATION_ERROR when input schema fails', async () => {
