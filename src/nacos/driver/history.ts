@@ -3,7 +3,8 @@ import {
   fetchConfigDetail,
   type NacosApiFlavor,
   type NacosConfigHistoryListQuery,
-  type NacosConfigHistoryQuery
+  type NacosConfigHistoryQuery,
+  type NacosListenerQuery
 } from './NacosDriver';
 import {
   groupParamName,
@@ -98,15 +99,18 @@ export async function fetchConfigListeners(
   http: Pick<NacosHttpClient, 'requestJson'>,
   endpointFlavor: NacosApiFlavor,
   path: string,
-  ref: NacosConfigRef,
+  query: NacosListenerQuery,
   options?: NacosRequestOptions
 ): Promise<NacosConfigListener[]> {
   const payload = await http.requestJson<unknown>('GET', path, {
     ...options,
     query: {
       ...options?.query,
-      ...configRefParams(endpointFlavor, ref),
-      sampleTime: String(LISTENER_SAMPLE_ROUNDS)
+      ...configRefParams(endpointFlavor, query),
+      sampleTime: String(LISTENER_SAMPLE_ROUNDS),
+      ...(endpointFlavor === 'v3-admin' || endpointFlavor === 'v3-console'
+        ? { aggregation: query.aggregation === false ? 'false' : 'true' }
+        : {})
     }
   });
   return normalizeConfigListeners(payload, path);

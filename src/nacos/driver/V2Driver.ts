@@ -11,7 +11,9 @@ import {
   type NacosDriver,
   type NacosInstanceHealthUpdate,
   type NacosInstanceQuery,
-  type NacosServiceListQuery
+  type NacosListenerQuery,
+  type NacosServiceListQuery,
+  type NacosSubscriberQuery
 } from './NacosDriver';
 import { fetchConfigHistoryDetail, fetchConfigHistoryPage, fetchConfigListeners } from './history';
 import {
@@ -157,8 +159,8 @@ export class V2Driver implements NacosDriver {
     return fetchConfigHistoryDetail(this.http, CONFIG_ENDPOINT_FLAVOR, CONFIG_HISTORY_PATH, query);
   }
 
-  listConfigListeners(ref: NacosConfigRef): Promise<NacosConfigListener[]> {
-    return fetchConfigListeners(this.http, CONFIG_ENDPOINT_FLAVOR, CONFIG_LISTENER_PATH, ref);
+  listConfigListeners(query: NacosListenerQuery): Promise<NacosConfigListener[]> {
+    return fetchConfigListeners(this.http, CONFIG_ENDPOINT_FLAVOR, CONFIG_LISTENER_PATH, query);
   }
 
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {
@@ -179,8 +181,8 @@ export class V2Driver implements NacosDriver {
     );
   }
 
-  listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]> {
-    return fetchSubscribers(this.http, SUBSCRIBERS_ENDPOINT_FLAVOR, SUBSCRIBERS_PATH, ref);
+  listSubscribers(query: NacosSubscriberQuery): Promise<NacosSubscriber[]> {
+    return fetchSubscribers(this.http, SUBSCRIBERS_ENDPOINT_FLAVOR, SUBSCRIBERS_PATH, query);
   }
 
   listClusterNodes(): Promise<NacosClusterNode[]> {

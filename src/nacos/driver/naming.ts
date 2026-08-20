@@ -1,7 +1,7 @@
 import { NacosApiError } from '../NacosApiError';
 import type { NacosHttpClient, NacosRequestOptions } from '../NacosHttpClient';
 import { isRecord } from '../jsonGuards';
-import type { NacosApiFlavor, NacosInstanceQuery, NacosServiceListQuery } from './NacosDriver';
+import type { NacosApiFlavor, NacosInstanceQuery, NacosServiceListQuery, NacosSubscriberQuery } from './NacosDriver';
 import {
   clusterParamName,
   groupedServiceName,
@@ -295,14 +295,20 @@ export async function fetchSubscribers(
   http: Pick<NacosHttpClient, 'requestJson'>,
   endpointFlavor: NacosApiFlavor,
   path: string,
-  ref: NacosServiceRef,
+  query: NacosSubscriberQuery,
   options?: NacosRequestOptions
 ): Promise<NacosSubscriber[]> {
   const payload = await http.requestJson<unknown>('GET', path, {
     ...options,
-    query: { ...options?.query, ...serviceIdentityParams(endpointFlavor, ref) }
+    query: {
+      ...options?.query,
+      ...serviceIdentityParams(endpointFlavor, query),
+      ...(endpointFlavor === 'v3-admin' || endpointFlavor === 'v3-console'
+        ? { aggregation: query.aggregation === false ? 'false' : 'true' }
+        : {})
+    }
   });
-  return normalizeSubscriberList(payload, path, ref);
+  return normalizeSubscriberList(payload, path, query);
 }
 
 /** The servers of the cluster. No parameters on any version: a node list is a node list. */

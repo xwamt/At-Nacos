@@ -499,6 +499,32 @@ for (const driverCase of DRIVER_CASES) {
       expect(queryOf(requests[0]?.url ?? '').get('sampleTime')).toBe('1');
     });
 
+    it('sends aggregation on 3.x listener requests and omits it on v1/v2', async () => {
+      const { requests } = await drive(
+        driverCase,
+        respondWith(200, driverCase.wrap(LISTENER_STATUS)),
+        (driver) => driver.listConfigListeners(CONFIG_REF)
+      );
+      const query = queryOf(requests[0]?.url ?? '');
+      if (flavor === 'v3-admin' || flavor === 'v3-console') {
+        expect(query.get('aggregation')).toBe('true');
+      } else {
+        expect(query.has('aggregation')).toBe(false);
+      }
+    });
+
+    it('lets the caller disable listener aggregation on 3.x', async () => {
+      const { requests } = await drive(
+        driverCase,
+        respondWith(200, driverCase.wrap(LISTENER_STATUS)),
+        (driver) => driver.listConfigListeners({ ...CONFIG_REF, aggregation: false })
+      );
+      const query = queryOf(requests[0]?.url ?? '');
+      if (flavor === 'v3-admin' || flavor === 'v3-console') {
+        expect(query.get('aggregation')).toBe('false');
+      }
+    });
+
     /**
      * The measured answer for a config nobody is watching -- and, on a real
      * 2.3.2, the identical answer for a dataId nobody ever published. Empty is
@@ -626,6 +652,32 @@ for (const driverCase of DRIVER_CASES) {
         expect(query.get('pageSize')).toBe(driverCase.subscribersArePaged ? '100' : null);
       }
     );
+
+    it('sends aggregation on 3.x subscriber requests and omits it on v1/v2', async () => {
+      const { requests } = await drive(
+        driverCase,
+        respondWith(200, driverCase.subscribersBody),
+        (driver) => driver.listSubscribers(SERVICE_REF)
+      );
+      const query = queryOf(requests[0]?.url ?? '');
+      if (flavor === 'v3-admin' || flavor === 'v3-console') {
+        expect(query.get('aggregation')).toBe('true');
+      } else {
+        expect(query.has('aggregation')).toBe(false);
+      }
+    });
+
+    it('lets the caller disable subscriber aggregation on 3.x', async () => {
+      const { requests } = await drive(
+        driverCase,
+        respondWith(200, driverCase.subscribersBody),
+        (driver) => driver.listSubscribers({ ...SERVICE_REF, aggregation: false })
+      );
+      const query = queryOf(requests[0]?.url ?? '');
+      if (flavor === 'v3-admin' || flavor === 'v3-console') {
+        expect(query.get('aggregation')).toBe('false');
+      }
+    });
 
     /**
      * A service nobody watches, which on a real 2.3.2 is also how a service

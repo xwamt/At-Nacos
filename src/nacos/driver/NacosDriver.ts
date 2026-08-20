@@ -128,6 +128,15 @@ export interface NacosConfigHistoryQuery extends NacosConfigRef {
   nid: string;
 }
 
+export interface NacosListenerQuery extends NacosConfigRef {
+  /** 3.x：是否汇总整个集群。缺省 true。v1/v2 不发这个参数。 */
+  aggregation?: boolean;
+}
+
+export interface NacosSubscriberQuery extends NacosServiceRef {
+  aggregation?: boolean;
+}
+
 /**
  * One configuration, as it is to be stored.
  *
@@ -209,7 +218,7 @@ export interface NacosDriver {
    * side it was rendering.
    */
   getConfigHistory(query: NacosConfigHistoryQuery): Promise<NacosConfigDetail>;
-  listConfigListeners(ref: NacosConfigRef): Promise<NacosConfigListener[]>;
+  listConfigListeners(query: NacosListenerQuery): Promise<NacosConfigListener[]>;
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>>;
   getService(ref: NacosServiceRef): Promise<NacosServiceDetail>;
   /**
@@ -219,7 +228,7 @@ export interface NacosDriver {
    */
   listInstances(query: NacosInstanceQuery): Promise<NacosInstance[]>;
   /** Every client watching one service, unpaged, for the same reason instances are. */
-  listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]>;
+  listSubscribers(query: NacosSubscriberQuery): Promise<NacosSubscriber[]>;
   listClusterNodes(): Promise<NacosClusterNode[]>;
   getServerMetrics(): Promise<NacosServerMetrics>;
   /**

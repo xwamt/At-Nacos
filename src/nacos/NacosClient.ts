@@ -8,7 +8,9 @@ import type {
   NacosDriver,
   NacosInstanceHealthUpdate,
   NacosInstanceQuery,
-  NacosServiceListQuery
+  NacosListenerQuery,
+  NacosServiceListQuery,
+  NacosSubscriberQuery
 } from './driver/NacosDriver';
 import { V1Driver } from './driver/V1Driver';
 import { V2Driver } from './driver/V2Driver';
@@ -158,8 +160,8 @@ export class NacosClient {
     return this.resolver.run('config-history-detail', (driver) => driver.getConfigHistory(query));
   }
 
-  listConfigListeners(ref: NacosConfigRef): Promise<NacosConfigListener[]> {
-    return this.resolver.run('config-listeners', (driver) => driver.listConfigListeners(ref));
+  listConfigListeners(query: NacosListenerQuery): Promise<NacosConfigListener[]> {
+    return this.resolver.run('config-listeners', (driver) => driver.listConfigListeners(query));
   }
 
   listServices(query: NacosServiceListQuery): Promise<Paged<NacosServiceSummary>> {
@@ -174,8 +176,8 @@ export class NacosClient {
     return this.resolver.run('instances', (driver) => driver.listInstances(query));
   }
 
-  listSubscribers(ref: NacosServiceRef): Promise<NacosSubscriber[]> {
-    return this.resolver.run('subscribers', (driver) => driver.listSubscribers(ref));
+  listSubscribers(query: NacosSubscriberQuery): Promise<NacosSubscriber[]> {
+    return this.resolver.run('subscribers', (driver) => driver.listSubscribers(query));
   }
 
   /**
