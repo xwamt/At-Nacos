@@ -336,6 +336,44 @@ for (const driverCase of DRIVER_CASES) {
       expect(query.get('hasIpCount') ?? query.get('ignoreEmptyService')).toBe('false');
     });
 
+    it('sends serviceNameParam when the caller named a service', async () => {
+      const { requests } = await drive(
+        driverCase,
+        respondWith(200, driverCase.servicePrimaryBody),
+        (driver) =>
+          driver.listServices({
+            namespaceId: NAMESPACE_ID,
+            pageNo: 1,
+            pageSize: 100,
+            serviceName: 'order'
+          })
+      );
+      const query = queryOf(requests[0]?.url ?? '');
+      if (driverCase.serviceGroupParam === 'groupNameParam') {
+        expect(query.get('serviceNameParam')).toBe('order');
+      } else {
+        expect(query.has('serviceNameParam')).toBe(false);
+      }
+    });
+
+    it('hides empty services only when the caller asks', async () => {
+      const { requests } = await drive(
+        driverCase,
+        respondWith(200, driverCase.servicePrimaryBody),
+        (driver) =>
+          driver.listServices({
+            namespaceId: NAMESPACE_ID,
+            pageNo: 1,
+            pageSize: 100,
+            ignoreEmptyService: true
+          })
+      );
+      const query = queryOf(requests[0]?.url ?? '');
+      if (driverCase.serviceGroupParam === 'groupNameParam') {
+        expect(query.get('hasIpCount') ?? query.get('ignoreEmptyService')).toBe('true');
+      }
+    });
+
     it('normalizes the service listing, counts and all', async () => {
       const { result } = await drive(driverCase, respondWith(200, driverCase.servicePrimaryBody), (driver) =>
         driver.listServices({ namespaceId: NAMESPACE_ID, pageNo: 1, pageSize: 2 })

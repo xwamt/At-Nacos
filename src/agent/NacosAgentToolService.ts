@@ -262,6 +262,8 @@ export class NacosAgentToolService {
     const page = await resolved.client.listServices({
       namespaceId: input.namespaceId ?? '',
       group: input.group,
+      serviceName: input.serviceName,
+      ignoreEmptyService: input.ignoreEmptyService ?? true,
       pageNo: input.pageNo ?? 1,
       pageSize: input.pageSize ?? 100
     });

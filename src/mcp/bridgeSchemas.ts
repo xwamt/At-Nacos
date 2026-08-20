@@ -47,6 +47,8 @@ export const nacosListServicesSchema = z
     instanceId: z.string().min(1),
     namespaceId: z.string().optional(),
     group: z.string().optional(),
+    serviceName: z.string().optional(),
+    ignoreEmptyService: z.boolean().optional(),
     pageNo: z.number().int().positive().optional(),
     pageSize: z.number().int().positive().max(500).optional()
   })
@@ -189,6 +191,16 @@ export const NACOS_LIST_SERVICES_INPUT_SCHEMA: JsonSchemaObject = {
     group: {
       type: 'string',
       description: 'Optional group name.'
+    },
+    serviceName: {
+      type: 'string',
+      description:
+        'Optional service name forwarded as official serviceNameParam (prefix/suffix match). Blank means no name filter.'
+    },
+    ignoreEmptyService: {
+      type: 'boolean',
+      description:
+        'When true, hide services that have no instances (MCP default true). withInstances is never exposed.'
     },
     pageNo: {
       type: 'integer',

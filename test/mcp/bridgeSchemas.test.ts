@@ -68,6 +68,16 @@ describe('bridgeSchemas', () => {
     ).toBe(true);
   });
 
+  it('nacosListServicesSchema accepts serviceName and ignoreEmptyService', () => {
+    expect(
+      nacosListServicesSchema.safeParse({
+        instanceId: 'inst-1',
+        serviceName: 'order',
+        ignoreEmptyService: false
+      }).success
+    ).toBe(true);
+  });
+
   it('nacosGetServiceSchema requires instanceId, group and serviceName', () => {
     expect(
       nacosGetServiceSchema.safeParse({

@@ -49,9 +49,9 @@ const DEFAULT_GROUP = 'DEFAULT_GROUP';
  * `withInstances=false` keeps the answer to one row per service; the `true`
  * form expands every instance of every service in the page, which is a
  * different endpoint's job. The empty-service flag -- `hasIpCount` on the
- * catalog, `ignoreEmptyService` on 3.x -- is sent as false rather than left
- * out, because a service with no instances is still a service and a
- * form-bound boolean's default is the one thing a client cannot see.
+ * catalog, `ignoreEmptyService` on 3.x -- is sent as false unless the caller
+ * asked otherwise, because a service with no instances is still a service
+ * and a form-bound boolean's default is the one thing a client cannot see.
  */
 function countedServiceParams(
   query: NacosServiceListQuery,
@@ -60,10 +60,11 @@ function countedServiceParams(
   return {
     namespaceId: query.namespaceId,
     groupNameParam: query.group ?? '',
+    serviceNameParam: query.serviceName ?? '',
     pageNo: String(query.pageNo),
     pageSize: String(query.pageSize),
     withInstances: 'false',
-    [emptyServiceParam]: 'false'
+    [emptyServiceParam]: query.ignoreEmptyService === true ? 'true' : 'false'
   };
 }
 

@@ -222,6 +222,22 @@ describe('NacosAgentToolService', () => {
     }
   });
 
+  it('nacos_list_services defaults ignoreEmptyService to true and forwards serviceName', async () => {
+    const { service, client } = createMockDeps();
+    await service.invoke('nacos_list_services', {
+      instanceId: 'inst-allowed',
+      serviceName: 'order'
+    });
+    expect(client.listServices).toHaveBeenCalledWith({
+      namespaceId: '',
+      group: undefined,
+      serviceName: 'order',
+      ignoreEmptyService: true,
+      pageNo: 1,
+      pageSize: 100
+    });
+  });
+
   it('nacos_list_namespaces, nacos_list_services, nacos_get_service, nacos_get_cluster_nodes work correctly', async () => {
     const { service } = createMockDeps();
 

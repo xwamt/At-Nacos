@@ -89,6 +89,17 @@ export interface NacosServiceListQuery {
   namespaceId: string;
   /** Absent = every group. */
   group?: string;
+  /**
+   * Forwarded as `serviceNameParam` on catalog and 3.x listings (prefix/suffix
+   * match). Absent or blank means no name filter. The name-only fallback has
+   * no such parameter.
+   */
+  serviceName?: string;
+  /**
+   * When true, listings that report counts hide services with no instances.
+   * Unset must stay false on the wire so the tree still shows empty services.
+   */
+  ignoreEmptyService?: boolean;
   /** One-based, as Nacos counts. */
   pageNo: number;
   pageSize: number;

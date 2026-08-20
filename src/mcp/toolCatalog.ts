@@ -54,7 +54,9 @@ export const AT_NACOS_TOOL_CATALOG: ToolCatalogEntry[] = [
     name: 'nacos_list_services',
     title: 'List Nacos registered services',
     description:
-      'List registered services on a Nacos instance with healthy and total instance counts.',
+      'List registered services on a Nacos instance with healthy and total instance counts. ' +
+      'Optional serviceName maps to official serviceNameParam (prefix/suffix). ' +
+      'Empty services are hidden by default (ignoreEmptyService); withInstances is never exposed.',
     risk: 'read',
     inputSchema: NACOS_LIST_SERVICES_INPUT_SCHEMA
   },
