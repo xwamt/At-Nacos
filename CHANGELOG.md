@@ -4,6 +4,26 @@
 
 ---
 
+## [v0.1.2] - 2026-08-21
+
+**MCP 对齐官方工具切分与查询语义 🤖**
+
+本次更新对照官方 Nacos MCP 的工具切分与查询语义，将只读 MCP 从 8 个扩展到 13 个；配置/服务列表过滤下推服务端，并补齐历史、监听者、订阅者与按客户端 IP 反查。界面可写路径不变，MCP 仍全部只读。
+
+### 🤖 MCP 工具对齐 (Official MCP Alignment)
+- **13 个只读工具**：在原有实例 / 命名空间 / 配置 / 服务 / 集群能力上，新增配置历史、监听者、订阅者、服务实例列表、按客户端 IP 反查已订阅配置。
+- **配置列表服务端过滤**：支持 `type` / `configTags` / `appName` / 显式 `search`；省略 `search` 为 `accurate`（不是官方默认 `blur`）；列表不含正文，正文只走 `nacos_get_config`。
+- **服务列表对齐 Admin API**：`group` → `groupNameParam`，`serviceName` → `serviceNameParam`；MCP 默认忽略空服务，树视图仍显示空服务；永不展开 `withInstances`。
+- **服务元数据与实例列表拆分**：`nacos_get_service` 不含 hosts；注册主机走 `nacos_list_service_instances`（与插件连接列表 `nacos_list_instances` 区分）。
+- **集群聚合**：3.x 监听者 / 订阅者 / 反查默认 `aggregation=true`，避免多节点只看到打到的那一台。
+- **按 IP 反查已订阅配置**：1.x/2.x `/v1/cs/listener`；3.x Admin `/v3/admin/cs/listener`；Console `/v3/console/cs/config/listener/ip`；兼容 `listenersStatus`。
+- **工具描述契约**：默认值、通配符、`DEFAULT_GROUP`、命名空间 id（1.x/2.x 空串，勿传 `public`）、大页内存代价写入 Agent 可见 description。
+
+### 🧪 测试与质量
+- 新增配置过滤下推、服务检索、历史 / 监听 / 订阅 MCP、按 IP 反查与工具描述契约的自动化测试，全套 **1890** 个测试用例全部通过。
+
+---
+
 ## [v0.1.1] - 2026-08-17
 
 **性能深度优化与编辑同步缺陷修复 🚀**

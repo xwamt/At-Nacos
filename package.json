@@ -2,7 +2,7 @@
   "name": "at-nacos",
   "displayName": "%atNacos.displayName%",
   "description": "%atNacos.description%",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "local",
   "icon": "media/at-nacos-icon.png",
   "license": "MIT",
