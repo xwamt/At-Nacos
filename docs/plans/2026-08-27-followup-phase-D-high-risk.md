@@ -256,6 +256,25 @@ describe('redaction')
 
 ## Task D2: MCP 写工具（双闸门）——独立 PR
 
+> **开工条件（§0.2 复述）：** Phase C 已合入 main（至少 C1 的 `refetchInstance` 与 patch 形 `updateInstanceHealth`）；skill 反向断言的改写过评审；Hub 端 `risk:'write'` 的确认行为已确认。三者缺一不动工。
+
+### D2.0 现状核对表（2026-08-27 核实；`NacosAgentToolService.ts` 行号按 opt-1-8——该文件与 main 有分叉，main 上 resolveInstance 同名但行号不同）
+
+| 事实 | 坐标 | 核对结果 |
+|---|---|---|
+| skill 对 Agent 承诺 MCP 只读 | `skills/at-nacos-mcp/SKILL.md:8-10`（frontmatter「not for publishing or deleting configs (MCP is read-only)」）；`references/tool-selection.md` 首段「All tools are risk: read … MCP does not expose write tools.」 | ✅ |
+| 反向断言测试 | `test/docs/AtNacosMcpSkill.test.ts:42-43`（`not.toContain('nacos_publish')` / `'nacos_delete'`）、`:44`（`risk:\s*read`） | ✅ 改写方案见 D2.4 |
+| 唯一的实例级闸门不区分读写 | opt-1-8 `src/agent/NacosAgentToolService.ts:169-205`（`resolveInstance`；`allowBackgroundAccess` 检查 `:184-193`） | ✅ |
+| Agent 的 client 类型是只读 Pick | opt-1-8 `NacosAgentToolService.ts:41-56`（`NacosApiClientLike`，13 个读方法，无 publish/update） | ✅ 需加宽（见 D2.3a） |
+| 错误码集合 | opt-1-8 `NacosAgentToolService.ts:63`（`VALIDATION_ERROR`/`NOT_FOUND`/`INTERNAL_ERROR`/`UNAVAILABLE`） | ✅ 写闸门拒绝用 `UNAVAILABLE`，不加新码 |
+| 目录静态发布两处 | `src/mcp/BridgeServer.ts:145`（注册文件）与 `:231-236`（`GET /tools`），均直引 `AT_NACOS_TOOL_CATALOG`（`toolCatalog.ts:23`，13 条全 `risk:'read'`） | ✅ |
+| 心跳只刷时间戳，无目录重发 | `BridgeServer.ts`（`heartbeat()` 调用处） | ✅ `republish()` 是新基础设施 |
+| `NacosInstanceConfigManager` **无变更事件** | `src/config/NacosInstanceConfigManager.ts`（全文无 EventEmitter/onDidChange） | ✅ `onDidChangeInstances` 需本 Task 补 |
+| `allowBackgroundAccess` schema 先例 | `src/config/schema.ts:52` | ✅ `allowAgentWrites` 照抄形状 |
+| `assertWritable` 现居 vscode 模块 | `src/write/confirmWrite.ts:27-35`（文件 `:1` `import * as vscode`） | ✅ 需抽 `writable.ts`（vscode-free） |
+| `.strict()` schema 惯例与 `describeZodError` | `src/mcp/bridgeSchemas.ts:15-19`、`:524` | ✅ 两工具沿用 |
+| redaction 与 formatError | `NacosAgentToolService.ts:8`（`redactSensitiveText`）、`src/utils/errors.ts:10` | ✅ 写路径复用 |
+
 ### D2.1 现状与边界的来历
 
 - 「界面可写，MCP 工具全部只读」是**需求阶段的明确决策**（架构文档 §3 读写边界行），M5 计划的安全边界一节重申，skill 文件（`skills/at-nacos-mcp/SKILL.md` frontmatter 第 9–10 行）对 Agent 声明「not for publishing or deleting configs (MCP is read-only)」，且 `test/docs/AtNacosMcpSkill.test.ts` 第 42–43 行**断言 tool-selection 表里不出现 `nacos_publish` / `nacos_delete` 字样**。改这条边界不是加个工具，是改一条产品级承诺——这就是它必须独立 PR、独立评审的原因。
@@ -294,6 +313,8 @@ export function buildToolCatalog(options: { includeWriteTools: boolean }): ToolC
 
 ### D2.3 第一批两个工具（就这两个，删除类工具明确延后）
 
+**永不作为默认 MCP 工具提供的清单（写进 skill 与本文档，双处锁定）：** `nacos_delete_config`、`nacos_delete_namespace`、`nacos_create_namespace`、`nacos_delete_service`、任何用户/角色/权限管理。其中删除类是**永不默认**（未来若真有需求，必须走独立的产品评审、独立的第四道闸门设计，不是本文档的延伸）；`AtNacosMcpSkill.test.ts` 改写后仍保留 `not.toContain('nacos_delete')` 断言把这条锁进 CI。
+
 **`nacos_publish_config`（risk: 'write'）**
 
 - 入参（zod + JSON Schema 双生子，沿 `bridgeSchemas.ts` 惯例 `.strict()`）：`instanceId`(必), `namespaceId?`, `group`(必), `dataId`(必), `content`(必), **`type`(必——描述里写明原因：Nacos 把空 type 存成 text，会重置配置格式；这与驱动层 `requiredType` 的 validation 拒绝一脉相承)**, `appName?`, `description?`, `configTags?`（C4 合入后）, `expectedMd5?`（C5 合入后映射 casMd5）。
@@ -323,6 +344,47 @@ private async resolveWritableInstance(instanceId: string) {
 }
 ```
 
+### D2.3a 确切的类型改动（TypeScript 片段）
+
+```ts
+// src/agent/NacosAgentToolService.ts —— 只读 Pick 加宽两个写方法（现 :41-56）
+export type NacosApiClientLike = Pick<
+  NacosClient,
+  | 'listNamespaces' | 'listConfigs' | 'getConfig' | /* …既有 13 个读方法原样… */
+  | 'publishConfig'
+  | 'updateInstanceHealth'
+>;
+// createClient 工厂（NacosClientPool 路径）不用改：NacosClient 本来就有这两个方法，
+// 收窄发生在 Pick，放宽也只发生在 Pick。
+
+// src/config/NacosInstanceConfigManager.ts —— 补变更通知（为了 manager 的既有测试不引宿主，
+// 用轻量回调而不是 vscode.EventEmitter）
+export interface NacosInstanceConfigManagerOptions {
+  /** Fired after any save/delete changed the stored list. Used to republish the MCP catalog. */
+  onDidChangeInstances?: () => void;
+}
+
+// src/mcp/toolCatalog.ts —— 目录改为函数（既有常量拆成 READ_TOOLS 与 WRITE_TOOLS 两组内部常量）
+export function buildToolCatalog(options: { includeWriteTools: boolean }): ToolCatalogEntry[];
+
+// src/mcp/BridgeServer.ts —— 构造依赖注入目录来源 + 重发
+constructor(deps: { /* 既有 */ getCatalog: () => ToolCatalogEntry[] });
+async republish(): Promise<void>;   // 重写注册文件（publish 同款 payload，tools 现算），心跳不动
+```
+
+`bridgeSchemas.ts` 新增 `nacosPublishConfigSchema` / `nacosSetInstanceEnabledSchema`（`.strict()`）+ 对应 `NACOS_PUBLISH_CONFIG_INPUT_SCHEMA` / `NACOS_SET_INSTANCE_ENABLED_INPUT_SCHEMA` JSON 双生子 + `BRIDGE_SCHEMAS_BY_TOOL_NAME` 两条注册。
+
+### D2.3b i18n 字符串清单
+
+表单（nls + webview strings）：
+
+| 英文源串（键） | zh-cn |
+|---|---|
+| `Allow Agent writes` | 允许 Agent 写入 |
+| `Lets AI agents publish configurations and enable/disable service instances on this server through MCP. Requires background access; ignored while the connection is read-only.` | 允许 AI Agent 通过 MCP 在此服务器上发布配置、上下线服务实例。需要先开启后台访问；连接为只读时本开关无效。 |
+
+Agent 侧错误消息**不走 `t()`**（`src/agent/**` 不 import vscode，§12 分层；错误消息面向模型，保持英文）——`Nacos instance {label} does not allow Agent writes. Ask the user to enable 'Allow Agent writes' on this connection.` 原文即成品。
+
 ### D2.4 skill 与文档同步（与代码同 PR，缺一即评审打回）
 
 - `skills/at-nacos-mcp/SKILL.md`：frontmatter 删掉「not for publishing or deleting configs (MCP is read-only)」，替换为诚实版本：「Write tools (publish config, enable/disable instance) exist but appear only when a connection opted in to Agent writes; deleting anything is still not possible via MCP.」正文 Core workflow 补写前守则：写前必 `nacos_get_config` 确认现状、发布后复述 dataId+环境、拿不到写工具时指引用户开 `allowAgentWrites` 而不是重试。
@@ -346,15 +408,62 @@ private async resolveWritableInstance(instanceId: string) {
 | skill 两文件、README、`test/docs/AtNacosMcpSkill.test.ts` | D2.4 |
 | 测试新增：`test/mcp/toolCatalog.test.ts`、`bridgeSchemas.test.ts`、`BridgeServer.test.ts`、`test/agent/NacosAgentToolService.test.ts`、`test/write/publishConfigCore.test.ts` | 见 D2.6 |
 
-### D2.6 测试
+### D2.6 测试（文件 + describe/it 标题）
 
-- **闸门矩阵（本 Task 的核心测试）**：`allowBackgroundAccess` × `allowAgentWrites` × `readOnly` 八种组合里只有 `true/true/false` 放行，其余七种各自的错误码与文案（UNAVAILABLE，消息指向对应开关）。
-- 目录：无 opt-in 实例 → `/tools` 与注册文件里零写工具；勾上一个实例 → republish 后出现；再关掉 → 消失。`/invoke` 直呼被目录排除的写工具 → 仍被实例闸门拒绝（纵深防御断言）。
-- `nacos_publish_config`：type 缺失被 schema 拒（VALIDATION_ERROR）；省略 appName 时携带服务端现值（core 的重读被断言）；显式空串清空；`created` 标志区分新建/覆盖；结果不含 content 字段。
-- `nacos_set_instance_enabled`：发出的 form 含新鲜行的 weight/metadata（不是入参能提供的——入参根本没有这些字段，这正是设计）；找不到实例 NOT_FOUND 且消息列出候选地址；cluster 缺省 DEFAULT。
-- `publishConfigCore` 与 UI `publishConfig` 的行为等价回归（现有 publishConfig 测试全数保绿）。
-- 模块边界：静态断言 `src/agent/**`、`src/mcp/**`（hubSync 除外）、`publishConfigCore.ts`、`writable.ts` 不 import vscode（仓里若已有此类 import-boundary 测试则扩展之，没有则补一个读文件的轻量测试）。
-- skill 一致性测试改写（D2.4）。
+`test/agent/NacosAgentToolService.test.ts`（扩展）：
+
+```text
+describe('the write gate matrix')                       // 本 Task 的核心测试，it.each 八组合
+  it.each(gateMatrix)('allows only background=true writes=true readOnly=false and refuses %s with UNAVAILABLE naming the switch')
+describe('nacos_publish_config')
+  it('refuses a missing type with VALIDATION_ERROR before any connection is made')
+  it('re-reads the stored row and carries appName, description and tags when omitted')
+  it('clears a field when the caller passes an explicit empty string')
+  it('reports created true for a new dataId and false for an overwrite')
+  it('never echoes the content back in the result')
+  it('maps expectedMd5 to casMd5 and surfaces a CAS refusal as a conflict message')   // C5 合入后
+describe('nacos_set_instance_enabled')
+  it('writes the fresh full row: weight and metadata come from the re-read, not the input')
+  it('answers NOT_FOUND listing the candidate addresses when no instance matches')
+  it('defaults group to DEFAULT_GROUP and cluster to DEFAULT')
+  it('keeps metadata values out of the result, returning key names only')
+```
+
+`test/mcp/toolCatalog.test.ts`（新）：
+
+```text
+describe('buildToolCatalog')
+  it('answers the same 13 read tools as today when no instance opted in')             // 逐字节与旧常量比对
+  it('appends the two write tools with risk write when includeWriteTools is true')
+  it('never contains a delete-style tool name under either flag')                      // 永不默认清单的 CI 锁
+```
+
+`test/mcp/BridgeServer.test.ts`（扩展）：
+
+```text
+  it('computes /tools from getCatalog on every request')
+  it('rewrites the registry file with the current catalog on republish')
+  it('still refuses a write tool invoked directly through /invoke when no instance opted in')  // 纵深防御
+```
+
+`test/write/publishConfigCore.test.ts`（新）：
+
+```text
+describe('publishConfigCore')
+  it('treats resource-not-found as creating from an empty baseline')
+  it('carries type, appName, description and tags through the republish')
+  it('behaves the same as the UI publishConfig path')                                   // UI 既有测试全数保绿即为证
+```
+
+模块边界（`test/docs/` 或 `test/mcp/` 下的轻量读盘测试）：
+
+```text
+  it('keeps vscode imports out of src/agent, src/mcp (hubSync excepted), publishConfigCore and writable')
+```
+
+skill 一致性：`AtNacosMcpSkill.test.ts` 改写后含 `it('documents the two write tools with risk write and still forbids delete-style tools')`。
+
+**live / 人工验收**：默认安装（零 opt-in）的 `tools/list` 与今天逐字节一致；勾开关后经 Cursor Hub 真实 publish 一次（临时命名空间）且**被 Hub 写确认拦截过一次**——记录截图/文字进 PR 描述。
 
 ### D2.7 安全与坑
 
@@ -371,6 +480,20 @@ private async resolveWritableInstance(instanceId: string) {
 ---
 
 ## Task D3: 灰度 / Beta ——独立 PR（本阶段只做 READ 侧）
+
+> **开工条件：** 读侧无外部前置，随时可做。**写侧不满足 D3.2 末尾三条件不得动工**——那不是「建议」，是本 Task 与 §14.3「不要凭调研写死代码」纪律的直接推论。
+
+### D3.0 现状核对表（2026-08-27 核实）
+
+| 事实 | 坐标 | 核对结果 |
+|---|---|---|
+| 驱动层无任何 beta/gray 方法 | `NacosDriver.ts:215-265` 接口全文 | ✅ |
+| 3.x 历史行带 `publishType`/`grayName` 是仓内唯一的 3.x 灰度一手记录 | 架构文档 §6.6 | ✅ 引用属实 |
+| `missingCapability` 先例 | `V3ConsoleDriver.ts:175`（`getServerMetrics`） | ✅ v3 双驱动首版照抄 |
+| 3.0/3.1 对 v1 CONSOLE_API 默认 410、fall-through 链 | 架构文档 §4.2 表、§5.4 | ✅ 无需特判的依据 |
+| 「配置不存在」的响应形状从不长在调研预言的位置 | 架构文档 §14.2 ⓪ | ✅ 「无 beta 行」形状必须实测的依据 |
+| diff 底座与虚拟文档 | `src/document/configUri.ts` / `NacosConfigDocumentProvider.ts`（M4） | ✅ `beta=1` 是 URI 加 query，不动 scheme |
+| 1.x/2.x beta 端点（`?beta=true` 三方法 + `betaIps` header） | 官方文档/控制台行为，**无真机验证** | ⚠ 2.3.2 live 是本 Task 的验证义务 |
 
 ### D3.1 语义分裂的事实（为什么写侧不能现在做）
 
@@ -427,10 +550,54 @@ getBetaConfig(ref: NacosConfigRef): Promise<NacosBetaConfigInfo | undefined>;
 - [ ] live（2.3.2 临时命名空间）：curl 手工发一条 beta（header betaIps）→ 插件读出并 diff → 记录响应原文进架构文档
 - [ ] 全量 vitest 通过
 
-### D3.4 测试与坑
+### D3.3a UI 接线与 i18n
 
-- 测试：v1/v2 的 query 断言（`beta=true` + 方言参数）；有/无 beta 行；410 → v3 → missingCapability 的链条终点；tooltip/面板渲染；diff 两侧 URI 正确。
-- 坑：**beta 行内容同样含密文**——走与正式内容相同的虚拟文档通道（不落盘、MCP 不可达）；「无 beta」绝不能报错（那是绝大多数配置的常态）；不要把 `beta=true` 加进列表请求（列表接口带全量 content 的老问题会在 beta 维度上翻倍）。
+```jsonc
+// contributes.commands
+{ "command": "atNacos.showBetaConfig", "title": "%atNacos.showBetaConfig.title%" }
+// view/item/context（恰好一条；只读命令 → 正则含 readonly，与 showConfigHistory 同款）
+{ "command": "atNacos.showBetaConfig", "when": "viewItem =~ /^atNacos\\.config\\b/", "group": "atNacos.inspect@5" }
+// commandPalette: when "false"
+```
+
+nls：`atNacos.showBetaConfig.title` = Show Gray/Beta Release / 查看灰度发布。
+
+bundle：
+
+| 英文源串（键） | zh-cn |
+|---|---|
+| `{dataId} has no gray/beta release.` | {dataId} 没有灰度发布。 |
+| `Gray release for {betaIps}` | 灰度发布 → {betaIps} |
+| `{dataId}: Formal vs Gray Release` | {dataId}：正式版 vs 灰度版 |
+| `Gray/beta queries are not supported for Nacos 3.x yet. The 3.x gray model has not been verified in this project.` | Nacos 3.x 的灰度查询暂不支持——3.x 灰度模型尚未在本项目中验证。 |
+
+（最后一条是 `missingCapability` 的消息——它在驱动层，英文为主体、错误提示层照 §16.1 现状展示。）
+
+### D3.4 测试与坑（文件 + describe/it 标题）
+
+`test/nacos/driver/betaConfig.test.ts`（新）：
+
+```text
+describe('getBetaConfig on v1 and v2')
+  it('asks the v1 config path with beta=true in the v1 dialect')            // tenant + group
+  it('normalizes content, comma-separated betaIps and an optional md5')
+  it('answers undefined for the no-beta shape')                              // 形状 live 实测后固化
+describe('getBetaConfig on 3.x')
+  it('refuses with missingCapability on both v3 drivers')
+  it('ends the 410 fall-through chain in the honest 3.x refusal')            // 链条终点文案可读
+```
+
+`test/document/NacosConfigDocumentProvider.test.ts` / 树与命令测试：
+
+```text
+  it('routes a beta=1 uri to getBetaConfig')
+  it('diffs the formal content against the beta content with the right titles')
+  it('shows the one-sentence message when there is no beta row')
+```
+
+坑：**beta 行内容同样含密文**——走与正式内容相同的虚拟文档通道（不落盘、MCP 不可达）；「无 beta」绝不能报错（那是绝大多数配置的常态）；不要把 `beta=true` 加进列表请求（列表接口带全量 content 的老问题——§14.2 ②——会在 beta 维度上翻倍）。
+
+非目标（读侧 PR 里出现即跑偏）：发布/停止灰度（写侧）；灰度规则编辑；MCP 暴露；3.x 灰度路径的任何猜测性实现。
 
 ### D3.5 完成判据
 
@@ -590,6 +757,6 @@ describe('exportConfig')
 
 ## Phase D 整体纪律复述
 
-- [ ] 五个任务五个 PR，互不搭车；D2 另需 Phase C 先合入
+- [ ] 五个任务五个 PR，互不搭车；D2 另需 Phase C 先合入；每个 PR 开工前把 §0.2 对应行的「不满足则不得动工」条件逐条勾过
 - [ ] 每个 PR 的描述里写明本文档对应小节的「完成判据」核对结果
 - [ ] 所有「未真机验证」的路径/形状（D1 的 Spas header 拼写、D3 的 3.x 灰度全部、C 系遗留的 v3 命名空间/服务写端点）在合入时同步记入架构文档 §14 的追加节——**这个仓库的文档诚实度是产品特性**（路线图给「文档诚实度」单独打了分），任何一个「应该能用」都必须写成「未验证」
