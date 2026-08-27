@@ -6,6 +6,7 @@ import { activate, deactivate } from '../../src/extension';
 import {
   ConfigTreeItem,
   GroupTreeItem,
+  NamespaceTreeItem,
   ServiceInstanceTreeItem,
   ServiceTreeItem
 } from '../../src/tree/NacosTreeItems';
@@ -139,6 +140,7 @@ describe('package.json contributions', () => {
     ['atNacos.compareAcrossEnvironments'],
     ['atNacos.showConfigListeners'],
     ['atNacos.showServiceSubscribers'],
+    ['atNacos.createConfig'],
     ['atNacos.editConfig'],
     ['atNacos.publishConfig'],
     ['atNacos.deleteConfig'],
@@ -210,6 +212,21 @@ describe('package.json contributions', () => {
     );
   }
 
+  function namespaceNodeValue(readOnly: boolean): string {
+    return String(
+      new NamespaceTreeItem(
+        'config',
+        instance(readOnly),
+        { namespaceId: 'uat', displayName: 'uat', type: 2 },
+        2
+      ).contextValue
+    );
+  }
+
+  function groupNodeValue(readOnly: boolean): string {
+    return String(new GroupTreeItem('config', instance(readOnly), 'uat', 'cl-intimfy', 1).contextValue);
+  }
+
   /**
    * Every one of these is a read, so it belongs on a read-only instance's
    * nodes too -- which carry a `.readonly` suffix that a `==` comparison
@@ -261,6 +278,28 @@ describe('package.json contributions', () => {
     ]) {
       expect(nodeMenu(command).group, command).toMatch(/^atNacos\.inspect@\d$/);
     }
+  });
+
+  /**
+   * A single menu entry whose clause names both parents, rather than one
+   * entry per node kind: `nodeMenu` (and VS Code's own ordering rules) treat
+   * one command as one contribution. The `.readonly` suffix keeps it off a
+   * read-only instance the same way it keeps Edit and Delete off one -- a
+   * config can only be created where it could also be published.
+   */
+  it('offers createConfig on writable namespace and group nodes and nowhere else', () => {
+    const item = nodeMenu('atNacos.createConfig');
+    expect(item.when).toBe('viewItem == atNacos.namespace || viewItem == atNacos.group');
+    expect(item.group).toMatch(/^atNacos\.modify@\d$/);
+
+    // The clause is two equality tests, so evaluate it the way VS Code will.
+    const offered = (value: string): boolean => value === 'atNacos.namespace' || value === 'atNacos.group';
+    expect(offered(namespaceNodeValue(false)), namespaceNodeValue(false)).toBe(true);
+    expect(offered(groupNodeValue(false)), groupNodeValue(false)).toBe(true);
+    expect(offered(namespaceNodeValue(true)), namespaceNodeValue(true)).toBe(false);
+    expect(offered(groupNodeValue(true)), groupNodeValue(true)).toBe(false);
+    expect(offered(configNodeValue(false))).toBe(false);
+    expect(offered(serviceNodeValue(false))).toBe(false);
   });
 
   it.each([

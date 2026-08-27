@@ -19,6 +19,7 @@
   "atNacos.command.compareAcrossEnvironments.title": "AT Nacos: 跨环境对比",
   "atNacos.command.showConfigListeners.title": "AT Nacos: 查看配置监听者",
   "atNacos.command.showServiceSubscribers.title": "AT Nacos: 查看服务订阅者",
+  "atNacos.command.createConfig.title": "AT Nacos: 新建配置",
   "atNacos.command.editConfig.title": "AT Nacos: 编辑配置",
   "atNacos.command.publishConfig.title": "AT Nacos: 发布配置",
   "atNacos.command.deleteConfig.title": "AT Nacos: 删除配置",

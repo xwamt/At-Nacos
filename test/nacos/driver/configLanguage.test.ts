@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { configLanguageId } from '../../../src/nacos/driver/configLanguage';
+import { configLanguageId, configTypeForDataId } from '../../../src/nacos/driver/configLanguage';
 
 describe('configLanguageId from the type Nacos stored', () => {
   it.each([
@@ -101,5 +101,36 @@ describe('configLanguageId when a blur search left the type null', () => {
   it('treats an absent type the same as a null one', () => {
     expect(configLanguageId({ dataId: 'application.yml' })).toBe('yaml');
     expect(configLanguageId({ dataId: 'application' })).toBe('plaintext');
+  });
+});
+
+/**
+ * The inverse direction, for a draft created before the config exists: the
+ * Nacos `type` its first publish should carry. Every answer must agree with
+ * what `configLanguageId` highlights the same dataId as, or the config would
+ * render one way in this editor and another in the Nacos console.
+ */
+describe('configTypeForDataId for a configuration that does not exist yet', () => {
+  it.each([
+    ['application.yml', 'yaml'],
+    ['application.yaml', 'yaml'],
+    ['jdbc.properties', 'properties'],
+    ['nginx.conf', 'properties'],
+    ['app.cfg', 'properties'],
+    ['routes.json', 'json'],
+    ['logback.xml', 'xml'],
+    ['index.html', 'html'],
+    ['index.htm', 'html']
+  ])('infers %s as %s', (dataId, expected) => {
+    expect(configTypeForDataId(dataId)).toBe(expected);
+  });
+
+  /** Nacos spells "no format" as `text`, not as VS Code's `plaintext`. */
+  it.each([['notes.txt'], ['application'], ['a.b.c'], ['']])('answers text for %s', (dataId) => {
+    expect(configTypeForDataId(dataId)).toBe('text');
+  });
+
+  it('matches the suffix case-insensitively, as the language lookup does', () => {
+    expect(configTypeForDataId('APPLICATION.YML')).toBe('yaml');
   });
 });

@@ -35,16 +35,17 @@ import { withAuth } from './nacos/auth/withAuth';
 import { createInteractiveCertVerifier } from './nacos/createInteractiveCertVerifier';
 import { probeServerState } from './nacos/probe/probeServerState';
 import { CONSOLE_MAJOR_VERSION, discoverConsoleBaseUrl } from './nacos/probe/resolveBaseUrl';
-import type { NacosConfigSummary } from './nacos/driver/normalize';
+import type { NacosConfigRef, NacosConfigSummary } from './nacos/driver/normalize';
 import { testNacosConnection } from './nacos/testNacosConnection';
 import { ConfigTreeProvider } from './tree/ConfigTreeProvider';
 import {
+  GroupTreeItem,
   LOAD_MORE_CONFIGS_COMMAND,
   LOAD_MORE_SERVICES_COMMAND,
+  NamespaceTreeItem,
   OPEN_CONFIG_COMMAND,
   type ConfigTreeItem,
   type NacosTreeItem,
-  type NamespaceTreeItem,
   type ServiceInstanceTreeItem,
   type ServiceTreeItem
 } from './tree/NacosTreeItems';
@@ -581,6 +582,51 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
+  /**
+   * A draft for a configuration that does not exist on the server yet,
+   * started from a namespace or group node -- the only levels that can name a
+   * parent for it, since a config node is by definition one that already
+   * exists. The draft goes through the same Diff-and-confirm publish pipeline
+   * as an edit: `publishConfig` re-reads the server and treats
+   * resource-not-found as empty content, so the first publish is an insert
+   * and a dataId that turned out to exist is shown in the diff, not clobbered
+   * blind.
+   */
+  const createConfigCommand = vscode.commands.registerCommand(
+    'atNacos.createConfig',
+    async (item: NamespaceTreeItem | GroupTreeItem) => {
+      try {
+        const instance = await configManager.getInstance(item.instance.id);
+        if (!instance) {
+          return;
+        }
+        const ref = await askForNewConfigRef(item);
+        if (!ref) {
+          return;
+        }
+        // `assertWritable` runs inside openDraftDocument, the same second
+        // layer of defense every write path has.
+        await withLoadingProgress(
+          t('Opening draft for {dataId}...', { dataId: ref.dataId }),
+          () =>
+            openDraftDocument({
+              instance,
+              ref,
+              draftProvider: draftFileSystemProvider,
+              connect: () => connectToInstance(item.instance.id, item.instance.label),
+              createNew: true
+            })
+        );
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`createConfig: ${message}`);
+        await vscode.window.showErrorMessage(
+          t('Could not create the configuration: {message}', { message })
+        );
+      }
+    }
+  );
+
   const editConfigCommand = vscode.commands.registerCommand(
     'atNacos.editConfig',
     async (item: ConfigTreeItem) => {
@@ -869,6 +915,7 @@ export function activate(context: vscode.ExtensionContext): void {
     compareAcrossEnvironmentsCommand,
     showConfigListenersCommand,
     showServiceSubscribersCommand,
+    createConfigCommand,
     editConfigCommand,
     publishConfigCommand,
     deleteConfigCommand,
@@ -959,6 +1006,47 @@ async function manageInstances(
   if (action === deleteAction) {
     await deleteInstanceWithConfirmation(configManager, picked.instance, onChanged);
   }
+}
+
+/** Nacos's own default group -- what it substitutes for a blank one, so the prefill says what blank would mean anyway. */
+const DEFAULT_GROUP = 'DEFAULT_GROUP';
+
+/**
+ * Where the new configuration will live, assembled from the node it was
+ * started on and from input boxes for what the node cannot say.
+ *
+ * The dataId is always asked for: it is the one thing no parent node carries.
+ * A group node then names both remaining coordinates itself, while a
+ * namespace node has to ask for the group too, prefilled with the default so
+ * that accepting it is one Enter rather than a retype. Escape at either box
+ * answers undefined and abandons the creation; a group box cleared to empty
+ * does not, because Nacos itself reads a blank group as the default one.
+ */
+async function askForNewConfigRef(item: NamespaceTreeItem | GroupTreeItem): Promise<NacosConfigRef | undefined> {
+  const typedDataId = await vscode.window.showInputBox({
+    prompt: t('Data ID of the new configuration'),
+    placeHolder: t('e.g. application-uat.yaml'),
+    validateInput: (value) => (value.trim() === '' ? t('A data ID is required.') : undefined)
+  });
+  // Trimmed before the emptiness check: `validateInput` only guards the
+  // interactive path, and a box dismissed with Escape bypasses it entirely.
+  const dataId = typedDataId?.trim();
+  if (!dataId) {
+    return undefined;
+  }
+
+  if (item instanceof GroupTreeItem) {
+    return { namespaceId: item.namespaceId, group: item.group, dataId };
+  }
+
+  const typedGroup = await vscode.window.showInputBox({
+    prompt: t('Group of the new configuration'),
+    value: DEFAULT_GROUP
+  });
+  if (typedGroup === undefined) {
+    return undefined;
+  }
+  return { namespaceId: item.namespace.namespaceId, group: typedGroup.trim() || DEFAULT_GROUP, dataId };
 }
 
 /**

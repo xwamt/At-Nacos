@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { activate, deactivate } from '../../src/extension';
-import { ConfigTreeItem, ServiceInstanceTreeItem } from '../../src/tree/NacosTreeItems';
+import {
+  ConfigTreeItem,
+  GroupTreeItem,
+  NamespaceTreeItem,
+  ServiceInstanceTreeItem
+} from '../../src/tree/NacosTreeItems';
 import {
   commands as fixtureCommands,
   window as fixtureWindow,
@@ -55,6 +60,9 @@ describe('WriteCommands integration', () => {
     fixtureWorkspace.__clearContentProviders();
     fixtureWorkspace.__clearFileSystemProviders();
     fixtureWorkspace.__clearDocumentListeners();
+    // An input box answer queued by one test and left unconsumed would be
+    // handed to the next one that opens a box.
+    fixtureWindow.__resetDialogs();
   });
 
   afterEach(async () => {
@@ -86,6 +94,65 @@ describe('WriteCommands integration', () => {
         ref: configSummary
       })
     );
+  });
+
+  it('invokes openDraftDocument with createNew from a group node once the input box answers a dataId', async () => {
+    const createSpy = vi.spyOn(draftModule, 'openDraftDocument').mockResolvedValue({} as vscode.TextDocument);
+    vi.spyOn(NacosInstanceConfigManager.prototype, 'getInstance').mockResolvedValue(instance as never);
+
+    activate(extensionContext());
+
+    const item = new GroupTreeItem('config', instance as never, 'dev', 'ORDER_GROUP', 3);
+    const handler = fixtureCommands.__getRegisteredCommands().get('atNacos.createConfig');
+    expect(handler).toBeDefined();
+
+    // Only the dataId is asked for: a group node already names the group.
+    fixtureWindow.__setInputBoxResults(['  new-config.yaml  ']);
+
+    await handler?.(item as never);
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance: expect.objectContaining({ id: 'inst-1' }),
+        ref: { namespaceId: 'dev', group: 'ORDER_GROUP', dataId: 'new-config.yaml' },
+        createNew: true
+      })
+    );
+  });
+
+  it('asks a namespace node for the group too and reads a cleared box as DEFAULT_GROUP', async () => {
+    const createSpy = vi.spyOn(draftModule, 'openDraftDocument').mockResolvedValue({} as vscode.TextDocument);
+    vi.spyOn(NacosInstanceConfigManager.prototype, 'getInstance').mockResolvedValue(instance as never);
+
+    activate(extensionContext());
+
+    const item = new NamespaceTreeItem(
+      'config',
+      instance as never,
+      { namespaceId: 'dev', displayName: 'dev', type: 2 },
+      2
+    );
+    fixtureWindow.__setInputBoxResults(['new-config.yaml', '']);
+
+    await fixtureCommands.__getRegisteredCommands().get('atNacos.createConfig')?.(item as never);
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ref: { namespaceId: 'dev', group: 'DEFAULT_GROUP', dataId: 'new-config.yaml' },
+        createNew: true
+      })
+    );
+  });
+
+  it('abandons creation when the dataId box is dismissed, without opening a draft', async () => {
+    const createSpy = vi.spyOn(draftModule, 'openDraftDocument').mockResolvedValue({} as vscode.TextDocument);
+    vi.spyOn(NacosInstanceConfigManager.prototype, 'getInstance').mockResolvedValue(instance as never);
+
+    activate(extensionContext());
+
+    const item = new GroupTreeItem('config', instance as never, 'dev', 'ORDER_GROUP', 3);
+    fixtureWindow.__setInputBoxResults([undefined]);
+
+    await fixtureCommands.__getRegisteredCommands().get('atNacos.createConfig')?.(item as never);
+    expect(createSpy).not.toHaveBeenCalled();
   });
 
   it('invokes publishConfig when atNacos.publishConfig is executed with tree item', async () => {

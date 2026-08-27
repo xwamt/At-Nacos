@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { NacosDraftFileSystemProvider } from '../../src/document/NacosDraftFileSystemProvider';
 import { openDraftDocument } from '../../src/document/openDraftDocument';
+import { NacosApiError } from '../../src/nacos/NacosApiError';
 import type { NacosInstanceConfig } from '../../src/config/schema';
 import type { NacosConfigDetail } from '../../src/nacos/driver/normalize';
 
@@ -73,5 +74,75 @@ describe('openDraftDocument', () => {
       connect
     });
     expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('starts an empty draft without asking the server when createNew is set', async () => {
+    const draftProvider = new NacosDraftFileSystemProvider();
+    const connect = vi.fn();
+    const setLangSpy = vi.spyOn(vscode.languages, 'setTextDocumentLanguage');
+
+    const ref = { namespaceId: 'dev', group: 'DEFAULT_GROUP', dataId: 'brand-new.yaml' };
+    await openDraftDocument({ instance, ref, draftProvider, connect, createNew: true });
+
+    // No fetch at all: the dataId came from an input box, so the only thing
+    // the server could answer is the resource-not-found this flag assumes.
+    expect(connect).not.toHaveBeenCalled();
+
+    const draft = draftProvider.getDraft({ instanceId: instance.id, ref });
+    expect(draft?.content).toBe('');
+    expect(draft?.baseContent).toBe('');
+    // The type is inferred from the dataId suffix, and it drives the language
+    // mode the same way a server-carried type would.
+    expect(draft?.type).toBe('yaml');
+    expect(setLangSpy).toHaveBeenCalledWith(expect.anything(), 'yaml');
+  });
+
+  it('falls back to an empty draft when the server says the config does not exist', async () => {
+    const draftProvider = new NacosDraftFileSystemProvider();
+    const connect = vi.fn().mockResolvedValue({
+      getConfig: vi.fn().mockRejectedValue(new NacosApiError('resource-not-found', 'no such config', 404))
+    });
+
+    const ref = { namespaceId: 'dev', group: 'DEFAULT_GROUP', dataId: 'just-deleted.json' };
+    await openDraftDocument({ instance, ref, draftProvider, connect });
+
+    // The fetch was attempted -- this is the default path, not createNew.
+    expect(connect).toHaveBeenCalled();
+
+    const draft = draftProvider.getDraft({ instanceId: instance.id, ref });
+    expect(draft?.content).toBe('');
+    expect(draft?.baseContent).toBe('');
+    expect(draft?.type).toBe('json');
+  });
+
+  it('still throws every other fetch failure rather than opening a blank draft over a real config', async () => {
+    const draftProvider = new NacosDraftFileSystemProvider();
+    const connect = vi.fn().mockResolvedValue({
+      getConfig: vi.fn().mockRejectedValue(new NacosApiError('network', 'connection refused'))
+    });
+
+    await expect(
+      openDraftDocument({ instance, ref: detail, draftProvider, connect })
+    ).rejects.toThrow(/connection refused/);
+
+    expect(draftProvider.getDraft({ instanceId: instance.id, ref: detail })).toBeUndefined();
+  });
+
+  it('throws for a read-only instance even when creating new, without opening anything', async () => {
+    const draftProvider = new NacosDraftFileSystemProvider();
+    const connect = vi.fn();
+
+    await expect(
+      openDraftDocument({
+        instance: { ...instance, readOnly: true },
+        ref: detail,
+        draftProvider,
+        connect,
+        createNew: true
+      })
+    ).rejects.toThrow(/read-only/);
+
+    expect(connect).not.toHaveBeenCalled();
+    expect(draftProvider.getDraft({ instanceId: instance.id, ref: detail })).toBeUndefined();
   });
 });
