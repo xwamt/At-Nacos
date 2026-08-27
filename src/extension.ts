@@ -655,9 +655,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
-  const inFlightPublish = new Set<string>();
-
-  const saveDocumentListener = vscode.workspace.onDidSaveTextDocument(async (document) => {
+  // Save stays local, as the draft provider's contract promises: by the time
+  // this event fires, VS Code has already persisted the buffer through the
+  // in-memory `writeFile`, and nothing reaches the server until the user runs
+  // Publish. A status bar hint rather than a notification, so that a habitual
+  // Ctrl+S never costs a click to dismiss.
+  const saveDocumentListener = vscode.workspace.onDidSaveTextDocument((document) => {
     if (document.uri.scheme !== NACOS_DRAFT_SCHEME) {
       return;
     }
@@ -668,38 +671,10 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!draftFileSystemProvider.isDirty(target)) {
       return;
     }
-
-    const draftKey = document.uri.toString();
-    if (inFlightPublish.has(draftKey)) {
-      return;
-    }
-    inFlightPublish.add(draftKey);
-
-    try {
-      const instance = await configManager.getInstance(target.instanceId);
-      if (!instance) {
-        return;
-      }
-      await publishConfig({
-        instance,
-        ref: target.ref,
-        draftProvider: draftFileSystemProvider,
-        connect: () => connectToInstance(instance.id, instance.label),
-        refreshDocument: (instId, targetRef) => configDocumentProvider.refresh(instId, targetRef),
-        onPublished: () => refreshTreeViews()
-      });
-    } catch (error) {
-      const message = formatError(error);
-      log.error(`saveDocumentPublish: ${message}`);
-      await vscode.window.showErrorMessage(
-        t('Could not publish the configuration {dataId}: {message}', {
-          dataId: target.ref.dataId,
-          message
-        })
-      );
-    } finally {
-      inFlightPublish.delete(draftKey);
-    }
+    vscode.window.setStatusBarMessage(
+      t('Draft saved locally. Run "Publish" to send {dataId} to Nacos.', { dataId: target.ref.dataId }),
+      5000
+    );
   });
 
   const closeDocumentListener = vscode.workspace.onDidCloseTextDocument((document) => {

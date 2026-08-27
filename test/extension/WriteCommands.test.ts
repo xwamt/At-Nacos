@@ -52,6 +52,7 @@ describe('WriteCommands integration', () => {
     fixtureCommands.__clearRegisteredCommands();
     fixtureWindow.__clearTreeViews();
     fixtureWindow.__clearLogChannels();
+    fixtureWindow.__clearStatusBarMessages();
     fixtureWorkspace.__clearContentProviders();
     fixtureWorkspace.__clearFileSystemProviders();
     fixtureWorkspace.__clearDocumentListeners();
@@ -160,9 +161,8 @@ describe('WriteCommands integration', () => {
     );
   });
 
-  it('triggers publishConfig when a dirty draft document is saved', async () => {
+  it('does not trigger publishConfig when a dirty draft document is saved', async () => {
     const publishSpy = vi.spyOn(publishModule, 'publishConfig').mockResolvedValue(true);
-    vi.spyOn(NacosInstanceConfigManager.prototype, 'getInstance').mockResolvedValue(instance as never);
 
     activate(extensionContext());
 
@@ -188,16 +188,37 @@ describe('WriteCommands integration', () => {
     // Wait a tick for async handler
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(publishSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        instance: expect.objectContaining({ id: 'inst-1' }),
-        ref: expect.objectContaining({
-          dataId: 'app.yaml',
-          group: 'DEFAULT_GROUP',
-          namespaceId: 'dev'
-        })
-      })
-    );
+    // Save stays local: the in-memory writeFile already persisted the draft,
+    // and nothing reaches the server until the user runs Publish.
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
+  it('shows a status bar hint instead of publishing when a dirty draft is saved', async () => {
+    const publishSpy = vi.spyOn(publishModule, 'publishConfig').mockResolvedValue(true);
+
+    activate(extensionContext());
+
+    const draftProvider = fixtureWorkspace
+      .__getFileSystemProviders()
+      .find((p) => p.scheme === 'nacos-draft')?.provider as unknown as {
+        initDraft: (instId: string, ref: unknown, detail: unknown) => vscode.Uri;
+        writeFile: (uri: vscode.Uri, content: Uint8Array, options: unknown) => void;
+      };
+
+    const uri = draftProvider.initDraft('inst-1', configSummary, {
+      ...configSummary,
+      content: 'original: true'
+    });
+
+    draftProvider.writeFile(uri, Buffer.from('modified: true'), { create: false, overwrite: true });
+
+    fixtureWorkspace.__fireDidSaveTextDocument({ uri } as vscode.TextDocument);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(publishSpy).not.toHaveBeenCalled();
+    const messages = fixtureWindow.__getStatusBarMessages();
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain('app.yaml');
   });
 
   it('does not trigger publishConfig when a clean draft document is saved', async () => {
@@ -222,6 +243,8 @@ describe('WriteCommands integration', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(publishSpy).not.toHaveBeenCalled();
+    // A clean save earns no hint either: there is nothing left to publish.
+    expect(fixtureWindow.__getStatusBarMessages()).toHaveLength(0);
   });
 
   it('cleans up draft entry when a clean draft document is closed', async () => {

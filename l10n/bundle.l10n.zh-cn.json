@@ -188,6 +188,7 @@
   "Publish configuration {dataId} to {instance}?": "将配置 {dataId} 发布到 {instance}？",
   "{dataId}: Current Server vs Draft to Publish": "{dataId}：当前服务端版本 vs 待发布草稿",
   "Configuration {dataId} has been published successfully.": "配置 {dataId} 发布成功。",
+  "Draft saved locally. Run \"Publish\" to send {dataId} to Nacos.": "草稿已保存在本地。执行「发布」后 {dataId} 才会推送到 Nacos。",
   "Are you sure you want to delete configuration {dataId} from group {group} on {instance}?": "确定要从 {instance} 上的分组 {group} 中删除配置 {dataId} 吗？",
   "This operation is permanent. The configuration will be removed from the server.": "此操作不可逆。该配置将从服务端彻底删除。",
   "Configuration {dataId} was deleted successfully.": "配置 {dataId} 已成功删除。",

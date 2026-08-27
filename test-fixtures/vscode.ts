@@ -209,6 +209,9 @@ export interface RecordedTreeView {
 
 const treeViews: RecordedTreeView[] = [];
 
+/** What the extension wrote to the status bar, so a test can assert a hint was shown. */
+const statusBarMessages: string[] = [];
+
 export const window = {
   createOutputChannel: (name: string, _options?: { log: true }): LogOutputChannel => {
     const channel = new LogOutputChannel(name);
@@ -337,6 +340,14 @@ export const window = {
   },
   showTextDocument: async (document: TextDocument) => document,
   createStatusBarItem: (_alignment?: StatusBarAlignment, _priority?: number) => new StatusBarItem(),
+  setStatusBarMessage: (text: string, _hideAfterTimeout?: number) => {
+    statusBarMessages.push(text);
+    return { dispose: () => undefined };
+  },
+  __getStatusBarMessages: (): string[] => statusBarMessages,
+  __clearStatusBarMessages: (): void => {
+    statusBarMessages.length = 0;
+  },
   tabGroups: {
     onDidChangeTabs: didChangeTabs.event,
     __fireDidChangeTabs: (event: { closed: unknown[] }) => didChangeTabs.fire(event)
