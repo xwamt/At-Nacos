@@ -10,7 +10,48 @@
 
 ---
 
+## 0. 开工闸门与基线核对（先读这节，再挑任务）
+
+### 0.1 基线
+
+本文档所有 file:line 已于 2026-08-27 用 `git show origin/cursor/nacos-opt-1-8-6a9b:<path>` 逐条核实。除 `src/agent/NacosAgentToolService.ts`、`src/extension.ts`、`package.json` 等 7 个文件外，引用文件在 main 与 opt-1-8 上逐字节一致（清单见 Phase C 计划 §0-A.1）；凡行号取自分叉文件的，条目里已注明两边坐标。开工前重跑：
+
+```bash
+git fetch origin cursor/nacos-opt-1-8-6a9b main && git diff --stat origin/main origin/cursor/nacos-opt-1-8-6a9b -- src test package.json
+```
+
+### 0.2 每任务的开工闸门（「不满足则不得动工」，PR 描述里逐条勾选）
+
+| Task | 不满足以下条件不得动工 | 双闸门 / 铁门 |
+|---|---|---|
+| D1 | ① D1.3a 研究清单**全部**拿到一手出处（官方 Java 客户端指定版本的源码行）；② §16.3（换认证方式时旧密码去留的矛盾）已裁决；③ 三个既有策略的测试全绿基线记录在案 | **三个铁门**（D1.1b）：接口扩容 PR 里 `createAuthStrategy` 的 throw **原样保留**；签名实现 PR 必须带锁死的跨实现验证向量；表单的 akSk 选项在真机 MSE 验签通过前**不得出现** |
+| D2 | ① Phase C 已合入 main（至少 C1 的 `refetchInstance`——`nacos_set_instance_enabled` 复用它）；② `test/docs/AtNacosMcpSkill.test.ts` 的反向断言改写方案过评审（这是产品承诺变更）；③ Hub 端确认 `risk:'write'` 会触发它自己的写确认 | **双闸门 + 目录闸门**：`allowAgentWrites` 默认 false（叠加 `allowBackgroundAccess` 之上）+ catalog `risk:'write'`；无实例 opt-in 则写工具不进目录；`/invoke` 不信任目录（纵深防御） |
+| D3 | ① 写侧：3.x 环境实测灰度三端点前**写侧一行代码不写**（D3.2 末尾三条件）；② 读侧无前置——v1/v2 读 + v3 `missingCapability` 随时可做 | v3 两驱动首版一律诚实拒绝，不打猜测路径 |
+| D4 | 无外部前置。唯一决策（密文原文落盘）已在 D4.2 拍板 | 成功提示必须含安全提醒 |
+| D5 | 第一步永远是测量（metafile）；**测量数字 < ~100KB 则本地缓解不做** | deep-import `dist/**` 绕过 exports 是永久禁手 |
+
+### 0.3 一 PR 一任务的复述（为什么不许搭车）
+
+D1 动鉴权层接口形状（回归面 = 每一个 HTTP 请求）；D2 改「MCP 只读」产品承诺（独立评审与回滚单元）；D3 写侧依赖未探明的 3.x 服务端行为；D4 是密文落盘的产品决策；D5 主体在上游仓库。**任何两个混进同一 PR，回滚都变成外科手术。** D 内部无顺序依赖（D2 依赖的是 Phase C，不是 D1），可并行认领。
+
+---
+
 ## Task D1: AK/SK（MSE SPAS 签名）——独立 PR
+
+### D1.0 现状核对表（against `origin/cursor/nacos-opt-1-8-6a9b`，2026-08-27 核实；这些文件 main 与基线逐字节一致）
+
+| 事实 | 坐标 | 核对结果 |
+|---|---|---|
+| `'akSk'` 是合法枚举值 | `src/config/schema.ts:4`（`NACOS_AUTH_MODES`）；`.strip()` 注释 `:56-63` 预告「a region for AK/SK」 | ✅ |
+| `createAuthStrategy` 对 akSk 直接 throw | `src/nacos/auth/createAuthStrategy.ts:31-35`（throw `:35`；注释原话 "Failing loudly beats degrading to anonymous access" `:32-34`） | ✅ |
+| `NacosAuthStrategy` 接口全文只有两个方法，`authHeaders()` 零参数 | `src/nacos/auth/NacosAuthStrategy.ts:1-10`（`authHeaders` `:3`、`refresh` `:9`） | ✅ 无请求上下文 |
+| `withAuth` 每 attempt 重新解析 `authHeaders()`；策略抛错传播不重试 | `src/nacos/auth/withAuth.ts:59-86`（注释 `:64-68` 明写 akSk 的 throw 从这里传播） | ✅ throw 的传播路径已被设计接住 |
+| header merge 语义：caller 优先、大小写不敏感 | `withAuth.ts:105-137` | ✅ 迁移时原样保留 |
+| 403 定义与单次重试 | `withAuth.ts:14`（`FORBIDDEN_STATUS`）、`:30-38`（至多一次的理由） | ✅ |
+| 三个既有策略 | `NoAuthStrategy.ts` / `CustomHeaderStrategy.ts` / `UserPasswordStrategy.ts`（同目录） | ✅ 机械迁移对象 |
+| SPAS 事实的仓内唯一记录 | 架构文档 §7.6（`2026-08-13-at-nacos-architecture.md:323-325`）：CONFIG 注入 header（`Spas-AccessKey`/`Spas-Signature`/`Timestamp`），NAMING 注入参数（`ak`/`signature`/`data`），HMAC-SHA1 后 Base64，resource 拼装两类资源不同，v4 有区域派生密钥，开源 Server 默认不校验，MSE 也支持用户名密码 | ✅ 这是**全部**已知信息——注意它只有三行，不足以实现 |
+| live 测试门控机制 | `test/live/liveServer.test.ts:47-49`（`AT_NACOS_LIVE_URL` 环境变量缺席即 skip） | ✅ MSE live 用例套同款 |
+| 日志脱敏入口 | `src/utils/logger.ts:87`（`asRedactedLog`） | ✅ 补签名类词表 |
 
 ### D1.1 现状（每一条都有代码坐标）
 
@@ -22,7 +63,26 @@
 - **根本性障碍：`NacosAuthStrategy.authHeaders()` 没有请求上下文。** 接口全文只有两个方法（`src/nacos/auth/NacosAuthStrategy.ts`）：`authHeaders(): Promise<Record<string, string>>` 与 `refresh(): Promise<boolean>`。SPAS 签名是**按请求**算的——config 请求要签 `tenant` 与 `group`，naming 请求要签 `serviceName`（分组折入形态），两类资源连注入位置都不同（config 进 header，naming 进请求参数，架构文档 §7.6）。一个拿不到 path/tenant/group/serviceName 的策略接口在数学上无法产出签名。**接口扩容是本 Task 的主体工程，签名算法本身反而是小头。**
 - MSE 过渡方案已经存在且要保留到本 Task 交付为止：MSE 同时支持用户名密码（§7.6 末句「开源版 Server 默认不校验，MSE 也支持用户名密码」），`customHeader` 模式也可用。README 与实例表单的说明文案里为 MSE 用户指路 `userPassword`，D1 合入前不许删。
 
-### D1.2 接口扩容设计（回归面最大的一步，先定形再动手）
+### D1.1a 为什么 `authHeaders()` 没有请求上下文，为什么那个 throw 是安全锁（评审共识，动手前逐句读）
+
+**接口为什么长成这样。** M1 设计 `NacosAuthStrategy` 时（`NacosAuthStrategy.ts:1-10`），三种已实现的鉴权（none / customHeader / userPassword）的凭据都是**请求无关**的：一个 token、一组固定 header，对任何 path 任何资源都相同。所以接口只需要 `authHeaders(): Promise<Record<string,string>>`——不收参数，因为没有参数能改变答案。这不是疏漏，是当时的正确最小化。但它对 SPAS 是数学上不可行的：SPAS 签名的输入包含**这一个请求**的 tenant、group（config 族）或分组折入形态的 serviceName（naming 族），签名结果注入的位置也随资源类别变（config 进 header、naming 进请求参数，§7.6）。一个拿不到 path/tenant/group/serviceName 的函数**无法产出**任何请求的合法签名——不是「难」，是输入缺失。所以 D1 的主体工程是接口扩容（`decorate(context)`），签名算法反而是小头。
+
+**throw 为什么是安全锁而不是待办。** `createAuthStrategy.ts:31-35` 的注释原话是「Failing loudly beats degrading to anonymous access, which would leave the user believing an unauthenticated connection was an authenticated one」。展开说：如果 akSk 分支返回 `NoAuthStrategy`（或任何「先凑合」的实现），用户配置了 AK/SK 的实例会**静默匿名连接**——在开源 Nacos 上（默认不校验签名，§7.6）一切读写照常工作，用户完全无法察觉自己的「已鉴权连接」其实什么都没签；直到同一份配置连上真 MSE 才失败，而那时用户排查的方向会是「我的 key 错了」。throw 的传播路径也是设计好的：`withAuth.ts:64-68` 注明策略抛错**原样传播且不重试**——它不是 403，不触发 refresh，不消耗登录尝试，直接把「AK/SK 尚未实现」端到用户面前。**因此：任何中间态 PR（接口扩容、表单重构）都必须原样保留这个 throw**，它只在真签名实现（过了 D1.1b 的第二道铁门）就位的那个 PR 里被替换。
+
+**同理可证的第三条锁：本文档自己也不许提供「凭记忆写的 HMAC」。** 一个拼错 header 名、拼错 resource 连接符、或时间戳单位取错的签名实现，在开源 Nacos 上**全绿**（服务端根本不校验），在 MSE 上全红且报错只有 403——静默错签比不实现更危险，因为它把「没实现」变成了「看起来实现了」。所以 D1.3 的形状草案只作为研究起点，**每一个字节级细节都必须先在 D1.3a 的研究清单里拿到一手出处，才允许写进代码**。
+
+### D1.1b 阶段划分（三个铁门，每道门是一个独立可合入状态）
+
+| 阶段 | 内容 | 铁门（过不去就停在上一阶段） |
+|---|---|---|
+| **Stage R（研究，零代码）** | 完成 D1.3a 研究清单，产出「签名规格备忘录」追加进架构文档 §7.6（含出处版本号与源码行） | 清单里任何一项没有一手出处 → 不开 Stage 1 |
+| **Stage 1（接口扩容 PR）** | D1.2 的 `decorate(context)` 改造 + 三策略机械迁移 + `options.auth` 铺设。**`createAuthStrategy` 的 throw 原样保留**（akSk 分支照抛，只是挪到新接口形状下）；表单不出现 akSk 选项 | 全量测试绿 + 三个旧策略「无视 context」的回归断言在 → 才可合入；此 PR 合入后产品行为**零变化** |
+| **Stage 2（签名实现 PR）** | `spasSignature.ts` + `AkSkStrategy.ts` + 拆 throw + SecretStorage 键位。签名向量用**第二实现**（官方 Java 客户端跑出的真实值，或按源码手算并注明步骤）锁死 | 向量测试绿 + **真机 MSE 一次性验签通过**（config 读、naming 读、config 写各至少一发）→ 才可合入；MSE 环境拿不到 → 本 PR 不合，停在 Stage 1 |
+| **Stage 3（UI 放开 PR）** | 表单 authMode 下拉解锁 akSk、AK/SK 双栏、帮助文案、README 更新 | 依赖 Stage 2 已合入且 §16.3 已裁决。**顺序不可颠倒：UI 选项永远最后放开**——一个能在表单里选中但不能用的模式，比不存在更糟 |
+
+Stage 1 与 Stage 2 若同窗口完成可合并为一个 PR，但 Stage 3 **永不**与前两者同 PR：放开入口是独立的产品决定，回滚它不应该动鉴权层代码。
+
+### D1.2 接口扩容设计（Stage 1 的全部内容；回归面最大的一步，先定形再动手）
 
 ```ts
 // src/nacos/auth/NacosAuthStrategy.ts —— 全量替换为：
@@ -62,40 +122,44 @@ export interface NacosAuthStrategy {
   - **每处的 tenant/group 取值必须与请求参数用的同一来源变量**——签名与参数不一致是 MSE 403 的经典来源，代码评审逐处核对。
 - 兼容性备注：`testNacosConnection` 的 `withAuthHeaders`（不重试的那个）同步迁移；`NacosAuthenticator` 若有独立缓存层也一并迁移。全仓 `authHeaders` 调用点在改名后由编译器点名，**不留旧方法别名**。
 
-### D1.3 SPAS 签名算法（写成纯函数，fixture 可锁死）
+### D1.3 SPAS 签名模块的形状（Stage 2 的骨架；**本节不是算法规格**）
+
+> ⚠ **本节只定「模块长什么样」，不定「签什么、怎么拼」。** 仓库里关于 SPAS 的一手记录只有架构文档 §7.6 的三行（D1.0 表最后一行），凭它或凭任何人的记忆写出的 HMAC 都是**静默错签**：开源 Nacos 不校验签名，错的实现在自测环境全绿，到 MSE 上只有一个不说原因的 403（见 D1.1a 第三条锁）。resource 的连接符、`Timestamp` header 的大小写、时间戳的单位、naming `data` 的拼接顺序——每一个字节级细节都必须先过 D1.3a 的研究清单拿到出处，才允许出现在代码里。**在那之前，本仓库不得存在任何计算 SPAS 签名的代码。**
+
+Stage 2 拿到规格后的模块形状（只有签名和注入位置这两件事是现在就能定的）：
 
 ```ts
 // src/nacos/auth/spasSignature.ts —— 纯函数，不 import vscode、不读时钟（时间戳由参数传入）
 
-/** config（CS）模块：注入 header。 */
+/** config（CS）模块：签名注入 **header**（§7.6：Spas-AccessKey / Spas-Signature / Timestamp 三件套）。 */
 export function spasConfigHeaders(input: {
   accessKey: string; secretKey: string; timestampMs: number;
   namespaceId?: string; group?: string;
 }): Record<string, string>;
-// resource 拼装（照官方 Java 客户端 SpasAdapter）：
-//   tenant 与 group 都非空 → `${tenant}+${group}`
-//   仅 group 非空        → group
-//   否则                  → ''（此时只签时间戳）
-// signContent = resource === '' ? `${ts}` : `${resource}+${ts}`
-// 签名 = Base64(HMAC-SHA1(signContent, secretKey))
-// 输出 headers：
-//   'Spas-AccessKey': ak
-//   'Timestamp': String(ts)
-//   'Spas-Signature': 签名
-// ⚠ header 确切拼写（'Timestamp' 的大小写、是否 'timeStamp'）以官方 Java 客户端
-//   SpasAdapter.getSignHeaders 源码为准，实现前逐字符核对一次并在注释里贴出处版本号。
 
-/** naming（NS）模块：注入请求参数。 */
+/** naming（NS）模块：签名注入 **请求参数**（§7.6：ak / signature / data 三件套）。 */
 export function spasNamingParams(input: {
   accessKey: string; secretKey: string; timestampMs: number;
   groupedServiceName?: string;
 }): Record<string, string>;
-// data = serviceName 非空 ? `${ts}@@${groupedServiceName}` : `${ts}`
-// 输出 params：{ ak, data, signature: Base64(HMAC-SHA1(data, secretKey)) }
 ```
 
-- `AkSkStrategy`（`src/nacos/auth/AkSkStrategy.ts`，架构文档 §12 目录树里早已预留此文件名）组合两个纯函数：`decorate(context)` 按 `context.module` 分派；时钟通过构造注入（`now: () => number`，默认 `Date.now`）——**测试才可能锁 fixture**。`refresh()` 恒返回 `false`：签名没有「续期」概念，一个 403 是真拒绝（key 错 / 时钟漂移 / 权限不足），重试同一签名只会重复失败——这恰好符合 `withAuth` 对 `false` 的语义（不重试）。
-- **`signatureVersion=v4`（区域派生密钥，§7.6 末句）明确排除在 D1 首版之外**：需要 region 输入与第二套派生逻辑，且没有 MSE v4 环境可验。schema 的 `.strip()` 注释已为将来加 region 字段留了后门。文档与表单文案注明「暂不支持 v4 签名区域」。
+- 函数体内的每一条拼装规则旁必须有注释标出**出处 + 版本号 + 源码行**（研究备忘录的引用），这是 Stage 2 的评审硬项。
+- `AkSkStrategy`（`src/nacos/auth/AkSkStrategy.ts`，架构文档 §12 目录树早已预留此文件名）组合两个纯函数：`decorate(context)` 按 `context.module` 分派；时钟通过构造注入（`now: () => number`，默认 `Date.now`）——**测试才可能锁 fixture**。`refresh()` 恒返回 `false`：签名没有「续期」概念，一个 403 是真拒绝（key 错 / 时钟漂移 / 权限不足），重试同一签名只会重复失败——这恰好符合 `withAuth` 对 `false` 的语义（`withAuth.ts:79-84`，不重试）。
+- **`signatureVersion=v4`（区域派生密钥，§7.6 末句）明确排除在 D1 首版之外**：需要 region 输入与第二套派生逻辑，且没有 MSE v4 环境可验。schema 的 `.strip()` 注释（`schema.ts:56-63`）已为将来加 region 字段留了后门。文档与表单文案注明「暂不支持 v4 签名区域」。
+
+### D1.3a 研究清单（Stage R 的全部内容；每项要「出处 + 版本号 + 源码行/文档锚点」）
+
+逐项落档进架构文档 §7.6 的追加备忘录，缺一项不开 Stage 1：
+
+- [ ] **config（CS）族的签名素材与拼装**：官方 Java 客户端（`nacos-client`，选定一个与 2.3.2 服务端同代的版本并记录版本号）中 config 模块的签名适配器（`SpasAdapter` 或其后继）——resource 由 tenant/group 如何拼、连接符是什么、双空/单空时签什么、signContent 与时间戳的连接方式。
+- [ ] **config 族的 header 确切拼写**：`Spas-AccessKey` / `Spas-Signature` / `Timestamp` 三个名字的逐字符拼写与大小写（历史上存在 `timeStamp` 拼法的传闻——正因为如此才必须看源码而不是看博客）。
+- [ ] **naming（NS）族的参数签名**：`ak` / `data` / `signature` 三个参数的确切名字；`data` 的内容（时间戳与 groupedServiceName 的拼接顺序与分隔符）；serviceName 为空时签什么；签名参数是进 query 还是 form（对 GET 与 PUT 是否不同）。
+- [ ] **两族方言的边界**：登录、namespace、cluster 等既不属 CS 也不属 NS 的请求，官方客户端签不签、签什么——这决定 `NacosAuthRequestContext.module: 'other'` 的行为。
+- [ ] **时间戳**：单位（毫秒/秒）、时区语义、MSE 的容忍窗口（决定「检查本机时钟」提示的阈值文案）。
+- [ ] **MSE 侧验证行为**：MSE 官方文档关于开启鉴权后 SDK 接入的说明；signatureVersion v4 与 v1 的判别方式（确认 v1 默认可用，v4 排除的边界成立）。
+- [ ] **对照第二实现**：用官方 Java 客户端（或 nacos-sdk-go / nacos-sdk-python，注明所选）对固定输入跑出真实签名值，作为 D1.6 向量测试的期望值来源——**期望值不允许由被测实现自己生成**。
+- [ ] 覆盖研究的反例确认：开源 Nacos `nacos.core.auth.enabled=true` 时是否校验 SPAS（还是仅 token）——决定 live 验证必须用 MSE 而不能用自建服务器冒充。
 
 ### D1.4 凭据存储与表单
 
@@ -103,31 +167,71 @@ export function spasNamingParams(input: {
 - 实例表单（`NacosInstanceFormPanel` + webview）：authMode 下拉解锁 `akSk` 选项，出现 AK（明文输入）与 SK（password 型输入）两栏；**切换鉴权模式时旧 SK 的去留必须与 §16.3 的最终裁决一致**（那条债记录了 manager 与表单行为相反——D1 动这里之前先把 16.3 了结，否则又添一处矛盾）。
 - 表单帮助文案：「适用于阿里云 MSE。开源 Nacos 默认不校验签名；MSE 也支持用户名密码模式」——过渡指路语从 README 挪进表单，D1 合入后仍保留（它仍然是真话）。
 
-### D1.5 文件清单
+### D1.5 文件清单（按阶段标注）
 
-| 文件 | 动作 |
+| 文件 | 动作 | 阶段 |
+|---|---|---|
+| `src/nacos/auth/NacosAuthStrategy.ts` | 接口扩容（D1.2） | 1 |
+| `src/nacos/auth/NoAuthStrategy.ts` / `CustomHeaderStrategy.ts` / `UserPasswordStrategy.ts` | 机械迁移 | 1 |
+| `src/nacos/auth/withAuth.ts` | context 读取 + params merge + 重试重签 | 1 |
+| `src/nacos/NacosHttpClient.ts` | `NacosRequestOptions.auth` 字段（HttpClient 自身不消费它，只是载体——消费者是 withAuth） | 1 |
+| `src/nacos/driver/*.ts`（helper 层全部） | 铺 `options.auth`（D1.2 清单） | 1 |
+| `src/nacos/auth/createAuthStrategy.ts` | Stage 1 只改签名形状、**throw 保留**；Stage 2 拆 throw、接 `getSecretKey` | 1+2 |
+| `src/nacos/auth/spasSignature.ts`、`src/nacos/auth/AkSkStrategy.ts` | 新增（每条拼装规则带出处注释） | 2 |
+| `src/config/schema.ts` | `accessKeyId?` | 2 |
+| `src/utils/logger.ts` 词表 | 补 `Spas-Signature` / `signature` / secretKey 模式 | 2 |
+| 表单双侧 + nls + l10n | akSk 选项（见 D1.5a） | **3** |
+| `README.md` | AK/SK 章节改为「已支持（v4 签名除外）」 | 3 |
+| 测试 | 见 D1.6 | 各阶段 |
+
+### D1.5a i18n 字符串清单（Stage 3）
+
+nls（表单 webview 文案由扩展侧渲染，走 `buildWebviewStrings` 同款分工）：
+
+| 英文源串（键） | zh-cn |
 |---|---|
-| `src/nacos/auth/NacosAuthStrategy.ts` | 接口扩容（D1.2） |
-| `src/nacos/auth/NoAuthStrategy.ts` / `CustomHeaderStrategy.ts` / `UserPasswordStrategy.ts` | 机械迁移 |
-| `src/nacos/auth/withAuth.ts` | context 读取 + params merge + 重试重签 |
-| `src/nacos/auth/spasSignature.ts`、`src/nacos/auth/AkSkStrategy.ts` | 新增 |
-| `src/nacos/auth/createAuthStrategy.ts` | 拆 throw，接 `getSecretKey` |
-| `src/nacos/NacosHttpClient.ts` | `NacosRequestOptions.auth` 字段（HttpClient 自身不消费它，只是载体——消费者是 withAuth） |
-| `src/nacos/driver/*.ts`（helper 层全部） | 铺 `options.auth`（D1.2 清单） |
-| `src/config/schema.ts` | `accessKeyId?` |
-| 表单双侧 + nls + l10n | akSk 选项 |
-| `README.md` | AK/SK 章节改为「已支持（v4 签名除外）」 |
-| 测试 | 见 D1.6 |
+| `AccessKey ID` | AccessKey ID |
+| `SecretKey` | SecretKey |
+| `For Alibaba Cloud MSE. Open-source Nacos does not verify signatures by default; MSE also supports username/password mode. The v4 regional signature is not supported yet.` | 适用于阿里云 MSE。开源 Nacos 默认不校验签名；MSE 也支持用户名密码模式。暂不支持 v4 区域签名。 |
+| `The SecretKey for this connection is not stored. Edit the connection and enter it again.` | 该连接的 SecretKey 未存储。请编辑连接并重新输入。 |
+| `Nacos answered 403 for an AK/SK signed request. Check the AccessKey, the account's permission, and this machine's clock.` | AK/SK 签名请求被 Nacos 以 403 拒绝。请检查 AccessKey、账号权限与本机时钟。 |
 
-### D1.6 测试（fixture 为主，live 为例外）
+### D1.6 测试（fixture 为主，live 为例外；文件 + describe/it 标题）
 
-- **签名向量锁死**：固定 ak/sk/timestamp/tenant/group 与 groupedServiceName，断言 header 与 params 的**逐字节**输出（向量本身用另一门语言的 SpasAdapter 实现或手算 HMAC-SHA1 生成一次，写死进测试并注明生成方式）。覆盖：tenant+group、仅 group、双空、中文 tenant、serviceName 含 `@@`。
-- 分派：config 请求得到 header 不得到 params；naming 反之；'other' 只有时间戳类 header。
-- withAuth：`options.auth` 传递到策略；403 重试的第二次 decorate 拿到**更晚的**时间戳（注入假时钟递增断言）；caller 的同名 query/header 优先级不被签名覆盖。
-- 三个旧策略无视 context 的回归断言。
-- 上下文铺设完整性：对四个驱动各挑 config/naming 各一方法，断言发出的请求 options 带正确 module 与签名素材（tenant 与请求参数同源）。
-- **live 仅在 `AT_NACOS_LIVE_MSE_URL`（+ `AT_NACOS_LIVE_MSE_AK/SK` 环境变量）设置时执行**，套 `test/live` 现有的按需跳过机制；CI 与默认本地跑永远 skip。**不租不借他人 MSE 实例做常规验证**。
-- 安全断言：日志（`asRedactedLog`）里 sk 与 signature 不出现明文——往 redaction 词表补 `Spas-Signature` / `signature` / secretKey 模式。
+**Stage 1（`test/nacos/auth/withAuth.test.ts` 扩展 + 各策略测试改造）：**
+
+```text
+describe('withAuth with request contexts')
+  it('passes options.auth to the strategy and falls back to module other with the path')
+  it('merges decoration params under the caller's query, caller wins')
+  it('re-decorates on the 403 retry')                                       // 时间戳新鲜度在 Stage 2 加假时钟断言
+describe('the three existing strategies')
+  it('answers the same decoration for any context')                          // NoAuth / CustomHeader / UserPassword 各一条
+describe('context plumbing across the drivers')                              // 四驱动 × config/naming 各挑一方法
+  it('sends module config with the same tenant and group the query carries') // 同源断言
+  it('sends module naming with the grouped serviceName the request uses')
+describe('createAuthStrategy after the interface widening')
+  it('still throws for akSk')                                                // Stage 1 的铁门回归
+```
+
+**Stage 2（`test/nacos/auth/spasSignature.test.ts`、`AkSkStrategy.test.ts` 新增）：**
+
+```text
+describe('spas signature vectors')                                           // 期望值来自第二实现（D1.3a），注明生成方式
+  it.each([...])('signs {caseName} byte-for-byte as the official client does')
+  // 用例集至少含：tenant+group、仅 group、双空、中文 tenant、serviceName 含 @@
+describe('AkSkStrategy dispatch')
+  it('answers headers and no params for module config')
+  it('answers params and no headers for module naming')
+  it('signs only the timestamp material for module other')                    // 具体形状以研究备忘录为准
+  it('gets a later timestamp on the retry decorate')                          // 注入假时钟递增
+  it('never asks to retry: refresh answers false')
+  it('fails loudly when the stored SecretKey is missing')                     // strip 过的旧记录
+describe('redaction')
+  it('keeps the secret key and the signature out of the logs')                // asRedactedLog 词表
+```
+
+**live（Stage 2 门禁，一次性）**：仅在 `AT_NACOS_LIVE_MSE_URL`（+ `AT_NACOS_LIVE_MSE_AK` / `AT_NACOS_LIVE_MSE_SK`）设置时执行，套 `test/live/liveServer.test.ts:47-49` 的按需跳过机制；CI 与默认本地永远 skip；**不租不借他人 MSE 实例做常规验证**。内容：config 读、config 写（临时命名空间）、naming 读各一发 + 一发故意错 SK 的 403 对照。
 
 ### D1.7 安全与坑
 
@@ -137,9 +241,16 @@ export function spasNamingParams(input: {
 - `refresh()` 返回 false 意味着 akSk 实例的 403 不重试——3.x admin→console 降级链（`forbidden` fall-through）不受影响，因为那发生在 resolver 层不是 withAuth 层。测试确认两层互不干扰。
 - 拆除 createAuthStrategy 的 throw 之后，**旧配置里 authMode=akSk 但没存 SK 的实例**（理论上不存在，但 strip 过的旧记录可能构造出来）必须 fail loudly：decorate 时抛「未配置 SecretKey」，不得静默匿名。
 
-### D1.8 完成判据
+### D1.7a 非目标
 
-- 全部签名向量测试绿；四驱动的请求都带上下文；MSE 实测（一次性，借助环境变量指向的实例）config 读写 + naming 读通过；README/表单文案更新；`createAuthStrategy` 的 throw 被真实现替换且旧三模式零回归。
+- v4 区域签名（排除理由见 D1.3）；OIDC / STS 临时凭据；按 namespace 粒度的多组 AK/SK；MCP 面暴露任何 akSk 相关信息（`nacos_list_instances` 的返回今天不含 authMode，保持）。
+
+### D1.8 完成判据（按阶段验收）
+
+- **Stage R done when**：架构文档 §7.6 追加备忘录落档，D1.3a 每项带出处版本号与源码行。
+- **Stage 1 done when**：`decorate(context)` 全面替换 `authHeaders()`（编译器点名的调用点清零，不留旧别名）；三旧策略「无视 context」回归断言绿；akSk 的 throw 原样在（有测试锁）；全量 vitest 绿且产品行为零变化。
+- **Stage 2 done when**：全部签名向量（第二实现生成）逐字节绿；`refresh()===false`；缺 SK fail-loudly；redaction 断言绿；MSE 实测 config 读写 + naming 读 + 错 SK 403 对照通过并记入架构文档 §14 追加节。
+- **Stage 3 done when**：表单可选 akSk、SK 进 SecretStorage、§16.3 裁决落实、README/帮助文案更新、旧三模式零回归。
 
 ---
 
@@ -329,6 +440,17 @@ getBetaConfig(ref: NacosConfigRef): Promise<NacosBetaConfigInfo | undefined>;
 
 ## Task D4: 导出单条配置到文件 ——独立 PR（zip 延后）
 
+> **开工条件：** 无外部前置。唯一的产品决策（原文落盘、不脱敏、成功提示里告知）已在 D4.2 拍板，实现者不再重开讨论。
+
+### D4.0 现状核对表（2026-08-27 核实）
+
+| 事实 | 坐标 | 核对结果 |
+|---|---|---|
+| 非 ASCII dataId 的 URI 百分号编码问题 | 架构文档 §16.6 | ✅ 文件名 sanitize 的动机 |
+| `getConfig` 的重读语义与 `resource-not-found` | `NacosDriver.ts:410-434`、`:455-461` | ✅ 取数走它，不走编辑器 buffer |
+| 配置节点 contextValue 与编辑器标题菜单条件 | `NacosTreeItems.ts:190`（`atNacos.config`）；`nacos:` scheme（`configUri.ts`） | ✅ 两处入口的 `when` 依据 |
+| zip 导出端点是控制台半官方、V1/V2 两代 zip 格式、3.x 又换 | 路线图 D4 行 + 调研记录；本仓库无一手验证 | ⚠ 这就是 zip 延后的理由，不要在本 PR 里「顺手」碰 |
+
 ### D4.1 范围决策
 
 路线图 D4 原文：「控制台半官方接口，跨版本差；可先做单配置另存为」。所以：
@@ -358,7 +480,40 @@ getBetaConfig(ref: NacosConfigRef): Promise<NacosBetaConfigInfo | undefined>;
 - [ ] 成功提示含安全提醒字样
 - [ ] 全量 vitest 通过
 
-测试重点：dataId 为 `com/example/service.yml`、`订单服务.yaml`、`a:b?c` 的文件名结果；内容与 `getConfig` 返回逐字节一致（含结尾无换行的情况——不追加换行）；showSaveDialog 返回 undefined 时不发生任何 fs 调用。
+**UI 接线：**
+
+```jsonc
+// contributes.commands
+{ "command": "atNacos.exportConfig", "title": "%atNacos.exportConfig.title%" }
+// view/item/context（恰好一条；只读命令 → 正则含 readonly）
+{ "command": "atNacos.exportConfig", "when": "viewItem =~ /^atNacos\\.config\\b/", "group": "atNacos.inspect@6" }
+// editor/title（第二入口不在 view/item/context，不触碰 nodeMenu 的「恰好一条」约束）
+{ "command": "atNacos.exportConfig", "when": "resourceScheme == nacos", "group": "navigation" }
+// commandPalette: when "false"
+```
+
+**i18n：** nls `atNacos.exportConfig.title` = Export Configuration to File / 导出配置到文件。bundle：
+
+| 英文源串（键） | zh-cn |
+|---|---|
+| `Export {dataId}` | 导出 {dataId} |
+| `Configuration {dataId} was exported to {path}. The file holds the raw content, including any unredacted secrets - keep it safe.` | 配置 {dataId} 已导出到 {path}。文件为原文内容（含未脱敏的敏感值），请注意文件安全。 |
+
+**测试（`test/document/exportConfig.test.ts`，unit）：**
+
+```text
+describe('sanitizeFilename')
+  it.each: 'com/example/service.yml' → 'com_example_service.yml'；'订单服务.yaml' 原样保留；
+           'a:b?c' → 'a_b_c'；'' 与全非法字符 → 'config.txt'
+describe('exportConfig')
+  it('re-reads the configuration from the server instead of the editor buffer')
+  it('writes the content byte-for-byte, with no trailing newline appended')
+  it('makes no fs call when the save dialog is cancelled')
+  it('propagates a network failure without touching the disk')
+  it('mentions the unredacted-content warning in the success message')
+```
+
+**非目标：** zip 导出/导入（理由见 D4.1，需求出现再立项）；导出时脱敏开关（威胁模型不同，见 D4.2）；批量导出整命名空间。
 
 ### D4.4 安全与坑
 
@@ -372,6 +527,17 @@ getBetaConfig(ref: NacosConfigRef): Promise<NacosBetaConfigInfo | undefined>;
 ---
 
 ## Task D5: mcp-hub 拆分子路径导出 ——上游任务 + 本地可选缓解，独立 PR
+
+> **开工条件：** 第一步永远是测量（D5.3）。测量数字 < ~100KB（minify 后）→ 本地缓解**不做**，只交上游请求文本 + 数字落档，本 Task 即可关闭。
+
+### D5.0 现状核对表（2026-08-27 于本仓库 node_modules 与源码核实）
+
+| 事实 | 坐标 | 核对结果 |
+|---|---|---|
+| `@at-series/mcp-hub` 只有 `"."` 与 `"./hub"` 两个导出 | `node_modules/@at-series/mcp-hub/package.json` `exports` 字段 | ✅ 逐字核对：`{".": {types, default: "./dist/index.js"}, "./hub": {default: "./dist/hub.js"}}` |
+| `hubSync.ts` 的版本探测是三级回退：sidecar `hub-version.json`（`:10-19`）→ `require('@at-series/mcp-hub/package.json')`（`:22`，**上游 exports 未声明 `./package.json`，此路在严格解析下抛错**）→ `require.resolve('.../hub')` 后路径拼接（`:24-26`） | `src/mcp/hubSync.ts:9-28` | ✅ 兜底已在；但上游请求文本仍应包含「保留 `"./package.json"` 导出」，让主路径而不是兜底路径工作 |
+| 扩展主 bundle 是 CJS | `esbuild.config.mjs:15-18`（`entryPoints: ['src/extension.ts']`、`format: 'cjs'`） | ✅ CJS 不可 tree-shake、无 splitting 的前提成立 |
+| 从 `"."` 导入的 6 处 | `extension.ts` / `BridgeServer.ts` / `BridgeProtocol.ts` / `McpConfigInstaller.ts` / `hubSync.ts` + type-only 两处（`toolCatalog.ts:1`、`bridgeSchemas.ts`） | ✅ type import 编译期擦除，不构成体积问题 |
 
 ### D5.1 问题的准确陈述（已在本仓库核实）
 
@@ -400,7 +566,7 @@ getBetaConfig(ref: NacosConfigRef): Promise<NacosBetaConfigInfo | undefined>;
 - 切分原则按**依赖重量**而不是按主题：`./bridge` = FsBridgePublisher + token + 协议常量 + detectHostApp + 全部类型（零第三方依赖，插件激活路径唯一需要的子集）；`./install` = McpInstaller 系（js-yaml 唯一消费者）；`./sync` = syncHubBundle（semver 唯一消费者）。
 - 请求文本里附上量化依据（D5.3 的 metafile 数字），并说明消费者侧改造只是 import 路径替换。
 - 顺带提请：若上游愿意出双格式（ESM + CJS），esbuild 可直接 tree-shake，子路径都可以省——但这改动更大，作为可选项而非要求。
-- 上游版本发布后本仓库跟进 PR：6 处 import 换子路径 + `hubSync.ts` 里 `require('@at-series/mcp-hub/package.json')` 的解析路径复核（exports 字段会挡住未声明的子路径——上游需要保留 `"./package.json": "./package.json"` 导出，这一条写进请求文本，否则 hubSync 的版本探测会在新版本上炸）。
+- 上游版本发布后本仓库跟进 PR：6 处 import 换子路径 + `hubSync.ts` 里 `require('@at-series/mcp-hub/package.json')` 的解析路径复核。exports 字段会挡住未声明的子路径——上游应保留 `"./package.json": "./package.json"` 导出（写进请求文本）；`hubSync.ts:24-26` 的路径拼接兜底虽能扛住缺失，但兜底不该成为常规路径。
 
 ### D5.3 本地缓解（可选，先测量后动手）
 
