@@ -6,6 +6,8 @@
   "atNacos.view.services.name": "服务列表",
   "atNacos.command.addInstance.title": "AT Nacos: 添加实例",
   "atNacos.command.manageInstances.title": "AT Nacos: 管理实例",
+  "atNacos.command.editInstance.title": "AT Nacos: 编辑实例",
+  "atNacos.command.deleteInstance.title": "AT Nacos: 删除实例",
   "atNacos.command.refreshConfigs.title": "AT Nacos: 刷新配置",
   "atNacos.command.refreshServices.title": "AT Nacos: 刷新服务",
   "atNacos.command.filterConfigs.title": "AT Nacos: 过滤配置",

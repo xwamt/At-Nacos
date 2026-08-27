@@ -59,6 +59,16 @@
         "icon": "$(gear)"
       },
       {
+        "command": "atNacos.editInstance",
+        "title": "%atNacos.command.editInstance.title%",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "atNacos.deleteInstance",
+        "title": "%atNacos.command.deleteInstance.title%",
+        "icon": "$(trash)"
+      },
+      {
         "command": "atNacos.refreshConfigs",
         "title": "%atNacos.command.refreshConfigs.title%",
         "icon": "$(refresh)"
@@ -196,6 +206,14 @@
         {
           "command": "atNacos.disableServiceInstance",
           "when": "false"
+        },
+        {
+          "command": "atNacos.editInstance",
+          "when": "false"
+        },
+        {
+          "command": "atNacos.deleteInstance",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -206,6 +224,21 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "atNacos.openClusterStatus",
+          "when": "viewItem =~ /^atNacos\\.instance\\b/",
+          "group": "atNacos.inspect@1"
+        },
+        {
+          "command": "atNacos.editInstance",
+          "when": "viewItem =~ /^atNacos\\.instance\\b/",
+          "group": "atNacos.modify@1"
+        },
+        {
+          "command": "atNacos.deleteInstance",
+          "when": "viewItem =~ /^atNacos\\.instance\\b/",
+          "group": "atNacos.modify@2"
+        },
         {
           "command": "atNacos.editConfig",
           "when": "viewItem == atNacos.config",

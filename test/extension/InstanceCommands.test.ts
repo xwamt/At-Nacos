@@ -1,15 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import type { NacosInstanceConfig } from '../../src/config/schema';
 import { activate, deactivate } from '../../src/extension';
+import { InstanceTreeItem } from '../../src/tree/NacosTreeItems';
 import { NacosInstanceFormPanel } from '../../src/webview/NacosInstanceFormPanel';
 import { commands as fixtureCommands, window as fixtureWindow } from '../../test-fixtures/vscode';
 import { startTestHttpsServer, type TestHttpsServer } from '../nacos/testHttpServer';
 import { extensionContext, INSTANCES_KEY, storedInstance } from './extensionContext';
 
-function run(command: string): Promise<unknown> {
+function run(command: string, ...args: unknown[]): Promise<unknown> {
   const handler = fixtureCommands.__getRegisteredCommands().get(command);
   expect(handler, command).toBeDefined();
-  return Promise.resolve(handler?.());
+  return Promise.resolve(handler?.(...(args as never[])));
+}
+
+/**
+ * The tree node a context menu hands over, built over whatever record the
+ * tree last drew -- which is exactly why the commands under test must read
+ * the stored record back by id rather than trust this copy.
+ */
+function instanceNode(overrides: Record<string, unknown> = {}): InstanceTreeItem {
+  return new InstanceTreeItem('config', storedInstance(overrides) as unknown as NacosInstanceConfig);
 }
 
 /** What the second quick pick offers, resolved the way the extension resolves it. */
@@ -185,6 +196,80 @@ describe('atNacos instance commands', () => {
     // An instance is a root node in both views, so redrawing only one would
     // leave the other listing a server that no longer exists.
     expect(changed.map((listener) => listener.mock.calls.length)).toEqual([1, 1]);
+  });
+
+  it('opens the form for the node atNacos.editInstance was invoked on, without any pick', async () => {
+    const showQuickPick = vi.spyOn(vscode.window, 'showQuickPick');
+    const createWebviewPanel = vi.spyOn(vscode.window, 'createWebviewPanel');
+    activate(extensionContext({ [INSTANCES_KEY]: [storedInstance()] }));
+
+    await run('atNacos.editInstance', instanceNode());
+
+    expect(showQuickPick).not.toHaveBeenCalled();
+    // The title is the one thing that proves the existing instance was passed
+    // through: the form renders "Edit ..." only for an instance it was given.
+    expect(createWebviewPanel.mock.calls[0]?.[1]).toBe('Edit Nacos Instance: prod');
+  });
+
+  it('edits the stored record rather than the copy a stale node still holds', async () => {
+    const createWebviewPanel = vi.spyOn(vscode.window, 'createWebviewPanel');
+    activate(extensionContext({ [INSTANCES_KEY]: [storedInstance()] }));
+
+    await run('atNacos.editInstance', instanceNode({ label: 'renamed since the tree drew' }));
+
+    expect(createWebviewPanel.mock.calls[0]?.[1]).toBe('Edit Nacos Instance: prod');
+  });
+
+  it('deletes the instance of the node atNacos.deleteInstance was invoked on once the modal is confirmed', async () => {
+    const showQuickPick = vi.spyOn(vscode.window, 'showQuickPick');
+    const showWarningMessage = vi.spyOn(vscode.window, 'showWarningMessage').mockResolvedValue(DELETE as never);
+    const context = extensionContext({ [INSTANCES_KEY]: [storedInstance()] });
+    activate(context);
+
+    await run('atNacos.deleteInstance', instanceNode());
+
+    expect(showQuickPick).not.toHaveBeenCalled();
+    expect(showWarningMessage).toHaveBeenCalledWith('Delete Nacos instance "prod"?', { modal: true }, DELETE);
+    expect(context.globalState.get(INSTANCES_KEY, [])).toEqual([]);
+  });
+
+  it('keeps the instance when the node delete modal is dismissed', async () => {
+    vi.spyOn(vscode.window, 'showWarningMessage').mockResolvedValue(undefined);
+    const context = extensionContext({ [INSTANCES_KEY]: [storedInstance()] });
+    activate(context);
+
+    await run('atNacos.deleteInstance', instanceNode());
+
+    expect(context.globalState.get<unknown[]>(INSTANCES_KEY, [])).toHaveLength(1);
+  });
+
+  it('redraws both trees after a node delete', async () => {
+    vi.spyOn(vscode.window, 'showWarningMessage').mockResolvedValue(DELETE as never);
+    activate(extensionContext({ [INSTANCES_KEY]: [storedInstance()] }));
+    const changed = fixtureWindow.__getTreeViews().map((view) => {
+      const listener = vi.fn();
+      (view.treeDataProvider as vscode.TreeDataProvider<unknown>).onDidChangeTreeData?.(listener);
+      return listener;
+    });
+
+    await run('atNacos.deleteInstance', instanceNode());
+
+    // An instance is a root node in both views, so redrawing only one would
+    // leave the other listing a server that no longer exists.
+    expect(changed.map((listener) => listener.mock.calls.length)).toEqual([1, 1]);
+  });
+
+  /** A node outlives the record behind it: deleted elsewhere, it still sits in the tree until a refresh. */
+  it('does nothing for a node whose instance is no longer configured', async () => {
+    const showWarningMessage = vi.spyOn(vscode.window, 'showWarningMessage');
+    const createWebviewPanel = vi.spyOn(vscode.window, 'createWebviewPanel');
+    activate(extensionContext());
+
+    await run('atNacos.editInstance', instanceNode());
+    await run('atNacos.deleteInstance', instanceNode());
+
+    expect(createWebviewPanel).not.toHaveBeenCalled();
+    expect(showWarningMessage).not.toHaveBeenCalled();
   });
 
   it('hands the form a connection test that can prompt for an untrusted certificate', async () => {

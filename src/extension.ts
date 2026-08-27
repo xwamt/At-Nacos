@@ -39,6 +39,7 @@ import type { NacosConfigSummary } from './nacos/driver/normalize';
 import { testNacosConnection } from './nacos/testNacosConnection';
 import { ConfigTreeProvider } from './tree/ConfigTreeProvider';
 import {
+  InstanceTreeItem,
   LOAD_MORE_CONFIGS_COMMAND,
   LOAD_MORE_SERVICES_COMMAND,
   OPEN_CONFIG_COMMAND,
@@ -280,6 +281,46 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  // The same edit and delete `manageInstances` reaches through two quick
+  // picks, hung directly off the instance node the user is already looking
+  // at. Both re-read the record by id rather than trusting the node -- a tree
+  // drawn before an edit still carries the old copy -- and both are offered on
+  // the `.readonly` context value too: turning read-only off *is* an edit,
+  // and a read-only server can still be removed.
+  const editInstanceCommand = vscode.commands.registerCommand(
+    'atNacos.editInstance',
+    async (item: InstanceTreeItem) => {
+      try {
+        const instance = await configManager.getInstance(item.instance.id);
+        if (!instance) {
+          return;
+        }
+        await openInstanceForm(instance);
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`editInstance: ${message}`);
+        await vscode.window.showErrorMessage(t('Could not open the Nacos instance form: {message}', { message }));
+      }
+    }
+  );
+
+  const deleteInstanceCommand = vscode.commands.registerCommand(
+    'atNacos.deleteInstance',
+    async (item: InstanceTreeItem) => {
+      try {
+        const instance = await configManager.getInstance(item.instance.id);
+        if (!instance) {
+          return;
+        }
+        await deleteInstanceWithConfirmation(configManager, instance, refreshTreeViews);
+      } catch (error) {
+        const message = formatError(error);
+        log.error(`deleteInstance: ${message}`);
+        await vscode.window.showErrorMessage(t('Could not delete the Nacos instance: {message}', { message }));
+      }
+    }
+  );
+
   const configTreeView = vscode.window.createTreeView<NacosTreeItem>('atNacos.configs', {
     treeDataProvider: configTreeProvider
   });
@@ -385,33 +426,43 @@ export function activate(context: vscode.ExtensionContext): void {
   /**
    * The cluster panel, opened for whichever instance the user means.
    *
-   * It hangs off both view titles, so it arrives with no arguments at all and
-   * has to ask -- but only when there is something to ask about. One instance
-   * is not a choice, and a quick pick with a single entry is a click spent on
-   * confirming what the user already said.
+   * From an instance node's context menu the node itself says which, so that
+   * path never asks -- though the record is still re-read by id, because the
+   * node holds the instance as it was when the tree last drew, and an address
+   * edited since would open a panel on the old server. From either view title
+   * it arrives with no arguments at all and has to ask -- but only when there
+   * is something to ask about. One instance is not a choice, and a quick pick
+   * with a single entry is a click spent on confirming what the user already
+   * said.
    */
-  const openClusterStatusCommand = vscode.commands.registerCommand('atNacos.openClusterStatus', async () => {
-    try {
-      const instance = await pickInstanceForClusterStatus(configManager, openInstanceForm);
-      if (!instance) {
-        return;
+  const openClusterStatusCommand = vscode.commands.registerCommand(
+    'atNacos.openClusterStatus',
+    async (item?: InstanceTreeItem) => {
+      try {
+        const instance =
+          item instanceof InstanceTreeItem
+            ? await configManager.getInstance(item.instance.id)
+            : await pickInstanceForClusterStatus(configManager, openInstanceForm);
+        if (!instance) {
+          return;
+        }
+        await ClusterStatusPanel.open(context, {
+          instance,
+          // Built per open and per refresh, exactly as the trees build theirs,
+          // so an edited address or a rotated password takes effect on the next
+          // click of Refresh rather than on the next window reload.
+          connect: () => createNacosClient(configManager, instance, certTrustStore, log)
+        });
+      } catch (error) {
+        // The panel reports what it could not *read* itself, in the section it
+        // belongs to. What is left here is failing to open one at all: a
+        // damaged stored instance, or VS Code refusing the panel.
+        const message = formatError(error);
+        log.error(`openClusterStatus: ${message}`);
+        await vscode.window.showErrorMessage(t('Could not open the cluster status panel: {message}', { message }));
       }
-      await ClusterStatusPanel.open(context, {
-        instance,
-        // Built per open and per refresh, exactly as the trees build theirs,
-        // so an edited address or a rotated password takes effect on the next
-        // click of Refresh rather than on the next window reload.
-        connect: () => createNacosClient(configManager, instance, certTrustStore, log)
-      });
-    } catch (error) {
-      // The panel reports what it could not *read* itself, in the section it
-      // belongs to. What is left here is failing to open one at all: a
-      // damaged stored instance, or VS Code refusing the panel.
-      const message = formatError(error);
-      log.error(`openClusterStatus: ${message}`);
-      await vscode.window.showErrorMessage(t('Could not open the cluster status panel: {message}', { message }));
     }
-  });
+  );
 
   /**
    * A client for whichever instance a node came from, read back by id rather
@@ -846,6 +897,8 @@ export function activate(context: vscode.ExtensionContext): void {
     logChannel,
     addInstanceCommand,
     manageInstancesCommand,
+    editInstanceCommand,
+    deleteInstanceCommand,
     configTreeView,
     serviceTreeView,
     // The provider and its registration both, because they own different
