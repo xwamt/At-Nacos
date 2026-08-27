@@ -25,6 +25,7 @@
   "atNacos.command.enableServiceInstance.title": "AT Nacos: Enable Instance",
   "atNacos.command.disableServiceInstance.title": "AT Nacos: Disable Instance",
   "atNacos.command.installMcpConfig.title": "AT Nacos: Install MCP Configuration",
+  "atNacos.command.uninstallMcpConfig.title": "AT Nacos: Uninstall MCP Configuration",
   "atNacos.welcome.configs": "No Nacos instance is configured yet.\n[Add Instance](command:atNacos.addInstance)",
   "atNacos.welcome.services": "No Nacos instance is configured yet. Add one to browse its registered services.\n[Add Instance](command:atNacos.addInstance)"
 }

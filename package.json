@@ -141,6 +141,10 @@
       {
         "command": "atNacos.installMcpConfig",
         "title": "%atNacos.command.installMcpConfig.title%"
+      },
+      {
+        "command": "atNacos.uninstallMcpConfig",
+        "title": "%atNacos.command.uninstallMcpConfig.title%"
       }
     ],
     "menus": {

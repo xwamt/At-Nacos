@@ -153,6 +153,19 @@ describe('package.json contributions', () => {
     }
   );
 
+  /**
+   * Both MCP config commands take no arguments, so the palette is exactly
+   * where they are invoked from. A `commandPalette` entry naming either one
+   * could only hide it.
+   */
+  it.each([['atNacos.installMcpConfig'], ['atNacos.uninstallMcpConfig']])(
+    'contributes %s and leaves it visible in the command palette',
+    (command) => {
+      expect(commands.some((entry) => entry.command === command)).toBe(true);
+      expect((menus.commandPalette ?? []).some((item) => item.command === command)).toBe(false);
+    }
+  );
+
   /** A palette entry with any other `when` is a command that can still be picked with no arguments. */
   it('writes no commandPalette entry that leaves a command visible', () => {
     for (const item of menus.commandPalette ?? []) {

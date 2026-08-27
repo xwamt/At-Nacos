@@ -802,8 +802,17 @@ export function activate(context: vscode.ExtensionContext): void {
         ...hostEnv,
         workspaceFolder: currentWorkspaceFolder()
       });
-      if (res?.updated) {
-        await vscode.window.showInformationMessage(t('AT Series MCP configuration installed successfully.'));
+      // Three honest outcomes: the installer answers `undefined` for hosts it
+      // cannot write a config for (plain VS Code among them), and telling that
+      // user "already up to date" would claim an install that never happened.
+      if (res === undefined) {
+        await vscode.window.showInformationMessage(
+          t('This IDE does not support automatic AT Series MCP configuration install.')
+        );
+      } else if (res.updated) {
+        await vscode.window.showInformationMessage(
+          t('AT Series MCP configuration installed. Reconnect your MCP client to pick up the change.')
+        );
       } else {
         await vscode.window.showInformationMessage(t('AT Series MCP configuration is already up to date.'));
       }
@@ -811,6 +820,28 @@ export function activate(context: vscode.ExtensionContext): void {
       const message = formatError(error);
       log.error(`installMcpConfig: ${message}`);
       await vscode.window.showErrorMessage(t('Could not install MCP configuration: {message}', { message }));
+    }
+  });
+
+  const uninstallMcpConfigCommand = vscode.commands.registerCommand('atNacos.uninstallMcpConfig', async () => {
+    try {
+      const res = await uninstallAtSeriesConfigForCurrentIde({
+        ...hostEnv,
+        workspaceFolder: currentWorkspaceFolder()
+      });
+      if (res === undefined) {
+        await vscode.window.showInformationMessage(
+          t('This IDE does not support automatic AT Series MCP configuration removal.')
+        );
+      } else if (res.removed) {
+        await vscode.window.showInformationMessage(t('AT Series MCP configuration removed.'));
+      } else {
+        await vscode.window.showInformationMessage(t('No AT Series MCP configuration was found to remove.'));
+      }
+    } catch (error) {
+      const message = formatError(error);
+      log.error(`uninstallMcpConfig: ${message}`);
+      await vscode.window.showErrorMessage(t('Could not uninstall MCP configuration: {message}', { message }));
     }
   });
 
@@ -875,6 +906,7 @@ export function activate(context: vscode.ExtensionContext): void {
     enableServiceInstanceCommand,
     disableServiceInstanceCommand,
     installMcpConfigCommand,
+    uninstallMcpConfigCommand,
     saveDocumentListener,
     closeDocumentListener
   );
