@@ -172,11 +172,32 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const configTreeProvider = new ConfigTreeProvider(configManager, getOrCreateClient);
   const serviceTreeProvider = new ServiceTreeProvider(configManager, getOrCreateClient);
+  // Each write redraws only the tree it changed, and no write touches the
+  // client pool: the write that just succeeded is proof the cached client
+  // works -- the server accepted its JWT and answered its probed endpoints a
+  // moment ago -- so clearing the pool here would discard exactly the state
+  // the write validated and buy a fresh login plus a `/state` round trip on
+  // the very next tree read. Only the explicit Refresh buttons clear the
+  // pool, because those are the user's way of saying "start over" after
+  // something changed behind the extension's back (a rotated credential, a
+  // server upgraded in place).
+  const refreshAfterConfigWrite = (): void => {
+    configTreeProvider.refresh();
+  };
+  const refreshAfterServiceWrite = (): void => {
+    serviceTreeProvider.refresh();
+  };
   // Both trees, always: an instance is a root node in each of them, so a save
   // or a delete that redrew only one would leave the other showing a server
-  // that no longer exists.
-  const refreshTreeViews = (): void => {
-    clientPool.clear();
+  // that no longer exists. The pool loses only the affected instance's
+  // client -- an edit may have changed the address or credential it was built
+  // from, and a deleted instance must not keep a live token around -- while
+  // every other instance keeps its client, which the change cannot have
+  // touched. A brand-new instance has no cached client yet and passes no id.
+  const refreshAfterInstanceChange = (instanceId?: string): void => {
+    if (instanceId !== undefined) {
+      clientPool.evict(instanceId);
+    }
     configTreeProvider.refresh();
     serviceTreeProvider.refresh();
   };
@@ -199,7 +220,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const openInstanceForm: OpenInstanceForm = (existing) =>
-    NacosInstanceFormPanel.open(context, configManager, refreshTreeViews, existing, {
+    NacosInstanceFormPanel.open(context, configManager, () => refreshAfterInstanceChange(existing?.id), existing, {
       // The form's default probe constructs its own client with neither a
       // certificate verifier nor a log, so without this seam Test Connection
       // would refuse every self-signed certificate that the tree, going
@@ -272,7 +293,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const manageInstancesCommand = vscode.commands.registerCommand('atNacos.manageInstances', async () => {
     try {
-      await manageInstances(configManager, openInstanceForm, refreshTreeViews);
+      await manageInstances(configManager, openInstanceForm, refreshAfterInstanceChange);
     } catch (error) {
       const message = formatError(error);
       log.error(`manageInstances: ${message}`);
@@ -488,7 +509,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 entry,
                 connect: () => connectToInstance(item.instance.id, item.instance.label),
                 refreshDocument: (instId, ref) => configDocumentProvider.refresh(instId, ref),
-                onRollback: () => refreshTreeViews()
+                onRollback: () => refreshAfterConfigWrite()
               });
             } catch (error) {
               const message = formatError(error);
@@ -642,7 +663,7 @@ export function activate(context: vscode.ExtensionContext): void {
           draftProvider: draftFileSystemProvider,
           connect: () => connectToInstance(instance.id, instance.label),
           refreshDocument: (instId, targetRef) => configDocumentProvider.refresh(instId, targetRef),
-          onPublished: () => refreshTreeViews()
+          onPublished: () => refreshAfterConfigWrite()
         });
       } catch (error) {
         const message = formatError(error);
@@ -686,7 +707,7 @@ export function activate(context: vscode.ExtensionContext): void {
         draftProvider: draftFileSystemProvider,
         connect: () => connectToInstance(instance.id, instance.label),
         refreshDocument: (instId, targetRef) => configDocumentProvider.refresh(instId, targetRef),
-        onPublished: () => refreshTreeViews()
+        onPublished: () => refreshAfterConfigWrite()
       });
     } catch (error) {
       const message = formatError(error);
@@ -729,7 +750,7 @@ export function activate(context: vscode.ExtensionContext): void {
           connect: () => connectToInstance(item.instance.id, item.instance.label),
           draftProvider: draftFileSystemProvider,
           refreshDocument: (instId, targetRef) => configDocumentProvider.refresh(instId, targetRef),
-          onDeleted: () => refreshTreeViews()
+          onDeleted: () => refreshAfterConfigWrite()
         });
       } catch (error) {
         const message = formatError(error);
@@ -755,7 +776,7 @@ export function activate(context: vscode.ExtensionContext): void {
           serviceInstance: item.serviceInstance,
           enabled: true,
           connect: () => connectToInstance(item.instance.id, item.instance.label),
-          onUpdated: () => refreshTreeViews()
+          onUpdated: () => refreshAfterServiceWrite()
         });
       } catch (error) {
         const message = formatError(error);
@@ -782,7 +803,7 @@ export function activate(context: vscode.ExtensionContext): void {
           serviceInstance: item.serviceInstance,
           enabled: false,
           connect: () => connectToInstance(item.instance.id, item.instance.label),
-          onUpdated: () => refreshTreeViews()
+          onUpdated: () => refreshAfterServiceWrite()
         });
       } catch (error) {
         const message = formatError(error);
@@ -921,7 +942,7 @@ async function pickInstanceForClusterStatus(
 async function manageInstances(
   configManager: Pick<NacosInstanceConfigManager, 'listInstances' | 'deleteInstance'>,
   openInstanceForm: OpenInstanceForm,
-  onChanged: () => void
+  onDeleted: (instanceId: string) => void
 ): Promise<void> {
   const instances = await configManager.listInstances();
   if (instances.length === 0) {
@@ -957,18 +978,22 @@ async function manageInstances(
     return;
   }
   if (action === deleteAction) {
-    await deleteInstanceWithConfirmation(configManager, picked.instance, onChanged);
+    await deleteInstanceWithConfirmation(configManager, picked.instance, onDeleted);
   }
 }
 
 /**
  * Modal, because deleting an instance also deletes its stored password or
  * headers and nothing in this extension can put them back.
+ *
+ * `onDeleted` receives the id so the caller can evict that instance's cached
+ * client: the pool would otherwise keep a live token for a server the user
+ * just removed, until something else pushed it out.
  */
 async function deleteInstanceWithConfirmation(
   configManager: Pick<NacosInstanceConfigManager, 'deleteInstance'>,
   instance: NacosInstanceConfig,
-  onChanged: () => void
+  onDeleted: (instanceId: string) => void
 ): Promise<void> {
   const deleteAction = t('Delete');
   const answer = await vscode.window.showWarningMessage(
@@ -978,7 +1003,7 @@ async function deleteInstanceWithConfirmation(
   );
   if (answer === deleteAction) {
     await configManager.deleteInstance(instance.id);
-    onChanged();
+    onDeleted(instance.id);
   }
 }
 

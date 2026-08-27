@@ -11,8 +11,11 @@ import { extensionContext } from './extensionContext';
 import * as publishModule from '../../src/write/publishConfig';
 import * as deleteModule from '../../src/write/deleteConfig';
 import * as draftModule from '../../src/document/openDraftDocument';
+import * as rollbackModule from '../../src/write/rollbackConfig';
 import * as updateHealthModule from '../../src/write/updateInstanceHealth';
 import { NacosInstanceConfigManager } from '../../src/config/NacosInstanceConfigManager';
+import { NacosClientPool } from '../../src/nacos/NacosClientPool';
+import { ConfigHistoryPanel } from '../../src/webview/ConfigHistoryPanel';
 
 const instance = {
   id: 'inst-1',
@@ -244,6 +247,124 @@ describe('WriteCommands integration', () => {
     fixtureWorkspace.__fireDidCloseTextDocument({ uri } as vscode.TextDocument);
 
     expect(draftProvider.getDraft(uri)).toBeUndefined();
+  });
+
+  /**
+   * A write that just succeeded is proof the cached client works -- the server
+   * accepted its JWT and answered its probed endpoints a moment ago -- so the
+   * refresh a write triggers must not throw the pool away, and must redraw
+   * only the tree the write changed. Only the explicit Refresh buttons clear
+   * the pool: those are the user's "start over" after something changed
+   * behind the extension's back.
+   */
+  describe('client pool survival across writes', () => {
+    /** One change listener per tree, in view order: configs first, services second. */
+    function observeTreeChanges() {
+      const [configChanged, serviceChanged] = fixtureWindow.__getTreeViews().map((view) => {
+        const listener = vi.fn();
+        (view.treeDataProvider as vscode.TreeDataProvider<unknown>).onDidChangeTreeData?.(listener);
+        return listener;
+      });
+      return { configChanged, serviceChanged };
+    }
+
+    it('keeps the pool and redraws only the config tree when a publish lands', async () => {
+      const clearSpy = vi.spyOn(NacosClientPool.prototype, 'clear');
+      vi.spyOn(publishModule, 'publishConfig').mockImplementation(async (options) => {
+        options.onPublished?.();
+        return true;
+      });
+      vi.spyOn(NacosInstanceConfigManager.prototype, 'getInstance').mockResolvedValue(instance as never);
+
+      activate(extensionContext());
+      const { configChanged, serviceChanged } = observeTreeChanges();
+
+      const item = new ConfigTreeItem('config', instance as never, 'dev', configSummary);
+      await fixtureCommands.__getRegisteredCommands().get('atNacos.publishConfig')?.(item as never);
+
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(configChanged).toHaveBeenCalledTimes(1);
+      // A publish changed configuration data only; redrawing the service tree
+      // would drop its caches for a change it cannot be showing.
+      expect(serviceChanged).not.toHaveBeenCalled();
+    });
+
+    it('keeps the pool and redraws only the config tree when a delete lands', async () => {
+      const clearSpy = vi.spyOn(NacosClientPool.prototype, 'clear');
+      vi.spyOn(deleteModule, 'deleteConfig').mockImplementation(async (options) => {
+        options.onDeleted?.();
+        return true;
+      });
+      vi.spyOn(NacosInstanceConfigManager.prototype, 'getInstance').mockResolvedValue(instance as never);
+
+      activate(extensionContext());
+      const { configChanged, serviceChanged } = observeTreeChanges();
+
+      const item = new ConfigTreeItem('config', instance as never, 'dev', configSummary);
+      await fixtureCommands.__getRegisteredCommands().get('atNacos.deleteConfig')?.(item as never);
+
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(configChanged).toHaveBeenCalledTimes(1);
+      expect(serviceChanged).not.toHaveBeenCalled();
+    });
+
+    it('keeps the pool and redraws only the config tree when a rollback lands', async () => {
+      const clearSpy = vi.spyOn(NacosClientPool.prototype, 'clear');
+      // The rollback callback lives inside the options the history panel is
+      // opened with, so the panel is mocked and the callback invoked directly
+      // -- the same seam ConfigInspectionCommands.test.ts reaches diffs by.
+      const open = vi.spyOn(ConfigHistoryPanel, 'open').mockResolvedValue();
+      vi.spyOn(rollbackModule, 'rollbackConfig').mockImplementation(async (options) => {
+        options.onRollback?.();
+        return true;
+      });
+      vi.spyOn(NacosInstanceConfigManager.prototype, 'getInstance').mockResolvedValue(instance as never);
+
+      activate(extensionContext());
+      const { configChanged, serviceChanged } = observeTreeChanges();
+
+      const item = new ConfigTreeItem('config', instance as never, 'dev', configSummary);
+      await fixtureCommands.__getRegisteredCommands().get('atNacos.showConfigHistory')?.(item as never);
+      await open.mock.calls[0]?.[1]?.rollback?.({ id: '1044', opType: 'U' } as never);
+
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(configChanged).toHaveBeenCalledTimes(1);
+      expect(serviceChanged).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['atNacos.enableServiceInstance'],
+      ['atNacos.disableServiceInstance']
+    ])('keeps the pool and redraws only the service tree for %s', async (command) => {
+      const clearSpy = vi.spyOn(NacosClientPool.prototype, 'clear');
+      vi.spyOn(updateHealthModule, 'toggleServiceInstanceEnabled').mockImplementation(async (options) => {
+        options.onUpdated?.();
+        return true;
+      });
+      vi.spyOn(NacosInstanceConfigManager.prototype, 'getInstance').mockResolvedValue(instance as never);
+
+      activate(extensionContext());
+      const { configChanged, serviceChanged } = observeTreeChanges();
+
+      const item = new ServiceInstanceTreeItem('service', instance as never, serviceRef, serviceInstance);
+      await fixtureCommands.__getRegisteredCommands().get(command)?.(item as never);
+
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(serviceChanged).toHaveBeenCalledTimes(1);
+      expect(configChanged).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['atNacos.refreshConfigs'],
+      ['atNacos.refreshServices']
+    ])('still clears the pool for the explicit %s command', async (command) => {
+      const clearSpy = vi.spyOn(NacosClientPool.prototype, 'clear');
+      activate(extensionContext());
+
+      await fixtureCommands.__getRegisteredCommands().get(command)?.();
+
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
