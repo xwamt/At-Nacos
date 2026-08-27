@@ -1,5 +1,7 @@
+import type * as vscode from 'vscode';
 import type { NacosInstanceConfigManager } from '../config/NacosInstanceConfigManager';
 import type { NacosInstanceConfig } from '../config/schema';
+import { t } from '../i18n/t';
 import type { NacosClient } from '../nacos/NacosClient';
 import type { NacosInstance, NacosServiceRef, NacosServiceSummary, Paged } from '../nacos/driver/normalize';
 import { formatError } from '../utils/errors';
@@ -65,6 +67,21 @@ export class ServiceTreeProvider extends NacosTreeBase {
   private readonly instanceCache = new Map<string, Promise<NacosInstance[]>>();
 
   /**
+   * The service-name substring being searched for, absent when nothing is.
+   * It is handed to the driver verbatim: which listings can honour it, and
+   * under which parameter name, differs by API version and is the driver's
+   * to know.
+   */
+  private filterText: string | undefined;
+
+  /**
+   * Only `message`, because that is the whole of what a provider has any
+   * business setting on its view -- and a wider type would make a test fake a
+   * dozen members of `TreeView` to hand one in.
+   */
+  private treeView: Pick<vscode.TreeView<NacosTreeItem>, 'message'> | undefined;
+
+  /**
    * Declared again here, and wider, so that the factory this provider calls is
    * known to produce a client that can list services. The base keeps its own
    * narrow view of the same function.
@@ -80,6 +97,31 @@ export class ServiceTreeProvider extends NacosTreeBase {
     this.pageCache.clear();
     this.instanceCache.clear();
     super.refresh();
+  }
+
+  /**
+   * Lends the provider the one part of the view it writes to. The view is
+   * created after the provider it is given, so a filter can already be set by
+   * the time this arrives -- hence the immediate update rather than only on
+   * the next change.
+   */
+  attachTreeView(treeView: Pick<vscode.TreeView<NacosTreeItem>, 'message'>): void {
+    this.treeView = treeView;
+    this.showFilterOnView();
+  }
+
+  getFilter(): string | undefined {
+    return this.filterText;
+  }
+
+  /** Blank text means no filter, so that clearing the input box shows everything again. */
+  setFilter(text: string): void {
+    const trimmed = text.trim();
+    this.applyFilter(trimmed.length > 0 ? trimmed : undefined);
+  }
+
+  clearFilter(): void {
+    this.applyFilter(undefined);
   }
 
   /**
@@ -129,6 +171,32 @@ export class ServiceTreeProvider extends NacosTreeBase {
       throw error;
     }
     this.onDidChangeTreeDataEmitter.fire(namespace);
+  }
+
+  private applyFilter(filterText: string | undefined): void {
+    if (filterText === this.filterText) {
+      // Entering the same text again is not a reload. Dropping the pages here
+      // would throw away everything the user had paged in and answer with the
+      // first hundred matches again.
+      return;
+    }
+    this.filterText = filterText;
+    // A filter is a different result set, so the page counter means nothing in
+    // it: continuing from page four would skip the first three pages of
+    // matches, which are the ones being searched for. The instance cache
+    // stays: a service's instances are the same whatever listing found it.
+    this.pageCache.clear();
+    this.showFilterOnView();
+    // Undefined, unlike Load more: every namespace's contents change at once,
+    // so there is no single subtree to redraw.
+    this.onDidChangeTreeDataEmitter.fire();
+  }
+
+  /** The only place the filter is visible at all; a filtered tree that does not say so reads as an empty one. */
+  private showFilterOnView(): void {
+    if (this.treeView) {
+      this.treeView.message = this.filterText ? t('Filter: "{text}"', { text: this.filterText }) : undefined;
+    }
   }
 
   protected async getChildrenBelowInstance(element: NacosTreeItem): Promise<NacosTreeItem[]> {
@@ -268,7 +336,12 @@ export class ServiceTreeProvider extends NacosTreeBase {
   ): Promise<LoadedServices> {
     const pageNo = loaded.pagesLoaded + 1;
     const client = await this.createServiceClient(instance);
-    const page = await client.listServices({ namespaceId, pageNo, pageSize: SERVICE_PAGE_SIZE });
+    const page = await client.listServices({
+      namespaceId,
+      pageNo,
+      pageSize: SERVICE_PAGE_SIZE,
+      serviceName: this.filterText
+    });
     return mergePage(loaded, page, pageNo);
   }
 }

@@ -36,6 +36,7 @@ describe('atNacos extension lifecycle', () => {
     expect([...fixtureCommands.__getRegisteredCommands().keys()].sort()).toEqual([
       'atNacos.addInstance',
       'atNacos.clearConfigFilter',
+      'atNacos.clearServiceFilter',
       'atNacos.compareAcrossEnvironments',
       'atNacos.deleteConfig',
       'atNacos.diffWithPrevious',
@@ -43,6 +44,7 @@ describe('atNacos extension lifecycle', () => {
       'atNacos.editConfig',
       'atNacos.enableServiceInstance',
       'atNacos.filterConfigs',
+      'atNacos.filterServices',
       'atNacos.installMcpConfig',
       'atNacos.loadMoreConfigs',
       'atNacos.loadMoreServices',
@@ -74,14 +76,14 @@ describe('atNacos extension lifecycle', () => {
   });
 
   it('hands every disposable it created to context.subscriptions', () => {
-    // The channel, the twenty-one commands, the two views, the document provider,
+    // The channel, the twenty-three commands, the two views, the document provider,
     // the draft file system provider and their registrations. Anything left out survives a window reload and
     // leaks a listener into the next activation.
     const context = extensionContext();
 
     activate(context);
 
-    expect(context.subscriptions).toHaveLength(30);
+    expect(context.subscriptions).toHaveLength(32);
     for (const subscription of context.subscriptions) {
       expect(typeof subscription.dispose).toBe('function');
     }
@@ -168,6 +170,59 @@ describe('atNacos extension lifecycle', () => {
 
     expect(fixtureWindow.__getTreeViews()[0]?.message).toContain('application-uat');
     expect(fixtureWindow.__getTreeViews()[1]?.message).toBeUndefined();
+  });
+
+  it('filters the service tree with what the input box returns', async () => {
+    activate(extensionContext());
+    const provider = fixtureWindow.__getTreeViews()[1]?.treeDataProvider as ServiceTreeProvider;
+    fixtureWindow.__setInputBoxResults(['merchant-admin']);
+
+    await fixtureCommands.__getRegisteredCommands().get('atNacos.filterServices')?.();
+
+    expect(provider.getFilter()).toBe('merchant-admin');
+  });
+
+  /** Escape out of the input box and the filter that was there has to survive it. */
+  it('leaves the service filter alone when the input box is dismissed', async () => {
+    activate(extensionContext());
+    const provider = fixtureWindow.__getTreeViews()[1]?.treeDataProvider as ServiceTreeProvider;
+    provider.setFilter('merchant-admin');
+    fixtureWindow.__setInputBoxResults([undefined]);
+
+    await fixtureCommands.__getRegisteredCommands().get('atNacos.filterServices')?.();
+
+    expect(provider.getFilter()).toBe('merchant-admin');
+  });
+
+  it('offers the current service filter as the text to edit rather than an empty box', async () => {
+    activate(extensionContext());
+    const provider = fixtureWindow.__getTreeViews()[1]?.treeDataProvider as ServiceTreeProvider;
+    provider.setFilter('merchant-admin');
+    const inputBox = vi.spyOn(fixtureWindow, 'showInputBox');
+
+    await fixtureCommands.__getRegisteredCommands().get('atNacos.filterServices')?.();
+
+    expect(inputBox.mock.calls[0]?.[0]?.value).toBe('merchant-admin');
+  });
+
+  it('clears the service filter with the command contributed for it', async () => {
+    activate(extensionContext());
+    const provider = fixtureWindow.__getTreeViews()[1]?.treeDataProvider as ServiceTreeProvider;
+    provider.setFilter('merchant-admin');
+
+    await fixtureCommands.__getRegisteredCommands().get('atNacos.clearServiceFilter')?.();
+
+    expect(provider.getFilter()).toBeUndefined();
+  });
+
+  it('shows the active filter on the services view, and only on that view', async () => {
+    activate(extensionContext());
+    const provider = fixtureWindow.__getTreeViews()[1]?.treeDataProvider as ServiceTreeProvider;
+
+    provider.setFilter('merchant-admin');
+
+    expect(fixtureWindow.__getTreeViews()[1]?.message).toContain('merchant-admin');
+    expect(fixtureWindow.__getTreeViews()[0]?.message).toBeUndefined();
   });
 
   /**

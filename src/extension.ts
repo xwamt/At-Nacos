@@ -290,6 +290,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const serviceTreeView = vscode.window.createTreeView<NacosTreeItem>('atNacos.services', {
     treeDataProvider: serviceTreeProvider
   });
+  // For the reason the configurations view gets its own: the filter lives on
+  // the view's message line, and only the view owns that.
+  serviceTreeProvider.attachTreeView(serviceTreeView);
 
   const refreshConfigsCommand = vscode.commands.registerCommand('atNacos.refreshConfigs', () => {
     clientPool.clear();
@@ -316,6 +319,24 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   const clearConfigFilterCommand = vscode.commands.registerCommand('atNacos.clearConfigFilter', () => {
     configTreeProvider.clearFilter();
+  });
+
+  const filterServicesCommand = vscode.commands.registerCommand('atNacos.filterServices', async () => {
+    const typed = await vscode.window.showInputBox({
+      prompt: t('Filter services by service name'),
+      placeHolder: t('e.g. merchant-admin'),
+      // Prefilled, so that narrowing an existing filter is an edit rather than
+      // a retype.
+      value: serviceTreeProvider.getFilter() ?? ''
+    });
+    // Undefined is Escape and has to leave the current filter alone. An empty
+    // string is not the same gesture: that is a deliberate "show all again".
+    if (typed !== undefined) {
+      serviceTreeProvider.setFilter(typed);
+    }
+  });
+  const clearServiceFilterCommand = vscode.commands.registerCommand('atNacos.clearServiceFilter', () => {
+    serviceTreeProvider.clearFilter();
   });
 
   // Both take the arguments their tree node carries, and both are contributed
@@ -860,6 +881,8 @@ export function activate(context: vscode.ExtensionContext): void {
     refreshServicesCommand,
     filterConfigsCommand,
     clearConfigFilterCommand,
+    filterServicesCommand,
+    clearServiceFilterCommand,
     openConfigCommand,
     loadMoreConfigsCommand,
     loadMoreServicesCommand,

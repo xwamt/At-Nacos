@@ -10,6 +10,8 @@
   "atNacos.command.refreshServices.title": "AT Nacos: 刷新服务",
   "atNacos.command.filterConfigs.title": "AT Nacos: 过滤配置",
   "atNacos.command.clearConfigFilter.title": "AT Nacos: 清除配置过滤",
+  "atNacos.command.filterServices.title": "AT Nacos: 过滤服务",
+  "atNacos.command.clearServiceFilter.title": "AT Nacos: 清除服务过滤",
   "atNacos.command.openConfig.title": "AT Nacos: 打开配置",
   "atNacos.command.loadMoreConfigs.title": "AT Nacos: 加载更多配置",
   "atNacos.command.loadMoreServices.title": "AT Nacos: 加载更多服务",
