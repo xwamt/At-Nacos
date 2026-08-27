@@ -8,8 +8,10 @@
 >
 > **原则：** 按依赖分组，不按日历估时。IDE 插件只做日常开发/排障；用户权限、集群写运维、大规模 zip 同步留给控制台。
 >
-> **给实现 Agent：** 不要只读本表。从 [执行总入口](./2026-08-27-followup-agent-guide.md) 进入，按 Phase 文档的 checkbox 逐项落地：
-> [Phase 0](./2026-08-27-followup-phase-0-prereq.md) → [A UI](./2026-08-27-followup-phase-A-ui.md) → [B 工程](./2026-08-27-followup-phase-B-engineering.md) → [C 写能力](./2026-08-27-followup-phase-C-writes.md) → [D 高风险](./2026-08-27-followup-phase-D-high-risk.md)（D 每个 Task 单独 PR）。
+> **给实现 Agent：** 不要只读本表。从 [执行总入口](./2026-08-27-followup-agent-guide.md) 进入。
+> 「为什么是这些任务」见 [完整审计](./2026-08-27-analysis.md)；加命令/Driver/面板的写法见 [代码库地图](./2026-08-27-followup-codebase-map.md)。
+> 实施按 checkbox 逐项落地：
+> [Phase 0 合入指南](./2026-08-27-followup-phase-0-merge-guide.md) → [Phase 0](./2026-08-27-followup-phase-0-prereq.md) → [A UI](./2026-08-27-followup-phase-A-ui.md) → [B 工程](./2026-08-27-followup-phase-B-engineering.md) → [C 写能力](./2026-08-27-followup-phase-C-writes.md) → [D 高风险](./2026-08-27-followup-phase-D-high-risk.md)（D 每个 Task 单独 PR）。
 
 ---
 

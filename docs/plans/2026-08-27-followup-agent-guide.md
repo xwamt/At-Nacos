@@ -11,8 +11,8 @@
 | 文档 | 用途 | 何时打开 |
 |---|---|---|
 | **本文** | 顺序、依赖、跳过规则、禁止项 | 永远先读 |
-| [现状分析](./2026-08-27-analysis.md) | 1–8 优化批次的问题分析原文 | 需要理解「为什么改」时（文件可能尚未提交） |
-| [代码库地图](./2026-08-27-followup-codebase-map.md) | 模块/文件/测试的定位索引 | 找不到某段代码在哪时 |
+| [现状分析](./2026-08-27-analysis.md) | 性能 / 完整度 / UX 审计原文（含 1–8 证据与剩余项→Task 映射） | 需要理解「为什么改」时先读；**不要按本文实现** |
+| [代码库地图](./2026-08-27-followup-codebase-map.md) | 加命令 / Driver / Webview / MCP 的 cookbook + `src/` 文件索引 | 找不到某段代码、或要新增一类能力时 |
 | [后续建议总表](./2026-08-27-followup-roadmap.md) | 模块评分与「做什么/不做什么」 | 需要产品上下文时 |
 | [Phase 0](./2026-08-27-followup-phase-0-prereq.md) | 1–8 体验/性能前置批次，逐步 checkbox | `package.json` 还没有 `atNacos.createConfig` 时 |
 | [Phase 0 合入指南](./2026-08-27-followup-phase-0-merge-guide.md) | 检测/合并/跳过 Phase 0，含分支 SHA 与逐项 grep 清单 | 打开 Phase 0 之前**必读**——多数情况直接 merge，无需重写 |
