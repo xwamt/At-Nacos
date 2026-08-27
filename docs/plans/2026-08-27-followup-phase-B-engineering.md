@@ -24,12 +24,14 @@ npm run build       # esbuild 打包，确认 dist 仍能产出
 ```
 
 - **文案**：所有新增用户可见字符串走 `t()`（`src/i18n/t.ts`），并同步 `l10n/bundle.l10n.zh-cn.json`；manifest 字符串走 `%key%`，同步 `package.nls.json` 与 `package.nls.zh-cn.json` 两份。
-- **行号基准**：文中行号以 v0.1.2（c4cc4bf）为准；`src/extension.ts` 在 Phase 0 后行号有较大偏移，因此对该文件一律以**符号名**（函数/变量名）定位，勿按行号改。
+- **行号基准**：文中行号已于 **2026-08-27 逐条对照 `origin/cursor/nacos-opt-1-8-6a9b`（Phase 0 合入后的基线）核验**，取文件用 `git show origin/cursor/nacos-opt-1-8-6a9b:<path>`，不要 checkout。原稿以 v0.1.2（c4cc4bf）为准时存在 4 处漂移（B1 的 `ServiceTreeProvider` 两处与 test fixture 一处、B7 的 `listServiceSubscribers` 一处、B10 的 cluster 页面委托一处），均已在正文改为基线行号；各任务头部的 ✅ 行记录核验结果。`src/extension.ts` 行号偏移最大，对该文件仍一律以**符号名**（函数/变量名）定位，勿按行号改。
 - **建议实施顺序**：B2 → B1 → B5 → B3（HTTP 层三件套可同分支）→ B8 → B6（MCP 侧两件可同分支）→ B4 → B7 → B9 → B10 → B11 → B12。B7 改动面最大（四驱动 + 域类型），单独分支。B11/B12 与代码无耦合，可穿插。
 
 ---
 
 ## Task B1 — `contributes.configuration`：请求超时与页大小设置（P0）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`NacosHttpClient` 的 `timeoutMs?` `:15`、`DEFAULT_TIMEOUT_MS :77`（模块私有）、使用点 `:271`；`ConfigTreeProvider` `:34`/`:291`；`ConfigHistoryPanel` `:23`/`:185`；`history.ts` `MAX_HISTORY_PAGE_SIZE :36`；`testNacosConnection` 的 `timeoutMs` 参数 `:52`；`createNacosClient` 现签名在 `extension.ts:91`（第 5 参 `certVerifier`，无 timeoutMs）——全部一致。已修正 3 处行号：`ServiceTreeProvider` 32→34、271→342；fixture `getConfiguration` 475-477→486-488。fixture 确无 `onDidChangeConfiguration`。
 
 ### 现状（读代码得出）
 
@@ -37,10 +39,10 @@ npm run build       # esbuild 打包，确认 dist 仍能产出
 - 超时 seam 已存在：`src/nacos/NacosHttpClient.ts` 第 15 行 `NacosHttpClientOptions.timeoutMs?: number`，第 77 行 `const DEFAULT_TIMEOUT_MS = 15_000;`（模块私有，未导出），第 271 行 `timeout: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS`。当前**没有任何调用方传 timeoutMs**（`createNacosClient` 构造 `NacosHttpClient` 时只给 `baseUrl` / `certVerifier` / `log`；`testNacosConnection` 有 `timeoutMs` 透传参数但 extension.ts 没喂）。
 - 页大小三处硬编码：
   - `src/tree/ConfigTreeProvider.ts` 第 34 行 `const CONFIG_PAGE_SIZE = 100;`，第 ~291 行 `pageSize: CONFIG_PAGE_SIZE`；
-  - `src/tree/ServiceTreeProvider.ts` 第 32 行 `const SERVICE_PAGE_SIZE = 100;`，第 271 行 `pageSize: SERVICE_PAGE_SIZE`；
+  - `src/tree/ServiceTreeProvider.ts` 第 34 行 `const SERVICE_PAGE_SIZE = 100;`，第 342 行 `pageSize: SERVICE_PAGE_SIZE`；
   - `src/webview/ConfigHistoryPanel.ts` 第 23 行 `const HISTORY_PAGE_SIZE = 100;`，第 185 行 `pageSize: HISTORY_PAGE_SIZE`（历史端点服务端硬夹 500，见 `src/nacos/driver/history.ts` 的 `MAX_HISTORY_PAGE_SIZE`）。
 - 客户端池：`src/nacos/NacosClientPool.ts` 提供 `clear()` / `evict(id)`。Phase 0 后 `activate` 里写刷新已不清池（`refreshAfterConfigWrite`），实例编辑走 `refreshAfterInstanceChange(instanceId)` 按 id evict。**设置变更时必须清池**：timeoutMs 是冻结在 `NacosHttpClient` 构造参数里的，不清池旧超时会一直生效。
-- 测试夹具：`test-fixtures/vscode.ts` 的 `workspace.getConfiguration` 目前只会返回 `defaultValue`（第 475–477 行），且没有 `onDidChangeConfiguration`。
+- 测试夹具：`test-fixtures/vscode.ts` 的 `workspace.getConfiguration` 目前只会返回 `defaultValue`（第 486–488 行），且没有 `onDidChangeConfiguration`。
 
 ### 目标
 
@@ -199,6 +201,8 @@ const configurationListener = vscode.workspace.onDidChangeConfiguration((event) 
 
 ## Task B2 — Bridge 请求体按 `Buffer.concat` 聚合，禁止逐 chunk `toString`（P0）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`bytesReceived`/`exceeded` 在 `BridgeServer.ts:401-402`、逐 chunk `body += buffer.toString('utf8')` 在 `:411`、413 分支与 `PAYLOAD_TOO_LARGE` 在 `:414`/`:419`；对照的正确写法 `NacosHttpClient` `Buffer.concat(chunks).toString('utf8')` 在 `:305`。`test/mcp/BridgeServer.test.ts` 现有 6 个端到端用例、**无 413 专项用例**——按文中「没有则补一个」执行。
+
 ### 现状
 
 `src/mcp/BridgeServer.ts` 第 400–412 行（`handleNodeRequest`）：
@@ -288,6 +292,8 @@ const { body, exceeded } = await readBridgeRequestBody(request, BRIDGE_MAX_BODY_
 ---
 
 ## Task B3 — GET 在 keep-alive 复用 socket 遇 `ECONNRESET`/`EPIPE` 时重试一次（P1）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：模块级 keep-alive agent 在 `NacosHttpClient.ts:25-37`（`keepAliveMsecs: 30_000` 在 :27/:34）、`request.on('error', ...)` 在 `:317-319`、timeout 选项 `:271`——全部一致。
 
 ### 现状
 
@@ -404,6 +410,8 @@ private async performRequest(
 
 ## Task B4 — 文档 provider 30s TTL 缓存（P1）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`provideTextDocumentContent` `NacosConfigDocumentProvider.ts:71-95`（无缓存，三个失败文案分支在 :74/:82/:93）、`refresh` `:57-59`、`compareAcrossEnvironments` `diffConfig.ts:109-148`、`hasConfig :164-174`（doc 注释确有 "The content it fetches is thrown away"）——全部一致。
+
 ### 现状
 
 - `src/document/NacosConfigDocumentProvider.ts` 的 `provideTextDocumentContent`（第 71–95 行）每次被 VS Code 询问都完整走一遍 `getInstance → createClient → getConfig/getConfigHistory`，**无任何缓存**。`refresh(instanceId, ref)`（第 57–59 行）只 fire `onDidChangeEmitter`，是现成的失效钩子。
@@ -494,6 +502,8 @@ refresh(instanceId: string, ref: NacosConfigRef): void {
 
 ## Task B5 — `NacosHttpClient` 默认响应体上限 4MB（P1）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`maxResponseBytes` 读取 `NacosHttpClient.ts:231`、超限 destroy `:283-297`；两处现有调用方 `NacosDriver.ts:348`（`listResponseCap` 定义在 `:318`）与 `resolveBaseUrl.ts:100`；`FALL_THROUGH_KINDS` `NacosApiError.ts:38-42` 确不含 `response-too-large`——全部一致。
+
 ### 现状
 
 - `maxResponseBytes` 机制已存在且被验证（`src/nacos/NacosHttpClient.ts` 第 231、283–297 行：超限即 destroy 流并抛 `response-too-large`）。
@@ -559,6 +569,8 @@ const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
 ---
 
 ## Task B6 — MCP 独立客户端池（P1）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：基线 `extension.ts:267` 附近的 agent `createClient` 确为 `createNacosClient(...)` 直建，旁注即 "Deliberately not getOrCreateClient"；`resolveInstance` 的非交互 verifier 构造在 `NacosAgentToolService.ts:196-201`；`NacosClientPool` 指纹字段 `:15`、失败自淘汰 `:48-55`、`clear()`/`evict(id)` `:65`/`:69`；`refreshAfterInstanceChange` 在 `extension.ts:203` 按 id evict——全部一致（即「Phase 0 后」小节描述的就是当前基线，读到这里可直接照做）。
 
 ### 现状（分 checkout 说清楚）
 
@@ -635,6 +647,8 @@ createClient: (instance, certVerifier) =>
 
 ## Task B7 — 3.x 实例/订阅者列表 >100 不再静默截断（P1）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`V3ConsoleDriver` `:96`/`:102`/`:148-153`/`:155-160`、`V3AdminDriver` `:91`/`:151-153`/`:155-157`、`naming.ts` `fetchCatalogInstances :199-219`、v1 订阅者「服务端默认 pageSize 1000」注释 `:288-292`、`aggregation` 分支 `:306-309`、接口 `NacosDriver.ts:237`/`:239`、`V1Driver :170`/`:177`、`V2Driver :184`/`:191`、`NacosClient :181-186`、`normalizeInstanceList` `normalize.ts:647+`、`ServiceSubscribersPanel :122`、`listServiceInstances :341-353`——全部一致。已修正 2 处行号：`ServiceTreeProvider.fetchInstances` 248-251→316-319、`listServiceSubscribers` 443-455→448-460。
+
 ### 现状
 
 - `src/nacos/driver/V3ConsoleDriver.ts`：第 96 行 `const FIRST_INSTANCE_PAGE = { pageNo: '1', pageSize: '100' };`、第 102 行 `const FIRST_SUBSCRIBER_PAGE = { pageNo: '1', pageSize: '100' };`，分别在 `listInstances`（第 148–153 行）与 `listSubscribers`（第 155–160 行）作为 `options.query` 传入。注释自己承认："a service with more instances than that would be truncated here"。
@@ -645,9 +659,9 @@ createClient: (instance, certVerifier) =>
 - 消费方（全部枚举，TypeScript 会逼你改齐）：
   - `src/nacos/NacosClient.ts` 第 181–186 行（两方法透传）；
   - 四个 driver：`V1Driver.ts` 170/177、`V2Driver.ts` 184/191、`V3AdminDriver.ts` 151/155、`V3ConsoleDriver.ts` 148/155；
-  - `src/tree/ServiceTreeProvider.ts` 第 248–251 行 `fetchInstances`；
+  - `src/tree/ServiceTreeProvider.ts` 第 316–319 行 `fetchInstances`；
   - `src/webview/ServiceSubscribersPanel.ts` 第 122 行；
-  - `src/agent/NacosAgentToolService.ts` `listServiceInstances`（第 341–353 行）、`listServiceSubscribers`（第 443–455 行）；
+  - `src/agent/NacosAgentToolService.ts` `listServiceInstances`（第 341–353 行）、`listServiceSubscribers`（第 448–460 行）；
   - `test/live/liveServer.test.ts` 与相关单测。
 
 ### 目标（设计已定，不要再摇摆）
@@ -756,6 +770,8 @@ export async function fetchPagedInstances(
 
 ## Task B8 — `nacos_get_cluster_nodes` 不吞错误（P1）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`getClusterNodes` 的 `catch(() => [])` / `catch(() => undefined)` 在 `NacosAgentToolService.ts:355-363`（现状引文与基线逐字一致）；`ClusterStatusSnapshot` 的 `nodesError`/`metricsError` 在 `ClusterStatusPanel.ts:30-36`、`loadClusterStatus :150-172`、`settle` `panelParts.ts:78`；`formatError` 已在文件 import——全部一致。
+
 ### 现状
 
 Phase 0 后 `src/agent/NacosAgentToolService.ts` 的 `getClusterNodes`：
@@ -846,6 +862,8 @@ private async getClusterNodes(input: NacosGetClusterNodesInput): Promise<ToolInv
 ---
 
 ## Task B9 — 脏草稿可发现：列出 / 丢弃命令（P2）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`drafts` Map `NacosDraftFileSystemProvider.ts:34`、`DraftEntry :14-20`（instanceId/ref/content/baseContent/mtime 齐全）、`deleteDraft :77`、`isDirty :93`；`closeDocumentListener`（`extension.ts:828+`）确为「只删干净草稿」；`openDraftDocument` 里 `assertWritable` 在 `openDraftDocument.ts:41`（坑 3 属实）；`buildDraftUri`/`NACOS_DRAFT_SCHEME` 在 `draftUri.ts`（scheme 常量 `:4`）、`formatTimestamp` 在 `time.ts:13` 均已导出——全部一致。
 
 ### 现状
 
@@ -972,6 +990,8 @@ const manageDraftsCommand = vscode.commands.registerCommand('atNacos.manageDraft
 
 ## Task B10 — 面板刷新改 `postMessage`，不再整页重写 `webview.html`（P2）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：四面板整页赋值行号 `ClusterStatusPanel :118/:121/:141`、`ConfigListenersPanel :102/:105/:117`、`ServiceSubscribersPanel :97/:100/:112`、`ConfigHistoryPanel :133/:136/:151` 全部精确一致；共享 bundle 加载点 `:91`/`:86`；`renderClusterStatus` 的 `<main` 在 `:189`；`detailId` 用下标在 `:255`；`escapeAttr` `html.ts:92-99`、CSP `:37`——一致。已修正 1 处：cluster 页面的文档级 click 委托在 `webview/nacos-cluster-status/index.ts:57`（原写 55；元素级刷新按钮监听在 `:44`）。
+
 ### 现状
 
 四个面板刷新时都整页赋值 `webview.html`，导致滚动位置、raft 展开态、按钮态全丢：
@@ -1016,7 +1036,7 @@ export async function handleClusterStatusMessage(
 
   `view.data`（翻译串）首屏已注入且刷新不变，update 消息不带。`ClusterStatusMessageOptions.renderDocument` 保留给首屏。
 - [ ] 页面侧 `webview/nacos-cluster-status/index.ts`：
-  - 刷新按钮监听改为**文档级事件委托**（`document.addEventListener('click', ...)` 判 `target.closest('#refreshButton')`）——替换 main 后按钮是新元素，绑定在旧元素上的监听会失效（raft 展开的委托已是文档级，第 55 行起，照抄它）；
+  - 刷新按钮监听改为**文档级事件委托**（`document.addEventListener('click', ...)` 判 `target.closest('#refreshButton')`）——替换 main 后按钮是新元素，绑定在旧元素上的监听会失效（raft 展开的委托已是文档级，第 57 行起，照抄它；现有元素级刷新按钮监听在第 44 行，要改掉）；
   - 增加消息处理：
 
 ```ts
@@ -1077,6 +1097,8 @@ window.addEventListener('message', (event: MessageEvent) => {
 ---
 
 ## Task B11 — GitHub Actions：typecheck + vitest；可选每周 live 容器（P2）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：仓库确无 `.github/` 目录；`describeLive` 门控在 `liveServer.test.ts:51`、`LIVE_BROWSE_TIMEOUT_MS = 60_000` 在 `:58`；`package-lock.json` 存在；scripts 见 `package.json:395-402`（`build` 确实先跑 `scripts/copy-hub.mjs`）——全部一致。
 
 ### 现状
 
@@ -1183,6 +1205,8 @@ jobs:
 ---
 
 ## Task B12 — VS Code 原生 MCP 安装：上游缺口如实处理（P2）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`resolveMcpInstallerTarget` `McpConfigInstaller.ts:24-38`（`vscode` 确落 `return undefined`）；`McpInstallerTarget` 无 `'vscode'`（`node_modules/@at-series/mcp-hub/dist/installer/index.d.ts:7`）；`HostApp` 含 `'vscode'`（`dist/protocol/index.d.ts:54`）；`jsonConfigFile.d.ts` 的 `withMcpConfigLock`/`readJsonConfigDocument`/`writeJsonConfigDocument`（`:34`/`:35`/`:42`）齐全——全部一致。
 
 ### 现状（读代码 + 依赖包得出）
 

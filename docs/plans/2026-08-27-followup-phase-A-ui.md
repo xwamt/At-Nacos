@@ -16,6 +16,8 @@
 - [ ] 从该基线新建工作分支（不要在 main 上工作，不要直接提交 main）。
 - [ ] `npm install && npm test`，确认基线全绿（约 1980 个用例通过、33 个 live 用例 skip），记下确切的用例数（A1/A14 要用）。
 
+> **审计记录（2026-08-27）**：本文全部文件路径、行号、硬编码计数、l10n 键与菜单 `when` 子句已逐条对照 `origin/cursor/nacos-opt-1-8-6a9b`（取文件用 `git show origin/cursor/nacos-opt-1-8-6a9b:<path>`，不 checkout）核验一遍。发现并已就地修正 3 处偏差：A1 的 devDependencies 行号（403-413 → 407-413）、A2 的历史面板列头行号（273 → 272）、A6 的 `opType` trim 位置（normalize.ts:149-159 → :268）。各 Task 头部的 ✅ 行记录了该任务核验到的关键锚点；未标注偏差的行号均与该基线一致。
+
 ### 0.2 TDD 工作流（每个 Task 一律如此）
 
 1. 先写/改测试 → `npx vitest run <该测试文件>` 看它**红**。
@@ -67,6 +69,8 @@ A1 → A2 → A3 → A4 → A5 → A6 → A7 → A8 → A9 → A10 → A11 → A
 
 ## Task A1 — README 诚实性（P0）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：README 5 处原文引用逐字一致；`configLanguage.ts:5-32` 两表确无 TOML；`publishConfig.ts:59` 确为 `draft.baseContent !== serverContent` 全文比对、无 MD5；`test/docs/AtNacosMcpSkill.test.ts` 存在可作读盘样板。唯一修正：devDependencies 实际在 `package.json:407-413`（原写 403-413）。
+
 ### 现状（先读）
 
 - `README.md`（全文 121 行）。
@@ -74,7 +78,7 @@ A1 → A2 → A3 → A4 → A5 → A6 → A7 → A8 → A9 → A10 → A11 → A
   - `src/nacos/driver/configLanguage.ts:5-32` —— `LANGUAGE_BY_TYPE` / `LANGUAGE_BY_SUFFIX` 两张表**都没有 TOML**（yaml/yml/properties/conf/cfg/json/xml/html/htm/txt 而已）。且 `openConfigDocument` 走 `vscode.languages.setTextDocumentLanguage`，VS Code 无内置 `toml` 语言 id，硬加映射会在未装 TOML 扩展的机器上抛 “Unknown language id”，所以**删声明**而不是补映射。
   - `src/write/publishConfig.ts:47-65` —— 冲突检测是 `getConfig` 重拉**全文**后 `draft.baseContent !== serverContent` 的字符串比对，**没有任何 MD5 参与**。
   - `docs/plans/2026-08-13-at-nacos-architecture.md:511` —— “**2.x 相关条目已全部确认；1.x 与 3.x 仍未验证。**”
-  - 仓库无任何覆盖率工具（`package.json:403-413` 无 `@vitest/coverage-*`，`vitest.config.ts` 无 coverage 配置），“100% 覆盖率保证”无出处。
+  - 仓库无任何覆盖率工具（`package.json:407-413` 的 devDependencies 里无 `@vitest/coverage-*`，`vitest.config.ts` 无 coverage 配置），“100% 覆盖率保证”无出处。
   - 用例数：README 写 1890，基线实测约 1980（0.3 步骤记下的数），数字随每次合并漂移，不应硬编码。
 
 ### 失实声明清单（原句 → 替换句）
@@ -114,6 +118,8 @@ A1 → A2 → A3 → A4 → A5 → A6 → A7 → A8 → A9 → A10 → A11 → A
 
 ## Task A2 — l10n 重复键（P0）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：bundle 重复键行号 96/120（Version）、46/177（Delete）与 `"Versions"`（:119）一致；`ClusterStatusPanel.ts:239` 一致；`t('Delete')` 调用点 `extension.ts:1111`、`:1178` 一致。唯一修正：历史面板列头 `t('Version')` 实际在 `ConfigHistoryPanel.ts:272`（原写 273，272 是 `<th>` 行、273 是相邻的 `t('Operation')` 列头）。
+
 ### 现状（先读）
 
 `l10n/bundle.l10n.zh-cn.json` 里有两个 JSON 重复键（`JSON.parse` 静默保留**最后**一个）：
@@ -121,7 +127,7 @@ A1 → A2 → A3 → A4 → A5 → A6 → A7 → A8 → A9 → A10 → A11 → A
 | 键 | 出现位置 | 值 | 生效者 | 后果 |
 |---|---|---|---|---|
 | `"Version"` | `bundle.l10n.zh-cn.json:96` | `"版本"`（集群节点表列头本意） | 被覆盖 | 集群状态面板节点表的「版本」列（`src/webview/ClusterStatusPanel.ts:239`）实际显示成「**版本号**」 |
-| `"Version"` | `bundle.l10n.zh-cn.json:120` | `"版本号"`（历史版本表列头本意，`src/webview/ConfigHistoryPanel.ts:273`） | ✅ 生效 | |
+| `"Version"` | `bundle.l10n.zh-cn.json:120` | `"版本号"`（历史版本表列头本意，`src/webview/ConfigHistoryPanel.ts:272`） | ✅ 生效 | |
 | `"Delete"` | `bundle.l10n.zh-cn.json:46` 与 `:177` | 都是 `"删除"` | 后者 | 无可见后果，但重复键本身就是隐患 |
 
 **为什么不能只改 JSON 键名**：`t()` 的键就是英文源串本身（`src/i18n/t.ts:18-20` 直转 `vscode.l10n.t`）。想让两处 UI 得到不同中文，必须让**代码里的英文源串**先分叉，bundle 键跟着分叉。
@@ -133,7 +139,7 @@ A1 → A2 → A3 → A4 → A5 → A6 → A7 → A8 → A9 → A10 → A11 → A
 | 调用点 | 现在 | 改为 | 中文 |
 |---|---|---|---|
 | `src/webview/ClusterStatusPanel.ts:239`（集群节点表列头，值是节点的 Nacos 版本如 `2.3.2`） | `t('Version')` | `t('Nacos version')` | `"Nacos version": "版本"` |
-| `src/webview/ConfigHistoryPanel.ts:273`（历史表列头，值是历史记录 nid） | `t('Version')` | `t('Config version')` | `"Config version": "版本号"` |
+| `src/webview/ConfigHistoryPanel.ts:272`（历史表列头，值是历史记录 nid） | `t('Version')` | `t('Config version')` | `"Config version": "版本号"` |
 
 然后从 bundle **删掉两行** `"Version"`（96、120），**删掉一行**重复的 `"Delete"`（保留一处即可，`t('Delete')` 的调用点在 `src/extension.ts:1111`、`src/extension.ts:1178`，翻译都是「删除」）。注意 `"Versions"`（`:119`，历史面板的节标题「版本」）是另一个键，**不动**。
 
@@ -203,7 +209,7 @@ describe('l10n JSON files', () => {
   （不要引入 `json5` 依赖——手写扫描器 30 行，零依赖，且能自检。）
 - [ ] 跑红：`bundle.l10n.zh-cn.json` 报 `['Version', 'Delete']`。
 - [ ] 改 `src/webview/ClusterStatusPanel.ts:239` → `t('Nacos version')`。
-- [ ] 改 `src/webview/ConfigHistoryPanel.ts:273` → `t('Config version')`。
+- [ ] 改 `src/webview/ConfigHistoryPanel.ts:272` → `t('Config version')`。
 - [ ] `l10n/bundle.l10n.zh-cn.json`：删两行 `"Version"`，删一行 `"Delete"`（保留一行），新增 `"Nacos version": "版本"` 与 `"Config version": "版本号"`。
 - [ ] 同步已有面板测试：`test/webview/ClusterStatusPanel.test.ts` / `test/webview/ConfigHistoryPanel.test.ts` 若有对 `Version` 文本的断言，改成新源串（fixture 的 `l10n.t` 原样回显英文源）。
 - [ ] 跑绿 + 全量回归（`nls.test.ts:124-128` 会自动确认两个新键有中文）。
@@ -217,6 +223,8 @@ describe('l10n JSON files', () => {
 ---
 
 ## Task A3 — `publishConfig` 命令面板（P0）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：palette 条目 `package.json:217-220`（`"when": "false"` 在 :219）、editor/title `:242-248`（`resourceScheme == nacos-draft` 在 :245）、无参路径 `extension.ts:760-804`、it.each 数组 `Manifest.test.ts:147-163`（含 `['atNacos.publishConfig']`）全部一致。兜底测试实际在 `:187-192`（注释在 :186），标题为 `writes no commandPalette entry that leaves a command visible`。
 
 ### 现状（先读）
 
@@ -282,6 +290,8 @@ it('leaves no commandPalette entry visible unless its arguments can be recovered
 ---
 
 ## Task A4 — 错误节点「重试」（P0）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`ErrorTreeItem` `NacosTreeItems.ts:441-462`；四个产地 `NacosTreeBase.ts:115`/`:135`、`ConfigTreeProvider.ts:213`/`:229`、`ServiceTreeProvider.ts:221`/`:237`/`:251`；`errorNode` 私有方法 `ConfigTreeProvider.ts:243-244`、`ServiceTreeProvider.ts:265-266`；缓存自淘汰 `NacosTreeBase.ts:165-169`、`ConfigTreeProvider.ts:265-269`；池自淘汰 `NacosClientPool.ts:48-55`；`extension.ts:181-189` 注释、Refresh `:369-376`、emitter `NacosTreeBase.ts:56`（protected）——全部一致。Lifecycle 排序清单在 `:36-64`（27 条、字母序），`retryLoad` 的插入位置与字母序吻合。
 
 ### 现状（先读）
 
@@ -413,6 +423,8 @@ const retryLoadCommand = vscode.commands.registerCommand('atNacos.retryLoad', (i
 
 ## Task A5 — 连接测试失败中文化（P0）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：七值枚举 `testNacosConnection.ts:69-83`、结构 `:98-106`、「Localizing them is the caller's job」头注释 `:115-123`、`describeConnectionFailure :308+`、config-reason 来源（`case 'validation'` → `reason: 'config'`）`:353-358`、失败分支 `NacosInstanceFormPanel.ts:356-372`、`describeSuccess :375-402`、catch 分支 `:289-297`、nls 单引号正则 `nls.test.ts:74`——全部一致。坑 3 的落点：`webview/nacos-instance-form/index.ts:153` 是 `testStatus.textContent = message` 赋值行。
+
 ### 现状（先读）
 
 - `src/nacos/testNacosConnection.ts:69-83`：`NacosConnectionFailureReason` 七值枚举 `'auth' | 'gateway' | 'network' | 'tls' | 'address' | 'config' | 'error'`；`:98-106` `NacosConnectionTestFailure` 结构化字段齐全（`reason`/`kind`/`status`/`triedBaseUrls`/`message`）。`:115-123` 头注释明说：**Messages come back in English…Localizing them is the caller's job**。
@@ -505,6 +517,8 @@ function describeFailureReason(reason: NacosConnectionTestFailure['reason']): st
 
 ## Task A6 — 历史翻页 + 任意两版本互比（P0）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`HISTORY_PAGE_SIZE` `:23`、「One page, deliberately」注释 `:14-22`、`loadConfigHistory :179-190`（`pageNo: 1` 在 :185）、`shownVersions` 选项 `:63`（安全阀消费点 `:155`/`:164`）、消息处理 `:144-172`、`renderVersionSection :235`、表头 `<thead>` `:270-278`（现 5 个有字 `<th>` + 1 个空 `<th>`，共 6 列）、`renderVersion :286`、`buildConfigHistoryUri` `configUri.ts:102-108`、`openConfigVersionDiff` `diffConfig.ts:51-65`、页面脚本刷新按钮 `webview/nacos-config-history/index.ts:44`、事件委托 `:61-82`、`mergePage` `ConfigTreeProvider.ts:312`（去重注释 `:300-311`，调用点 `:294`）、`Load more`/`Loading...` bundle `:69`/`:91`——全部一致。唯一修正：opType trim 的位置（见「坑」）。
+
 ### 现状（先读）
 
 - `src/webview/ConfigHistoryPanel.ts:23` `HISTORY_PAGE_SIZE = 100`；`:179-190` `loadConfigHistory` 写死 `pageNo: 1`，一页封顶。`:14-22` 注释解释了「一页、无 Load more」的旧决策——本任务推翻它的后半（补翻页），保留「历史端点服务端钳制 500」的事实。
@@ -580,7 +594,22 @@ if (type === 'diffPair') {
 }
 ```
 
-  `ConfigHistoryMessageOptions` 加 `loadMore: () => Promise<ConfigHistorySnapshot>` 与 `openPairDiff: (older, newer) => Promise<void>`。
+  `ConfigHistoryMessageOptions` 加 `loadMore: () => Promise<ConfigHistorySnapshot>` 与 `openPairDiff: (older, newer) => Promise<void>`。面板消息类型自此为五种：`'refresh' | 'rollback' | 'diff' | 'loadMore' | 'diffPair'`（类型判别一律走 `panelParts.ts` 的 `messageType()`）。`pairIds` 是新的本文件私有校验函数——页面消息不可信，形状不对一律回 `undefined`：
+
+```ts
+/** 恰好两个非空且互不相同的 string 才透传；其余形状（缺、非数组、长度不对、非 string、相同）一律 undefined。 */
+function pairIds(message: unknown): [string, string] | undefined {
+  const ids = (message as { ids?: unknown }).ids;
+  if (!Array.isArray(ids) || ids.length !== 2) {
+    return undefined;
+  }
+  const [first, second] = ids;
+  if (typeof first !== 'string' || typeof second !== 'string' || first === '' || second === '' || first === second) {
+    return undefined;
+  }
+  return [first, second];
+}
+```
 - **diff 打开**（`src/document/diffConfig.ts`，跟在 `openConfigVersionDiff` 后）：
 
 ```ts
@@ -641,7 +670,7 @@ openPairDiff: (older, newer) =>
 ### 坑（架构文档相关）
 
 - 历史端点是唯一被服务端钳制（500）的分页端点（架构 §10 与 `ConfigHistoryPanel.ts:14-22`）；`HISTORY_PAGE_SIZE=100` 不要加大。
-- `opType` 带定宽填充（`'I '`），`normalize.ts:149-159` 已 trim——不要在面板里再 trim。
+- `opType` 带定宽填充（`'I '`），normalize 层已 trim（`normalize.ts:268` 的 `record.opType.trim()`；字段定义在 `:149-159`）——不要在面板里再 trim。
 - 翻页期间有人发布 → 行移位 → 重复 nid：必须按 id 去重（同 `mergePage` 的理由，`ConfigTreeProvider.ts:300-311`）。
 - `rollback`/`diff` 单版本路径的 `shownVersions()` 校验（:154-171）不要被重构破坏——它是防页面伪造 nid 的唯一闸门，`diffPair` 也必须走同一 `shown` 数组。
 - 整页重渲会丢滚动位置（B10 已知债，本任务不修）；勾选状态也会随 refresh 重置——可接受，注释说明即可。
@@ -656,6 +685,8 @@ openPairDiff: (older, newer) =>
 
 ## Task A7 — 服务详情面板（P0）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`getService` `NacosClient.ts:177-179`、`NacosServiceDetail` `normalize.ts:470-477`（`ephemeral?` 注释 :474-475）、`NacosServiceCluster :457-462`、`normalizeServiceDetail :698`（clusterMap 形状注释 :690-697，`normalizeServiceClusters :728-739`）、模板锚点 `ClusterStatusPanel.ts` 先壳后数 `:118`/`:121`、`handle... :130-143`、`load... :150-172`、`render... :187-209`、命令样板 `extension.ts:668-685`、菜单样板 `package.json:305-309`（基线 `showServiceSubscribers` 确为 `atNacos.inspect@1`，与本任务「改成 @2」的前提一致）、esbuild contexts `esbuild.config.mjs:14-53`、Manifest 组测试 `:267-279`/`:286-301`/`:335-344`——全部一致。
+
 ### 现状（先读）
 
 - 驱动能力已就绪：`src/nacos/NacosClient.ts:177-179` `getService(ref): Promise<NacosServiceDetail>`；`src/nacos/driver/normalize.ts:470-477` `NacosServiceDetail { protectThreshold, metadata, ephemeral?, clusters }`、`:457-462` `NacosServiceCluster { name, healthCheckerType?, metadata }`。MCP 侧 `nacos_get_service` 早就在用它——UI 一直没画。
@@ -666,7 +697,10 @@ openPairDiff: (older, newer) =>
 
 ### 步骤
 
-- [ ] **测试先行 ① 新建** `test/webview/ServiceDetailPanel.test.ts`（模仿 `test/webview/ClusterStatusPanel.test.ts`）：
+- [ ] **测试先行 ① 新建** `test/webview/ServiceDetailPanel.test.ts`（模仿 `test/webview/ClusterStatusPanel.test.ts`；建议用例标题——仓库测试标题惯例是英文陈述句）：
+  - `it('folds a connect failure into the snapshot error')` / `it('folds a getService failure into the snapshot error')` / `it('carries the detail when the read succeeds')`
+  - `it('renders a loading shell before the snapshot arrives')` / `it('renders the error note instead of tables')` / `it('renders protect threshold, ephemerality, metadata and clusters')` / `it('says not reported when the server does not report ephemerality')` / `it('says the service defines no cluster for an empty list')` / `it('escapes metadata values')`
+  - `it('answers refresh by re-rendering and nothing else')`
   - `loadServiceDetail`：connect 抛 → `{ error }`；`getService` 抛 → `{ error }`；成功 → `{ detail }`。
   - `renderServiceDetail`：无 snapshot → 含 Loading；有 error → 含错误句；有 detail → 含 `protectThreshold`（按 0-1 小数原样 `formatNumber` 展示，如 `0.5`）、`ephemeral: true → '临时实例（下线即摘除）'` 的英文源、`ephemeral === undefined → not reported`、metadata 表、clusters 表含 `healthCheckerType`；`clusters: []` → 「未定义集群」句；metadata `{}` → 复用 `No metadata.`。
   - XSS：metadata 值含 `<script>` → 输出被 `escapeAttr` 转义。
@@ -781,6 +815,8 @@ esbuild.context({
 
 ## Task A8 — 按 IP 反查监听（P1）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`listListenedConfigs` `NacosClient.ts:169-171`、`NacosListenedConfigQuery` `NacosDriver.ts:137-141`、`NacosListenedConfig` `normalize.ts:169-173`、实例挑选样板 `extension.ts:1052-1079`、命名空间样板 `diffConfig.ts:205-243`（`namespaceChoiceLabel :241`）、palette 可见样板 `Manifest.test.ts:178-184`、`nacos-consumers` bundle `esbuild.config.mjs:49-50`（页面刷新按钮 `webview/nacos-consumers/index.ts:46`）、`askForNewConfigRef` `extension.ts:1138+`——全部一致。命令注册插入点：`uninstallMcpConfigCommand` 在 `:949`，新命令放它后面即可。
+
 ### 现状（先读）
 
 - 驱动/MCP 已通：`src/nacos/NacosClient.ts:169-171` `listListenedConfigs(query)`；`src/nacos/driver/NacosDriver.ts:137-141` `NacosListenedConfigQuery { namespaceId, ip, aggregation? }`；返回 `NacosListenedConfig { group, dataId, md5 }[]`（`normalize.ts:168-173`）。MCP 工具 `nacos_list_listened_configs` 在 `src/mcp/toolCatalog.ts`；driver 测试在 `test/nacos/driver/listenedConfigs.test.ts`。UI 没有任何入口。
@@ -809,7 +845,7 @@ esbuild.context({
 
 ### 步骤
 
-- [ ] **测试先行 ① 新建** `test/webview/ListenedConfigsPanel.test.ts`（模板 `ConfigListenersPanel.test.ts`）：load 把 `{ namespaceId, ip }` 原样传给 `listListenedConfigs`；成功渲染行（group/dataId/md5）；md5 空串 → not reported；空列表句；错误句；`refresh` 消息重渲、其他消息 false；XSS：dataId 含 `<img>` 被转义。
+- [ ] **测试先行 ① 新建** `test/webview/ListenedConfigsPanel.test.ts`（模板 `ConfigListenersPanel.test.ts`）：load 把 `{ namespaceId, ip }` 原样传给 `listListenedConfigs`；成功渲染行（group/dataId/md5）；md5 空串 → not reported；空列表句；错误句；`refresh` 消息重渲、其他消息 false；XSS：dataId 含 `<img>` 被转义。建议用例标题：`it('passes the namespace and ip through to the client')`、`it('renders one row per listened configuration')`、`it('says not reported for an empty md5')`、`it('explains an empty answer instead of showing an empty table')`、`it('folds a client failure into the error note')`、`it('answers refresh and ignores other messages')`、`it('escapes hostile data ids')`。
 - [ ] **测试先行 ② 新建** `test/extension/FindListenedConfigsCommand.test.ts`（模板 `ClusterStatusCommand.test.ts`）：
   - 单实例 + 单命名空间 + 输入 IP → `ListenedConfigsPanel.open` 收到正确参数（spyOn open；client 用 `startTestHttpServer` 或直接 mock `getOrCreateClient` 路径——该文件样板用真 HTTP fixture，跟随现状）。
   - Escape 掉 IP 输入框 → open 不被调用、无错误弹窗。
@@ -852,6 +888,8 @@ esbuild.context({
 ---
 
 ## Task A9 — 标题栏瘦身（P1）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：view/title 12 条在 `package.json:321-382`（每视图 6 个 navigation 图标）、`Manifest.test.ts:106-114`/`:116-124` 两组 it.each、`:130-137` 集群测试、`:93-100` 的 `/view == ([\w.]+)/` 正则、fixture `executeCommand` `test-fixtures/vscode.ts:381`、filter 命令 `extension.ts:378-394`/`:396-412`——全部一致。`rg "setContext" src/` 确为空。
 
 ### 现状（先读）
 
@@ -944,6 +982,8 @@ it('mirrors the configuration filter into a context key the title bar reads', as
 
 ## Task A10 — 集群 CPU/内存显示为百分比（P1）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`renderMetricGrid` `ClusterStatusPanel.ts:342-358`、`formatNumber :381-392`（doc 注释确实解释 cpu/mem）、`NacosServerMetrics` `normalize.ts:516-526`、`CPU`/`Memory` bundle `:114`/`:116`——全部一致。
+
 ### 现状（先读）
 
 - `src/webview/ClusterStatusPanel.ts:342-358` `renderMetricGrid`：八项指标全走 `renderNumber` → `formatNumber`（:381-392：四位小数去尾零）。`cpu`/`mem` 是 **0-1 比率**（注释原话：`0.09375`、三分之一内存到达时是 `0.3333333333333333`），当前显示 `0.0938` / `0.3333`——用户读不出这是 9.4% 和 33.3%。
@@ -985,6 +1025,8 @@ function renderRatio(value: number | undefined): string {
 ---
 
 ## Task A11 — 只读在深层节点可见（P1）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：实例节点 description `NacosTreeItems.ts:111-115`、readonly contextValue 分叉 `:47-49`、`ConfigTreeItem.tooltip` 赋值 `:196`、`ServiceTreeItem.tooltip :293-304`、`instanceTooltip :381-395`（多行 string 先例 `:394`）、分组派生说明 `:167-170`、写菜单 `package.json:271-284`（publishConfig 节点菜单在 :276）、Manifest `instance(readOnly)` 工厂 `:210-260`、菜单钉死测试 `:368-388`——全部一致。
 
 ### 现状（先读）
 
@@ -1035,6 +1077,8 @@ if (instance.readOnly) {
 ---
 
 ## Task A12 — 术语：「连接」vs「服务实例」（P1）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：改动清单 ② 里全部 bundle 行号（:2、:3、:14、:16、:18、:19、:37、:38、:45、:48-52、:78、:85、:132、:143、:172、:173、:187）与键值逐条比对一致；`package.nls.zh-cn.json` 六个键的旧值一致（welcome 两键确用「实例」）。「明确不改」清单里的 ② 类键也全部存在。
 
 ### 决策（保守）
 
@@ -1128,6 +1172,8 @@ it('never calls the saved connection 实例 in the manifest', () => {
 
 ## Task A13 — webview `lang`（P2）
 
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：`html.ts:34` 写死 `<html lang="en">`、`:1` 已 import vscode、`escapeAttr :92`、CSP `:37`；fixture `env` 在 `test-fixtures/vscode.ts:491-495` 且只有 `clipboard`、无 `language`——全部一致。
+
 ### 现状（先读）
 
 - `src/webview/html.ts:33-34`：`renderWebviewHtml` 写死 `<html lang="en">`——中文 UI 下屏幕阅读器/翻译插件拿到错误语言标签。
@@ -1161,6 +1207,8 @@ return `<!DOCTYPE html>
 ---
 
 ## Task A14 — 覆盖率脚本（P2）
+
+> ✅ 已核对 2026-08-27（基线 `origin/cursor/nacos-opt-1-8-6a9b`）：scripts `package.json:395-402`（无覆盖率项）、devDependencies `:407-413`（vitest `^3.2.0`，无 `@vitest/coverage-*`）、`vitest.config.ts` 全 9 行无 coverage、`.gitignore` 已含 `coverage/`——全部一致。
 
 ### 现状（先读）
 
