@@ -12,7 +12,7 @@
 
 ### 1. 多实例与多版本兼容 (M1 & M2)
 - **跨版本全兼容**：全面支持 Nacos **1.x**、**2.x**、**3.x**（包括 3.x Admin API 与 Console API 自动降级与适配）。
-- **多种鉴权策略**：支持账号密码（User/Password）、静态 Token、自定义请求头以及阿里云/官方 AK/SK 签名鉴权。
+- **多种鉴权策略**：支持无鉴权、账号密码（User/Password）与自定义请求头（可用于携带静态 Token 等凭据）。AK/SK 签名鉴权**尚未实现**（规划中）。
 - **凭据安全存储**：敏感密码及 Token 使用 VS Code 原生 `SecretStorage` 加密存储，不存明文。
 - **TLS 首次信任 (TOFU)**：HTTPS 自签名证书首次连接弹窗确认并计算 SHA-256 指纹记录，防中间人劫持。
 - **只读实例安全模式**：支持将生产环境配置为“只读实例”，UI 层隐藏写操作，运行时底层硬拦截所有写请求。
@@ -96,7 +96,7 @@ npm run package
 2. 进入扩展视图（Extensions），点击右上角 **`⋯` (更多操作) -> 从 VSIX 安装... (Install from VSIX...)**。
 3. 选择生成的 `at-nacos-0.1.2.vsix` 文件完成安装。
 4. 在左侧活动栏点击 **AT Nacos** 图标，点击 **「添加 Nacos 实例」** 即可开始使用。
-5. （可选）运行 **AT Nacos: Install/Repair AT Series MCP Config**，然后重连 MCP 客户端。
+5. （可选）运行 **AT Nacos: 安装 MCP 配置 (Install MCP Configuration)**，然后重连 MCP 客户端；如需移除，运行 **AT Nacos: 卸载 MCP 配置 (Uninstall MCP Configuration)**。
 
 ## Agent skill
 
