@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NacosAgentToolService, type NacosApiClientLike } from '../../src/agent/NacosAgentToolService';
 import type { NacosInstanceConfig } from '../../src/config/schema';
+import type { NacosCertVerifier } from '../../src/nacos/NacosCertTrustStore';
 
 const allowedInstance: NacosInstanceConfig = {
   id: 'inst-allowed',
@@ -33,7 +34,8 @@ function createMockDeps(clientOverrides: Partial<NacosApiClientLike> = {}) {
   };
 
   const certTrustStore = {
-    isTrusted: vi.fn().mockReturnValue(true)
+    isTrusted: vi.fn().mockReturnValue(true),
+    check: vi.fn().mockResolvedValue('trusted')
   };
 
   const client: NacosApiClientLike = {
@@ -139,7 +141,7 @@ function createMockDeps(clientOverrides: Partial<NacosApiClientLike> = {}) {
     createClient
   });
 
-  return { service, client, configManager };
+  return { service, client, configManager, certTrustStore, createClient };
 }
 
 describe('NacosAgentToolService', () => {
@@ -274,6 +276,94 @@ describe('NacosAgentToolService', () => {
 
     const clusterRes = await service.invoke('nacos_get_cluster_nodes', { instanceId: 'inst-allowed' });
     expect(clusterRes.ok).toBe(true);
+  });
+
+  it('nacos_get_cluster_nodes returns both nodes and metrics', async () => {
+    const { service } = createMockDeps();
+    const res = await service.invoke('nacos_get_cluster_nodes', { instanceId: 'inst-allowed' });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.result).toEqual({
+        nodes: [
+          {
+            address: '127.0.0.1:8848',
+            ip: '127.0.0.1',
+            port: 8848,
+            state: 'UP',
+            version: '2.3.2',
+            raftPort: 7848,
+            failAccessCnt: 0
+          }
+        ],
+        metrics: {
+          status: 'UP',
+          serviceCount: 10,
+          instanceCount: 20
+        }
+      });
+    }
+  });
+
+  it('nacos_get_cluster_nodes fetches nodes and metrics concurrently', async () => {
+    // getServerMetrics flips the flag synchronously as it starts;
+    // listClusterNodes yields once and then reads it. Under Promise.all both
+    // calls have started before either awaits, so the flag is already true.
+    // Under sequential awaits, getServerMetrics has not been called yet when
+    // listClusterNodes resumes, so the flag would still be false.
+    let metricsStarted = false;
+    let metricsStartedBeforeNodesResolved = false;
+    const { service } = createMockDeps({
+      listClusterNodes: vi.fn().mockImplementation(async () => {
+        await Promise.resolve();
+        metricsStartedBeforeNodesResolved = metricsStarted;
+        return [];
+      }),
+      getServerMetrics: vi.fn().mockImplementation(() => {
+        metricsStarted = true;
+        return Promise.resolve({ status: 'UP', serviceCount: 10, instanceCount: 20 });
+      })
+    });
+
+    const res = await service.invoke('nacos_get_cluster_nodes', { instanceId: 'inst-allowed' });
+    expect(res.ok).toBe(true);
+    expect(metricsStartedBeforeNodesResolved).toBe(true);
+  });
+
+  it('nacos_get_cluster_nodes keeps one answer when the other call fails', async () => {
+    const { service } = createMockDeps({
+      listClusterNodes: vi.fn().mockRejectedValue(new Error('nodes endpoint unavailable'))
+    });
+    const res = await service.invoke('nacos_get_cluster_nodes', { instanceId: 'inst-allowed' });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.result).toEqual({
+        nodes: [],
+        metrics: { status: 'UP', serviceCount: 10, instanceCount: 20 }
+      });
+    }
+  });
+
+  it('passes the instance and a non-interactive certificate verifier to createClient', async () => {
+    const { service, createClient } = createMockDeps();
+    await service.invoke('nacos_list_namespaces', { instanceId: 'inst-allowed' });
+    expect(createClient).toHaveBeenCalledTimes(1);
+    const [instanceArg, verifier] = createClient.mock.calls[0] as [NacosInstanceConfig, NacosCertVerifier];
+    expect(instanceArg).toEqual(allowedInstance);
+    expect(typeof verifier.verify).toBe('function');
+  });
+
+  it('agent cert verifier accepts only certificates the trust store already trusts', async () => {
+    const { service, createClient, certTrustStore } = createMockDeps();
+    await service.invoke('nacos_list_namespaces', { instanceId: 'inst-allowed' });
+    const [, verifier] = createClient.mock.calls[0] as [NacosInstanceConfig, NacosCertVerifier];
+
+    certTrustStore.check.mockResolvedValueOnce('trusted');
+    await expect(verifier.verify('nacos.example', 8848, 'aa:bb:cc')).resolves.toBe(true);
+
+    // An unknown certificate is refused, never prompted for: no VS Code modal
+    // may appear on the background MCP path.
+    certTrustStore.check.mockResolvedValueOnce('unknown');
+    await expect(verifier.verify('nacos.example', 8848, 'aa:bb:cc')).resolves.toBe(false);
   });
 
   it('nacos_get_service fills DEFAULT_GROUP and does not call listInstances', async () => {

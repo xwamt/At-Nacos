@@ -357,8 +357,13 @@ export class NacosAgentToolService {
     if (!resolved.ok) {
       return resolved.failure;
     }
-    const nodes = await resolved.client.listClusterNodes().catch(() => []);
-    const metrics = await resolved.client.getServerMetrics().catch(() => undefined);
+    // Independent reads, fetched together as the cluster status panel does.
+    // Each keeps its own fallback so one failing endpoint does not drop the
+    // other's answer.
+    const [nodes, metrics] = await Promise.all([
+      resolved.client.listClusterNodes().catch(() => []),
+      resolved.client.getServerMetrics().catch(() => undefined)
+    ]);
 
     return {
       ok: true,

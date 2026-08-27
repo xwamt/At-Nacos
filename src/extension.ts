@@ -26,7 +26,7 @@ import { rollbackConfig } from './write/rollbackConfig';
 import { toggleServiceInstanceEnabled } from './write/updateInstanceHealth';
 import { t } from './i18n/t';
 import { NacosCapabilityResolver } from './nacos/NacosCapabilityResolver';
-import { NacosCertTrustStore } from './nacos/NacosCertTrustStore';
+import { NacosCertTrustStore, type NacosCertVerifier } from './nacos/NacosCertTrustStore';
 import { NacosClient, buildChainAdvice, buildDriverChain } from './nacos/NacosClient';
 import { NacosClientPool } from './nacos/NacosClientPool';
 import { NacosHttpClient } from './nacos/NacosHttpClient';
@@ -90,11 +90,15 @@ export async function createNacosClient(
   configManager: Pick<NacosInstanceConfigManager, 'getPassword' | 'getCustomHeaders'>,
   instance: NacosInstanceConfig,
   certTrustStore: NacosCertTrustStore,
-  log: AtNacosLog
+  log: AtNacosLog,
+  // The UI path omits this and gets the interactive TOFU prompt. The MCP
+  // path passes a non-interactive verifier, because a background tool call
+  // has no user in front of it to answer a modal.
+  certVerifier?: NacosCertVerifier
 ): Promise<NacosClient> {
   const http = new NacosHttpClient({
     baseUrl: instance.serverUrl,
-    certVerifier: createInteractiveCertVerifier(certTrustStore),
+    certVerifier: certVerifier ?? createInteractiveCertVerifier(certTrustStore),
     log
   });
   const auth = await createAuthStrategy(instance, {
@@ -233,7 +237,12 @@ export function activate(context: vscode.ExtensionContext): void {
   const nacosAgentToolService = new NacosAgentToolService({
     configManager,
     certTrustStore,
-    createClient: (instance) => getOrCreateClient(instance),
+    // Deliberately not `getOrCreateClient`: the pool is keyed by instance id
+    // only, so sharing it would hand MCP calls a client built with the
+    // interactive verifier (or vice versa). A fresh client per tool call
+    // costs an extra login and keeps background access free of modals.
+    createClient: (instance, certVerifier) =>
+      createNacosClient(configManager, instance, certTrustStore, log, certVerifier),
     log
   });
 
