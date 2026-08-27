@@ -5,7 +5,13 @@
  * tested and the only side a crafted message cannot reach around.
  */
 
-type VsCodeApi = { postMessage(message: unknown): void };
+import { readSavedInstanceFormState } from './state';
+
+type VsCodeApi = {
+  postMessage(message: unknown): void;
+  getState(): unknown;
+  setState(state: unknown): void;
+};
 
 declare const acquireVsCodeApi: () => VsCodeApi;
 
@@ -65,9 +71,23 @@ function readValue(name: string): string {
   return field(name)?.value ?? '';
 }
 
+function writeValue(name: string, value: string): void {
+  const element = field(name);
+  if (element) {
+    element.value = value;
+  }
+}
+
 function isChecked(name: string): boolean {
   const element = field(name);
   return element instanceof HTMLInputElement && element.checked;
+}
+
+function setChecked(name: string, checked: boolean): void {
+  const element = field(name);
+  if (element instanceof HTMLInputElement) {
+    element.checked = checked;
+  }
 }
 
 /** Every field, every time: the extension host parses this and rejects a partial one. */
@@ -83,6 +103,41 @@ function payloadFromForm(): Record<string, unknown> {
     readOnly: isChecked('readOnly'),
     allowBackgroundAccess: isChecked('allowBackgroundAccess')
   };
+}
+
+/**
+ * Mirrors the form into the panel's webview state on every edit.
+ * `retainContextWhenHidden` keeps the page alive while its tab is hidden, and
+ * this covers the teardowns it does not. Webview state only: it lives and
+ * dies with this panel, so the password never reaches the extension's
+ * globalState.
+ */
+function persistFormState(): void {
+  vscode.setState(payloadFromForm());
+}
+
+/**
+ * Puts back what a rebuilt page lost. No saved state means a first open, and
+ * the HTML already holds the defaults -- and the `existing` values the
+ * extension rendered -- so there is nothing to overwrite them with.
+ */
+function restoreFormState(): void {
+  const saved = readSavedInstanceFormState(vscode.getState());
+  if (!saved) {
+    return;
+  }
+  writeValue('label', saved.label);
+  writeValue('serverUrl', saved.serverUrl);
+  writeValue('consoleUrl', saved.consoleUrl);
+  writeValue('authMode', saved.authMode);
+  writeValue('username', saved.username);
+  writeValue('password', saved.password);
+  writeValue('customHeaders', saved.customHeaders);
+  setChecked('readOnly', saved.readOnly);
+  setChecked('allowBackgroundAccess', saved.allowBackgroundAccess);
+  // The restored mode decides which credential fields show, exactly as a
+  // change event on the select would.
+  applyAuthMode(saved.authMode);
 }
 
 function setError(message: string): void {
@@ -127,6 +182,8 @@ function fillConsoleUrl(value: string): void {
   const element = field('consoleUrl');
   if (element instanceof HTMLInputElement && element.value.trim() === '') {
     element.value = value;
+    // Written by script, so no input event fires: mirror it by hand.
+    persistFormState();
   }
 }
 
@@ -147,6 +204,12 @@ function applyAuthMode(mode: string): void {
 authMode?.addEventListener('change', () => {
   applyAuthMode(authMode.value);
 });
+
+// Both bubble to the form, so one pair of listeners covers every field:
+// `input` catches typing, `change` catches the select and the checkboxes, and
+// a duplicate write of the same state is harmless.
+form?.addEventListener('input', persistFormState);
+form?.addEventListener('change', persistFormState);
 
 form?.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -180,7 +243,10 @@ window.addEventListener('message', (event: MessageEvent<{ type?: string; payload
   }
 });
 
-// Keeps these names off the global type space. Without it TypeScript treats a
-// file with no imports as a script, and the next Webview to declare a `form`
-// or a `strings` collides with this one.
+restoreFormState();
+
+// Keeps these names off the global type space even if the import above ever
+// goes away: TypeScript treats a file with no imports or exports as a script,
+// and the next Webview to declare a `form` or a `strings` collides with this
+// one.
 export {};

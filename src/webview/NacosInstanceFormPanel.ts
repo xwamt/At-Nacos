@@ -106,7 +106,15 @@ export class NacosInstanceFormPanel {
       'atNacos.instanceForm',
       instanceFormTitle(existing),
       vscode.ViewColumn.Active,
-      { enableScripts: true, localResourceRoots: [context.extensionUri] }
+      {
+        enableScripts: true,
+        localResourceRoots: [context.extensionUri],
+        // A hidden webview is normally torn down, and a rebuilt page comes
+        // back with everything typed but not saved -- password included --
+        // wiped. Kept alive instead; the page mirrors its fields into
+        // `setState` for the teardowns this flag does not prevent.
+        retainContextWhenHidden: true
+      }
     );
     panel.webview.html = renderWebviewHtml(
       panel.webview,

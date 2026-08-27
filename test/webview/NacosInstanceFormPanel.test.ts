@@ -18,6 +18,7 @@ import {
   type InstanceFormConfigManager
 } from '../../src/webview/NacosInstanceFormPanel';
 import { renderWebviewHtml } from '../../src/webview/html';
+import { readSavedInstanceFormState } from '../../webview/nacos-instance-form/state';
 
 /**
  * The exact copy the handler sends back. Spelled out here rather than imported
@@ -1231,6 +1232,41 @@ describe('NacosInstanceFormPanel.open', () => {
     expect(html).toContain('/ext/webview/nacos-instance-form/index.css');
     expect(html).toContain('id="atNacosStrings"');
     expect(html).toContain('name="serverUrl"');
+  });
+
+  it('keeps the page alive while its tab is hidden, so unsaved fields survive a tab switch', async () => {
+    // Without this flag a hidden webview is torn down, and a half-typed
+    // password or URL is gone when the user switches back.
+    const panel = await openWith();
+
+    expect(panel.options).toMatchObject({ enableScripts: true, retainContextWhenHidden: true });
+  });
+});
+
+describe('readSavedInstanceFormState', () => {
+  // The page half that owns `setState` touches `document` the moment it loads
+  // and cannot be imported under Node, so what gets tested is the round-trip
+  // guard it delegates to: a state `payloadFromForm()` wrote is exactly what
+  // this reader accepts. `formPayload()` is that shape, field for field.
+  it('accepts the payload shape the page writes', () => {
+    const payload = formPayload({ password: 'hunter2', readOnly: true });
+
+    expect(readSavedInstanceFormState(payload)).toEqual(payload);
+  });
+
+  it('answers undefined on a first open, when no state was ever written', () => {
+    expect(readSavedInstanceFormState(undefined)).toBeUndefined();
+  });
+
+  const rejected: Array<[string, unknown]> = [
+    ['a state missing a field', (({ password: _password, ...rest }) => rest)(formPayload())],
+    ['a field of the wrong type', formPayload({ readOnly: 'yes' })],
+    ['null', null],
+    ['a state that is not an object', 'prod']
+  ];
+
+  it.each(rejected)('rejects %s rather than restoring half a form', (_name, value) => {
+    expect(readSavedInstanceFormState(value)).toBeUndefined();
   });
 });
 
