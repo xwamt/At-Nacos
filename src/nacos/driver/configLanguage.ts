@@ -71,3 +71,22 @@ function suffixOf(dataId: string): string {
   const lastDot = dataId.lastIndexOf('.');
   return lastDot === -1 ? '' : lookupKey(dataId.slice(lastDot + 1));
 }
+
+/**
+ * The Nacos `type` a configuration that exists only as a dataId should be
+ * published as -- the inverse direction of `configLanguageId`, for the one
+ * caller that has no server record to read a type from: a draft created for
+ * a dataId nobody has published yet.
+ *
+ * Reuses `LANGUAGE_BY_SUFFIX` rather than keeping a second suffix table,
+ * because the two directions must not drift: a suffix this module highlights
+ * as YAML has to be published as YAML, or the config would render one way in
+ * this editor and another in the Nacos console. The only spelling the two
+ * sides disagree on is "no format", which VS Code calls `plaintext` and Nacos
+ * calls `text` -- and an unknown suffix lands there too, exactly where
+ * `publishConfig` already defaults a draft with no type at all.
+ */
+export function configTypeForDataId(dataId: string): string {
+  const language = LANGUAGE_BY_SUFFIX.get(suffixOf(dataId)) ?? PLAIN_TEXT;
+  return language === PLAIN_TEXT ? 'text' : language;
+}

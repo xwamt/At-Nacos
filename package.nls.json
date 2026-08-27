@@ -23,6 +23,7 @@
   "atNacos.command.compareAcrossEnvironments.title": "AT Nacos: Compare Across Environments",
   "atNacos.command.showConfigListeners.title": "AT Nacos: Show Configuration Listeners",
   "atNacos.command.showServiceSubscribers.title": "AT Nacos: Show Service Subscribers",
+  "atNacos.command.createConfig.title": "AT Nacos: New Configuration",
   "atNacos.command.editConfig.title": "AT Nacos: Edit Configuration",
   "atNacos.command.publishConfig.title": "AT Nacos: Publish Configuration",
   "atNacos.command.deleteConfig.title": "AT Nacos: Delete Configuration",

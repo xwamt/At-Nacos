@@ -136,6 +136,11 @@
         "title": "%atNacos.command.showServiceSubscribers.title%"
       },
       {
+        "command": "atNacos.createConfig",
+        "title": "%atNacos.command.createConfig.title%",
+        "icon": "$(new-file)"
+      },
+      {
         "command": "atNacos.editConfig",
         "title": "%atNacos.command.editConfig.title%",
         "icon": "$(edit)"
@@ -202,6 +207,10 @@
           "when": "false"
         },
         {
+          "command": "atNacos.createConfig",
+          "when": "false"
+        },
+        {
           "command": "atNacos.editConfig",
           "when": "false"
         },
@@ -252,6 +261,11 @@
           "command": "atNacos.deleteInstance",
           "when": "viewItem =~ /^atNacos\\.instance\\b/",
           "group": "atNacos.modify@2"
+        },
+        {
+          "command": "atNacos.createConfig",
+          "when": "viewItem == atNacos.namespace || viewItem == atNacos.group",
+          "group": "atNacos.modify@0"
         },
         {
           "command": "atNacos.editConfig",
