@@ -1265,3 +1265,173 @@ describe('ServiceTreeProvider localization', () => {
     }
   });
 });
+
+describe('ServiceTreeProvider filtering', () => {
+  it('sends no service name while nothing is filtered', async () => {
+    const { client, serviceQueries } = recordingClient({ services: pagesOf([service('cl-intimfy', 'merchant-admin')]) });
+    const provider = providerFor(client);
+
+    await expandNamespace(provider);
+
+    expect(serviceQueries[0].serviceName).toBeUndefined();
+    expect(provider.getFilter()).toBeUndefined();
+  });
+
+  /**
+   * The driver derives `serviceNameParam` and its matching mode from the
+   * presence of this field. Spelling that up here would put a Nacos protocol
+   * detail in the tree -- and the name-only fallback listing has no such
+   * parameter at all, which only the driver can know.
+   */
+  it('hands the driver the text the user typed, with no search mode and no wildcards', async () => {
+    const { client, serviceQueries } = recordingClient({
+      services: pagesOf([service('cl-intimfy', 'merchant-admin')]),
+      namespaces: [namespace({ namespaceId: 'uat' })]
+    });
+    const provider = providerFor(client);
+
+    provider.setFilter('merchant');
+    await expandNamespace(provider);
+
+    expect(serviceQueries).toEqual([{ namespaceId: 'uat', pageNo: 1, pageSize: 100, serviceName: 'merchant' }]);
+  });
+
+  it('trims the filter text before it searches with it', async () => {
+    const { client, serviceQueries } = recordingClient({ services: pagesOf([service('cl-intimfy', 'merchant-admin')]) });
+    const provider = providerFor(client);
+
+    provider.setFilter('  merchant  ');
+    await expandNamespace(provider);
+
+    expect(provider.getFilter()).toBe('merchant');
+    expect(serviceQueries[0].serviceName).toBe('merchant');
+  });
+
+  it('reads blank filter text as no filter at all', async () => {
+    const { client, serviceQueries } = recordingClient({ services: pagesOf([service('cl-intimfy', 'merchant-admin')]) });
+    const provider = providerFor(client);
+
+    provider.setFilter('   ');
+    await expandNamespace(provider);
+
+    expect(provider.getFilter()).toBeUndefined();
+    expect(serviceQueries[0].serviceName).toBeUndefined();
+  });
+
+  it('stops searching once the filter is cleared', async () => {
+    const { client, serviceQueries } = recordingClient({ services: pagesOf([service('cl-intimfy', 'merchant-admin')]) });
+    const provider = providerFor(client);
+
+    provider.setFilter('merchant');
+    await expandNamespace(provider);
+    provider.clearFilter();
+    const { children } = await expandNamespace(provider);
+
+    expect(serviceQueries.map((query) => query.serviceName)).toEqual(['merchant', undefined]);
+    expect(groupsIn(children).map((item) => item.label)).toEqual(['cl-intimfy']);
+  });
+
+  /**
+   * A filter is a different result set, so page four of the unfiltered one
+   * means nothing in it -- and continuing from there would skip the first
+   * three pages of matches, which are the ones the user is looking for.
+   */
+  it('starts the filtered listing at page one rather than continuing the unfiltered paging', async () => {
+    const { client, serviceQueries } = recordingClient({
+      services: pagesOf([service('cl-intimfy', 'a')], [service('cl-mu', 'b')])
+    });
+    const provider = providerFor(client);
+
+    const { namespaceItem } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+    provider.setFilter('merchant');
+    await provider.getChildren(namespaceItem);
+
+    expect(serviceQueries.map((query) => [query.pageNo, query.serviceName])).toEqual([
+      [1, undefined],
+      [2, undefined],
+      [1, 'merchant']
+    ]);
+  });
+
+  it('starts at page one again when the filter is cleared', async () => {
+    const { client, serviceQueries } = recordingClient({
+      services: pagesOf([service('cl-intimfy', 'a')], [service('cl-mu', 'b')])
+    });
+    const provider = providerFor(client);
+
+    provider.setFilter('merchant');
+    const { namespaceItem } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+    provider.clearFilter();
+    await provider.getChildren(namespaceItem);
+
+    expect(serviceQueries.map((query) => [query.pageNo, query.serviceName])).toEqual([
+      [1, 'merchant'],
+      [2, 'merchant'],
+      [1, undefined]
+    ]);
+  });
+
+  /** Every namespace's result set changes at once, so this is the one case where the whole tree is right. */
+  it('redraws the whole tree when the filter changes', async () => {
+    const provider = providerFor(stubClient([namespace()]));
+    const changed: Array<NacosTreeItem | undefined | void> = [];
+    provider.onDidChangeTreeData((element) => changed.push(element));
+
+    provider.setFilter('merchant');
+    provider.clearFilter();
+
+    expect(changed).toEqual([undefined, undefined]);
+  });
+
+  it('keeps the pages already loaded when the same filter text is entered again', async () => {
+    const { client, serviceQueries } = recordingClient({
+      services: pagesOf([service('cl-intimfy', 'a')], [service('cl-mu', 'b')])
+    });
+    const provider = providerFor(client);
+    provider.setFilter('merchant');
+    const { namespaceItem } = await expandNamespace(provider);
+    await provider.loadMore(namespaceItem);
+
+    provider.setFilter('merchant');
+    const children = await provider.getChildren(namespaceItem);
+
+    expect(serviceQueries.map((query) => query.pageNo)).toEqual([1, 2]);
+    expect(groupsIn(children).map((item) => item.label)).toEqual(['cl-intimfy', 'cl-mu']);
+  });
+
+  it('does nothing when the filter is cleared and there was none', async () => {
+    const provider = providerFor(stubClient([namespace()]));
+    const changed: Array<NacosTreeItem | undefined | void> = [];
+    provider.onDidChangeTreeData((element) => changed.push(element));
+
+    provider.clearFilter();
+
+    expect(changed).toEqual([]);
+  });
+
+  it('reports the filter on the view message, and takes it off again', () => {
+    const view: { message: string | undefined } = { message: undefined };
+    const provider = providerFor(stubClient([namespace()]));
+    provider.attachTreeView(view);
+
+    provider.setFilter('merchant');
+    const whileFiltered = view.message;
+    provider.clearFilter();
+
+    expect(whileFiltered).toContain('merchant');
+    expect(view.message).toBeUndefined();
+  });
+
+  /** The view is created after the provider, so a filter can already be set by the time one arrives. */
+  it('reports a filter that was set before the view was attached', () => {
+    const view: { message: string | undefined } = { message: undefined };
+    const provider = providerFor(stubClient([namespace()]));
+
+    provider.setFilter('merchant');
+    provider.attachTreeView(view);
+
+    expect(view.message).toContain('merchant');
+  });
+});

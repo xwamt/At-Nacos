@@ -111,6 +111,16 @@ describe('package.json contributions', () => {
     ]);
   });
 
+  it.each([
+    ['atNacos.filterServices', '$(filter)'],
+    ['atNacos.clearServiceFilter', '$(clear-all)']
+  ])('puts %s on the services view title with an icon', (command, icon) => {
+    expect(commands.find((entry) => entry.command === command)?.icon).toBe(icon);
+    expect((menus['view/title'] ?? []).filter((item) => item.command === command).map((item) => item.when)).toEqual([
+      'view == atNacos.services'
+    ]);
+  });
+
   /**
    * The cluster is a property of the server, not of either listing, so the
    * panel is reachable from whichever view the user happens to be in.

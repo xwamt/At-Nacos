@@ -79,6 +79,16 @@
         "icon": "$(clear-all)"
       },
       {
+        "command": "atNacos.filterServices",
+        "title": "%atNacos.command.filterServices.title%",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "atNacos.clearServiceFilter",
+        "title": "%atNacos.command.clearServiceFilter.title%",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "atNacos.openConfig",
         "title": "%atNacos.command.openConfig.title%"
       },
@@ -303,14 +313,24 @@
           "group": "navigation@2"
         },
         {
-          "command": "atNacos.openClusterStatus",
+          "command": "atNacos.filterServices",
           "when": "view == atNacos.services",
           "group": "navigation@3"
         },
         {
-          "command": "atNacos.manageInstances",
+          "command": "atNacos.clearServiceFilter",
           "when": "view == atNacos.services",
           "group": "navigation@4"
+        },
+        {
+          "command": "atNacos.openClusterStatus",
+          "when": "view == atNacos.services",
+          "group": "navigation@5"
+        },
+        {
+          "command": "atNacos.manageInstances",
+          "when": "view == atNacos.services",
+          "group": "navigation@6"
         }
       ]
     },
