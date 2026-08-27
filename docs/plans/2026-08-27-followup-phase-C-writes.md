@@ -10,6 +10,53 @@
 
 ---
 
+## 0-A. 代码基线核对（2026-08-27 已执行，agent 开工前请重跑一遍）
+
+### 0-A.1 基线分支与 main 的分叉
+
+本文档所有 file:line 均已于 2026-08-27 用 `git show origin/cursor/nacos-opt-1-8-6a9b:<path>` 逐条核实（核对方式：该分支与当时的 main 只有 7 个 src 文件不同，其余文件两边逐字节一致，直接按行号引用）。开工前重新核对的方法：
+
+```bash
+git fetch origin cursor/nacos-opt-1-8-6a9b main
+git diff --stat origin/main origin/cursor/nacos-opt-1-8-6a9b -- src test package.json
+```
+
+**main 与基线分支（opt-1-8）此刻的差异清单（若 1–8 批次已合入 main，本节作废）：**
+
+| 项 | main | opt-1-8 基线 | 对本计划的影响 |
+|---|---|---|---|
+| `atNacos.createConfig` + `openDraftDocument` 的 `createNew` 空草稿路径 | **不存在**（`git show origin/main:src/document/openDraftDocument.ts` 无 `createNew`） | 存在（`openDraftDocument.ts:26` 的 `createNew?: boolean`、`:67` 的 `emptyDetail`） | C2 的「目标缺失按空基线处理」硬依赖它。**未合入前 C2 不能动工** |
+| `atNacos.editInstance` / `deleteInstance` / `filterServices` / `clearServiceFilter` / `uninstallMcpConfig` 五个命令 | 不存在 | 存在 | 影响 §0-A.2 计数表基线 |
+| `atNacos.enableServiceInstance` / `disableServiceInstance` | **已在 main**（`extension.ts:744` / `:771`） | 在（`extension.ts:867` / `:894`） | C1 引用的行号按 opt-1-8；若基线变成 main 需重定位 |
+| `contributes.commands` 条数 | 21 | 27 | 见 §0-A.2 |
+
+**除上述 7 文件外，本文引用的全部驱动层 / 写层 / 文档层文件在 main 与 opt-1-8 上逐字节一致**，即 `writes.ts`、`NacosDriver.ts`、`normalize.ts`、`naming.ts`、`confirmWrite.ts`、`publishConfig.ts`、`updateInstanceHealth.ts`、`rollbackConfig.ts`、`deleteConfig.ts`、`NacosDraftFileSystemProvider.ts`、`diffConfig.ts`、四个 Driver、`NacosClient.ts`、`NacosCapabilityResolver.ts` 的行号两边通用。
+
+### 0-A.2 计数型测试的基线与递增（承 Phase A §0.3 的同一套约束）
+
+Phase C 新增 8 个命令。以「Phase A 全部完成」为起点（A 加了 3 个：`retryLoad` / `showServiceDetail` / `findListenedConfigs`，起点 30）；若 C 在 A 之前动工，起点是 27，下表整体减 3。**每个 Task 合入时同步改三处**：`package.json` `contributes.commands`、`ExtensionLifecycle.test.ts` 的命令清单、`toHaveLength(N)`（基线 N=36，A 后 39）。
+
+| 里程碑 | 新命令 | commands 条数（A 后起算） |
+|---|---|---|
+| C1 完成 | `atNacos.editInstanceWeight`、`atNacos.editInstanceMetadata` | 32 |
+| C4 完成 | `atNacos.editConfigMetadata` | 33 |
+| C5 完成 | （无新命令） | 33 |
+| C3 完成 | `atNacos.createNamespace`、`atNacos.editNamespace`、`atNacos.deleteNamespace` | 36 |
+| C6 完成 | `atNacos.deleteService` | 37 |
+| C2 完成 | `atNacos.cloneConfig` | 38 |
+
+**manifest 测试的三条铁则**（行号以 opt-1-8 的 `test/extension/Manifest.test.ts` 为准，动手前先读该文件）：
+
+1. 注册命令集合 === 贡献命令集合（`Manifest.test.ts:56-66` 自动兜底）。
+2. **每个命令在 `view/item/context` 恰好 1 条菜单**（`nodeMenu()`，`Manifest.test.ts:204-208`）。C1 的命令要同时挂 enabled/disabled 两种节点 → 必须用 `||` 写进**同一条** `when`，不许两条菜单。
+3. 所有新命令的 commandPalette `when` 必须是 `'false'` 并加进 it.each 清单（`Manifest.test.ts:147-171`、`186-191`）——这些命令都需要树节点上下文，命令面板里无法提供。
+
+**menu `when` 的既有约定**（照抄 opt-1-8 `package.json:251-318` 的现状，不要发明第三种）：写命令用**等值匹配**（如 `viewItem == atNacos.config`，天然排除 `.readonly` 后缀，见 `NacosTreeItems.ts:47-49` 的 `contextValueFor`）；只读命令用正则（如 `viewItem =~ /^atNacos\.config\b/`，含 readonly 变体）。
+
+**i18n 铁则**（`test/i18n/nls.test.ts:104-128`）：所有新 `t()` 必须用单引号字面量（不放查表对象的值里）；每个键同步进 `l10n/bundle.l10n.zh-cn.json`；中文翻译保留英文源串全部 `{placeholder}`（`nls.test.ts:48-55`）。
+
+---
+
 ## 0. 范围与非目标
 
 **做（对应路线图 C1–C6）：**
@@ -63,6 +110,25 @@ Task 内部实施顺序：**C1 → C4 → C5 →（发 PR-C-α）→ C3 → C6 �
 ---
 
 ## Task C1: 实例权重 / 元数据编辑
+
+> **三条硬性要求（路线图原文，缺一不验收）：** ① Nacos 实例更新是**整行覆盖**（服务端从请求重建实例，漏发的字段取默认值，不是「保持原值」）；② **写前必须 `listInstances` 重拉**，绝不把树节点缓存的行写回去；③ `confirmWrite` 的 detail 必须**逐字段展示将要写入的完整行**。
+
+### C1.0 现状核对表（against `origin/cursor/nacos-opt-1-8-6a9b`，2026-08-27 核实）
+
+| 事实 | 坐标 | 核对结果 |
+|---|---|---|
+| `updateInstanceHealthAt` 已整行回写：form 含 ip/port/clusterName/enabled/healthy/ephemeral/weight/metadata | `src/nacos/driver/writes.ts:97-127`（form 体 `:107-124`） | ✅ 属实；`enabled` 是唯一 override（`:116`），其余全部取 `request.instance` 原值 |
+| 「整行覆盖、漏发字段取默认」的服务端依据 | `writes.ts:79-95` 注释（2.3.2 `HttpRequestInstanceBuilder` + 3.x `InstanceForm.validate()`）；同款警告在 `NacosDriver.ts:180-190` | ✅ 注释原文在 |
+| `instanceId` 不发的原因 | `writes.ts:92-95` 注释（无版本读它） | ✅ |
+| `NacosInstanceHealthUpdate` 现形：`{service, instance, enabled}` | `src/nacos/driver/NacosDriver.ts:192-198` | ✅ `enabled` 是唯一可改字段 |
+| 接口方法 | `NacosDriver.ts:264` `updateInstanceHealth(request)`；能力名 `'instance-health'`（`NacosCapabilityResolver.ts:44`）；client 转发 `NacosClient.ts:229-230` | ✅ |
+| 四驱动实现均为一行转发 | `V1Driver.ts:197-198`、`V2Driver.ts:211-212`、`V3AdminDriver.ts:179-180`、`V3ConsoleDriver.ts:189-191`（后者带 `onConsoleOrigin()`） | ✅ 合并逻辑只需改 helper 一处 |
+| 实例更新路径常量 | v1 `/v1/ns/instance`（`V1Driver.ts:114`）、v2 `/v2/ns/instance`（`V2Driver.ts:134`）、v3-admin `/v3/admin/ns/instance`（`V3AdminDriver.ts:102`）、v3-console `/v3/console/ns/instance`（`V3ConsoleDriver.ts:82`） | ✅ C1 不加新路径 |
+| **过期缓存缺口**：UI 直接把树节点缓存的 `item.serviceInstance` 传给写 | opt-1-8 `src/extension.ts:867-892`（enable，`:878` 传 `item.serviceInstance`）、`:894-919`（disable，`:905`）。**同款代码已在 main**（`origin/main:src/extension.ts:744` / `:771`），非 opt-1-8 专有 | ✅ 这就是「写前重拉」要修的洞 |
+| `toggleServiceInstanceEnabled` 无重拉、confirm detail 只有一句话 | `src/write/updateInstanceHealth.ts:25-68`（confirm `:31-47`，detail 是固定句 `:44-46`） | ✅ |
+| `serviceIdentityParams` 已导出且注释点名「为实例写而导出」 | `src/nacos/driver/naming.ts:264-269`（注释 `:244-263`） | ✅ 复用，不重拼 |
+| 实例节点 contextValue | `src/tree/NacosTreeItems.ts:338`（`serviceInstance.enabled` / `serviceInstance.disabled`）+ `.readonly` 后缀（`:47-49`） | ✅ 菜单 `when` 据此写 |
+| 既有菜单先例（等值匹配排 readonly） | opt-1-8 `package.json:311-318`（enable 挂 `== atNacos.serviceInstance.disabled`，disable 反之） | ✅ |
 
 ### C1.1 现状与问题
 
@@ -153,6 +219,62 @@ export async function refetchInstance(
 | `package.json` / `package.nls*.json` / `l10n/bundle.l10n.zh-cn.json` | 命令、菜单（`view/item/context`，两种 contextValue，排除 `.readonly`）、文案 |
 | `test/nacos/driver/writeDrivers.test.ts`、`test/write/updateInstanceHealth.test.ts`、`test/write/refetchInstance.test.ts`（新）、`test/extension/ServiceCommands.test.ts` | 见 C1.5 |
 
+### C1.3.1 UI 接线细节（manifest 片段）
+
+`package.json` `contributes.commands` 增两条（`title` 走 `%key%`，双语 nls 同步）：
+
+```jsonc
+{ "command": "atNacos.editInstanceWeight",   "title": "%atNacos.editInstanceWeight.title%" },
+{ "command": "atNacos.editInstanceMetadata", "title": "%atNacos.editInstanceMetadata.title%" }
+```
+
+`view/item/context` 各**恰好一条**（nodeMenu 铁则，见 §0-A.2）。enabled 与 disabled 两种节点都要挂 → `||` 合进一条 `when`；等值匹配天然排除 `.readonly` 变体：
+
+```jsonc
+{
+  "command": "atNacos.editInstanceWeight",
+  "when": "viewItem == atNacos.serviceInstance.enabled || viewItem == atNacos.serviceInstance.disabled",
+  "group": "atNacos.modify@3"
+},
+{
+  "command": "atNacos.editInstanceMetadata",
+  "when": "viewItem == atNacos.serviceInstance.enabled || viewItem == atNacos.serviceInstance.disabled",
+  "group": "atNacos.modify@4"
+}
+```
+
+`commandPalette` 两条 `when: "false"` 并加进 `Manifest.test.ts:147-171` 的 it.each 清单。
+
+`extension.ts` 注册模式照抄 opt-1-8 `:867-892` 的 enable 命令：参数收 `ServiceInstanceTreeItem`，取 `item.instance` / `item.service` / `item.serviceInstance`，`connect` 回调经 `NacosClientPool`；catch 里 `log.error` + `showErrorMessage`，错误文案带 `{address}`。区别：`connect` 交给编排层的类型从 `UpdateInstanceHealthClient` 加宽为 `Pick<NacosClient, 'listInstances' | 'updateInstanceHealth'>`（重拉需要 `listInstances`）——**既有 enable/disable 命令的 `connect` 也随之换型**，这是三个入口共享重拉的接线点。
+
+### C1.3.2 i18n 字符串清单
+
+`package.nls.json` / `package.nls.zh-cn.json`：
+
+| 键 | en | zh-cn |
+|---|---|---|
+| `atNacos.editInstanceWeight.title` | Edit Instance Weight | 编辑实例权重 |
+| `atNacos.editInstanceMetadata.title` | Edit Instance Metadata | 编辑实例元数据 |
+
+`l10n/bundle.l10n.zh-cn.json`（英文源串即键，`t()` 单引号字面量）：
+
+| 英文源串（键） | zh-cn |
+|---|---|
+| `New weight for instance {address} (0-10000, current: {weight})` | 实例 {address} 的新权重（0–10000，当前 {weight}） |
+| `The weight must be a number between 0 and 10000. This is Nacos's own limit.` | 权重必须是 0–10000 之间的数字。这是 Nacos 自身的上限。 |
+| `Metadata for instance {address}, as flat JSON (string values only)` | 实例 {address} 的元数据（扁平 JSON，值必须是字符串） |
+| `The metadata must be a JSON object whose values are all strings. Nested objects and numbers are not accepted, because Nacos stores every value as text.` | 元数据必须是所有值均为字符串的 JSON 对象。不接受嵌套对象与数字——Nacos 把每个值都按文本存储。 |
+| `Instance {address} is no longer registered in service {serviceName}. It may have gone offline or been removed. Nothing was changed.` | 实例 {address} 已不在服务 {serviceName} 中注册（可能已下线或被摘除），未做任何修改。 |
+| `Update weight of instance {address} to {weight}?` | 将实例 {address} 的权重改为 {weight}？ |
+| `Update metadata of instance {address}?` | 更新实例 {address} 的元数据？ |
+| `Update weight` | 更新权重 |
+| `Update metadata` | 更新元数据 |
+| `The full instance row below will be written. A Nacos instance update overwrites the whole row; fields not listed here do not exist on the instance.` | 将写入下方完整实例行。Nacos 的实例更新是整行覆盖，未列出的字段在实例上不存在。 |
+| `Weight of instance {address} updated to {weight}.` | 实例 {address} 的权重已更新为 {weight}。 |
+| `Metadata of instance {address} updated.` | 实例 {address} 的元数据已更新。 |
+
+（`describeInstanceRow` 输出里的字段名 `weight` / `metadata` / `enabled` 等保留英文原文不翻——它们是将要发出的 form 字段名，翻译反而使 detail 与请求对不上号。）
+
 ### C1.4 实施清单
 
 - [ ] 泛化 `NacosInstanceUpdate` / `NacosInstancePatch`，删除旧类型，四驱动 + `NacosClient` 编译通过
@@ -165,25 +287,55 @@ export async function refetchInstance(
 - [ ] 命令注册 / manifest / 菜单 / l10n 全链路
 - [ ] 全量 vitest 通过
 
-### C1.5 测试
+### C1.5 测试（文件 + describe/it 标题，标题风格照仓库现状用英文陈述句）
 
-驱动层（`writeDrivers.test.ts`）：
+`test/nacos/driver/writeDrivers.test.ts`（扩展既有文件，unit）：
 
-- patch `{weight: 5}` 时 form 里 `weight=5` 且 metadata/enabled/healthy/ephemeral 全部来自 instance 行原值（整行仍完整）
-- patch `{metadata}` 时 form 里 `metadata` 是新 JSON，`weight` 是原值
-- patch `{enabled: false}` 行为与改造前 `enabled` 参数完全一致（回归保护）
-- 空 patch 抛 `validation`，且**没有发出任何 HTTP 请求**
-- 四 flavor 的 `serviceIdentityParams` 方言不回归（v1 grouped serviceName，v2/v3 分离）
-- weight 以字符串形式进 form（`Record<string,string>` 已在类型上强制，断言序列化值）
+```text
+describe('updateInstanceHealthAt with a patch')
+  it('sends the fresh row's weight, metadata, healthy and ephemeral untouched when only weight is patched')
+  it('sends the new metadata JSON and the original weight when only metadata is patched')
+  it('behaves byte-for-byte like the old enabled flag when the patch is {enabled: false}')   // 回归保护
+  it('throws validation for an empty patch before any HTTP request is made')
+  it('serializes weight as a string in the form')                                            // Record<string,string> 的序列化断言
+describe('updateInstanceHealthAt dialects')                                                  // 既有用例保绿即可
+  it('keeps the v1 grouped serviceName and the v2/v3 split spelling')                        // serviceIdentityParams 不回归
+```
 
-写层（`updateInstanceHealth.test.ts` + 新文件）：
+`test/write/refetchInstance.test.ts`（新，unit）：
 
-- `refetchInstance`：命中四元组返回新鲜行；ip:port 相同但 cluster 不同不误匹配；消失时抛出且消息含地址
-- 编辑权重全流程：重拉被调用、confirm 的 detail 含新鲜行的 metadata（而非缓存行的）、用户取消则零写请求
-- 权重输入校验：负数 / >10000 / 非数字被 InputBox 校验器拒绝
-- metadata 输入校验：非法 JSON、值为 number、嵌套对象均拒绝
-- 只读实例：`assertWritable` 抛出，重拉都不发生
-- `describeInstanceRow`：变更字段带「→」，未变字段原样，长 metadata 截断且注明
+```text
+describe('refetchInstance')
+  it('returns the fresh row matching ip, port, cluster and ephemeral')
+  it('does not match a row with the same ip:port in a different cluster')
+  it('does not match a persistent row when the cached one was ephemeral')
+  it('throws a localized error naming the address when the instance is gone')
+  it('propagates a listInstances failure untouched')
+```
+
+`test/write/updateInstanceHealth.test.ts`（扩展，unit）：
+
+```text
+describe('editServiceInstanceWeight')
+  it('re-fetches the instance before showing the confirmation')
+  it('shows the fresh row's metadata in the confirmation detail, not the cached row's')
+  it('writes the fresh row with only weight overridden')
+  it('sends nothing when the user cancels the confirmation')
+  it('rejects negative, above-10000 and non-numeric weights in the input validator')
+describe('editServiceInstanceMetadata')
+  it('rejects invalid JSON, numeric values and nested objects in the input validator')
+  it('writes the fresh row with only metadata overridden')
+describe('toggleServiceInstanceEnabled after the refetch change')
+  it('re-fetches before confirming and writes the fresh row')                                // 上下线也吃重拉
+  it('refuses a read-only instance before any fetch happens')
+describe('describeInstanceRow')
+  it('marks changed fields with an arrow and leaves unchanged fields as they are')
+  it('truncates metadata beyond ~200 characters in the display only')
+```
+
+`test/extension/ServiceCommands.test.ts` / `Manifest.test.ts`：两个新命令注册、菜单恰一条、commandPalette false、nls 键齐全（计数表 §0-A.2）。
+
+**live（可选，`AT_NACOS_LIVE_URL` 门控，套 `test/live/liveServer.test.ts:47-49` 的按需跳过机制）**：只在自己注册的临时 ephemeral 实例上跑「注册 → 改权重 → 读回验证 metadata 未丢 → 注销」，绝不动真机已有服务（全局约束 10）。
 
 ### C1.6 安全与坑
 
@@ -201,6 +353,22 @@ export async function refetchInstance(
 ---
 
 ## Task C2: 配置克隆 / 跨环境复制
+
+### C2.0 现状核对表（against `origin/cursor/nacos-opt-1-8-6a9b`，2026-08-27 核实）
+
+| 事实 | 坐标 | 核对结果 |
+|---|---|---|
+| `compareConfigAcrossEnvironments` 编排 | `src/document/diffConfig.ts:109-162` | ✅ |
+| `pickTargetInstance` **模块私有** | `diffConfig.ts:183-203` | ✅ 需导出/抽文件 |
+| `pickTargetNamespace` **模块私有**（排除源组合、空列表句子、public 显示名兜底） | `diffConfig.ts:205` 起 | ✅ |
+| `hasConfig`（`resource-not-found` 与其他错误区分） | `diffConfig.ts:164-181` | ✅ |
+| `publishConfig` 安全管线（重读→冲突警告→diff→modal→整行发布→markClean） | `src/write/publishConfig.ts:33-104`（重读 `:49`、冲突判定 `:59`、confirm `:67-79`、发布 `:86-94`、markClean `:96`） | ✅ |
+| `initDraft(instanceId, ref, detail)` 把 content 与 baseContent 都设为 `detail.content` | `src/document/NacosDraftFileSystemProvider.ts:43-54` | ✅ 表达不了「基线=目标、内容=源」，需加参 |
+| `deleteDraft` | `NacosDraftFileSystemProvider.ts:77` | ✅ 克隆成功后清理用 |
+| createNew 空基线语义（`createNew` 选项 + `emptyDetail`） | opt-1-8 `src/document/openDraftDocument.ts:26`、`:67`。**main 上不存在**（对 `origin/main` 的该文件搜 `createNew` 零命中）——1–8 批次未合入前 C2 不得动工（§0-A.1） | ✅ 已核 |
+| 配置节点 contextValue：`atNacos.config`（readonly 变体 `.readonly`） | `src/tree/NacosTreeItems.ts:190`、`:47-49` | ✅ |
+| 既有跨环境命令的菜单先例（含 readonly 源） | opt-1-8 `package.json:296-298`（`compareAcrossEnvironments` 用 `viewItem =~ /^atNacos\.config\b/`） | ✅ 克隆照抄该 `when`（源可只读） |
+| public 命名空间 id：1.x/2.x `''`、3.x `'public'` | 架构文档 §6.2 | ✅ targetRef 绝不归一化 |
 
 ### C2.1 现状与可复用件
 
@@ -261,6 +429,40 @@ initDraft(instanceId, ref, detail, initialContent?: string)
 | `package.json` / nls / l10n | 命令 + 菜单（`viewItem =~ /^atNacos\.config\b/`——**含 readonly 源**，与其他写命令的等值匹配刻意不同）+ 文案 |
 | `test/write/cloneConfig.test.ts`（新）、`test/document/NacosDraftFileSystemProvider.test.ts`、`test/document/diffConfig.test.ts` | 见 C2.5 |
 
+### C2.3.1 UI 接线细节
+
+```jsonc
+// contributes.commands
+{ "command": "atNacos.cloneConfig", "title": "%atNacos.cloneConfig.title%" }
+// view/item/context（恰好一条；正则含 readonly——克隆允许只读源，见 C2.2 第 3 步）
+{
+  "command": "atNacos.cloneConfig",
+  "when": "viewItem =~ /^atNacos\\.config\\b/",
+  "group": "atNacos.modify@4"
+}
+// commandPalette: { "command": "atNacos.cloneConfig", "when": "false" }
+```
+
+注意：`atNacos.modify` 组出现在 readonly 节点上是本命令的特例（其他 modify 命令都是等值匹配）。若评审认为组语义不符，放 `atNacos.inspect@5` 也可——菜单组只影响排序，不影响行为；二选一后在 commit message 里说明。
+
+`extension.ts` 注册：参数收 `ConfigTreeItem`，依赖注入 `configManager`（列实例）、`connectFor(instanceId)`（按目标实例建连接——**不是**当前实例的 `connect`）、`draftProvider`、双树刷新回调。
+
+### C2.3.2 i18n 字符串清单
+
+nls：`atNacos.cloneConfig.title` = Clone Configuration to Another Environment / 克隆配置到其他环境。
+
+bundle（英文源串即键）：
+
+| 英文源串（键） | zh-cn |
+|---|---|
+| `Clone {dataId} from {source} to {target}?` | 将 {dataId} 从 {source} 克隆到 {target}？ |
+| `Clone` | 克隆 |
+| `The target environment already has this configuration. Publishing the clone will overwrite it. Review the diff before confirming.` | 目标环境已存在该配置，发布克隆将覆盖它。确认前请核对 diff。 |
+| `The target environment does not have this configuration yet. The clone will create it.` | 目标环境尚无该配置，克隆将创建它。 |
+| `Configuration {dataId} was cloned to {target}.` | 配置 {dataId} 已克隆到 {target}。 |
+
+（选择器与「没有其他可选环境」等句子复用 `diffConfig.ts` 既有键，导出时连同文案一起搬，不新造。`{source}` / `{target}` 用 `environmentAddress` 的「实例 / 命名空间」格式。）
+
 ### C2.4 实施清单
 
 - [ ] 抽出/导出环境选择器与 `hasConfig`，`compareConfigAcrossEnvironments` 行为零变化（既有测试不动就绿）
@@ -271,17 +473,41 @@ initDraft(instanceId, ref, detail, initialContent?: string)
 - [ ] 命令 / manifest / 菜单 / l10n
 - [ ] 全量 vitest 通过
 
-### C2.5 测试
+### C2.5 测试（文件 + describe/it 标题）
 
-- 同实例跨命名空间克隆（最常见形态，也是唯一能真机验证的形态——架构文档 §14.9 ① 的两个命名空间可用）
-- 跨实例克隆：目标实例的 client 与源实例的 client 是两个连接（断言 connect 工厂按实例 id 分别调用）
-- 目标缺失：基线为空、无冲突警告、diff 左侧空、发布后内容与源逐字节一致、type 为源 type（不是后缀推断值）
-- 目标已存在：确认框带覆盖警告、diff 左右分别是目标现值与源内容
-- 源只读实例允许克隆（只 assert 目标可写）；目标只读实例在选择后立刻拒绝（第 3 步位置的测试）
-- 每一步取消（实例选择 / 命名空间选择 / diff 后拒绝确认）都零写请求
-- 源 `getConfig` 失败（网络 / forbidden）传播错误，不产生半初始化草稿
-- 克隆草稿发布后从草稿池消失（不残留脏草稿）
-- 元信息复制：源带 appName/description/tags 时全部随发布 form 出现在目标端点方言下
+`test/write/cloneConfig.test.ts`（新，unit）：
+
+```text
+describe('cloneConfig')
+  it('clones across namespaces on the same instance through the existing publish pipeline')
+  it('connects to the target instance with its own client, not the source's')     // connect 工厂按实例 id 断言
+  it('starts from an empty baseline with no conflict warning when the target is absent')
+  it('publishes content byte-for-byte equal to the source with the source type')  // 不是后缀推断值
+  it('warns about overwriting when the target already has the configuration')
+  it('allows a read-only source and asserts only the target writable')
+  it('refuses a read-only target right after it is picked')                        // 第 3 步位置
+  it('sends nothing when the instance picker, the namespace picker or the confirmation is cancelled')
+  it('propagates a source getConfig failure without creating a half-initialized draft')
+  it('deletes the clone draft after a successful publish')                          // 不残留脏草稿
+  it('carries appName, description and configTags from the source into the publish form')
+```
+
+`test/document/NacosDraftFileSystemProvider.test.ts`（扩展）：
+
+```text
+describe('initDraft with initialContent')
+  it('uses initialContent for content and detail.content for baseContent')
+  it('keeps an existing draft's content when one is already open')                  // existing?.content 优先
+```
+
+`test/document/diffConfig.test.ts`（扩展）：抽出选择器后，既有 `compareConfigAcrossEnvironments` 用例**一行不改全绿**（行为零变化的回归证明）；`absent=1` 标记的 provider 用例进 `test/document/NacosConfigDocumentProvider.test.ts`：
+
+```text
+  it('renders an empty document for a missing config when the uri carries absent=1')
+  it('keeps the failure sentence for a missing config without the marker')
+```
+
+**live（2.3.2）**：同实例跨命名空间克隆一轮（架构文档 §14.9 ① 的两个命名空间），结果记入架构文档 §14 追加节。跨实例克隆无第二台真机，unit 覆盖即可。
 
 ### C2.6 安全与坑
 
@@ -298,6 +524,21 @@ initDraft(instanceId, ref, detail, initialContent?: string)
 ---
 
 ## Task C3: 命名空间 CRUD
+
+### C3.0 现状核对表（against `origin/cursor/nacos-opt-1-8-6a9b`，2026-08-27 核实）
+
+| 事实 | 坐标 | 核对结果 |
+|---|---|---|
+| `listNamespaces` 四驱动齐全，路径常量 | v1 `/v1/console/namespaces`（`V1Driver.ts:57`）、v2 `/v2/console/namespace/list`（`V2Driver.ts:52`）、v3-admin `/v3/admin/core/namespace/list`（`V3AdminDriver.ts:53`）、v3-console `/v3/console/core/namespace/list`（`V3ConsoleDriver.ts:54`，带 override `:113`） | ✅ 写路径按「去掉 `/list`」推导（v3 未验证） |
+| 驱动层零命名空间写方法 | `NacosDriver.ts:215-265` 接口全文无 create/update/delete namespace | ✅ |
+| `normalizeNamespace` 硬性要求 `entry.namespace` 是字符串（invalid-response 不 fall-through） | `src/nacos/driver/normalize.ts:105-117`（throw `:107`） | ✅ §14.3 的 3.x 高风险项 |
+| `configCount` 已归一化（2.3.2 验证有该字段） | `normalize.ts:114` | ✅ 空检查第一道用 |
+| 命名空间节点 contextValue：`atNacos.namespace`（两棵树共用，不带 scope；readonly 变体 `.readonly`） | `NacosTreeItems.ts:129`、`:47-49`、注释 `:14-22` | ✅ 一条菜单两棵树都出现 |
+| 实例节点 contextValue：`atNacos.instance` | `NacosTreeItems.ts:108` | ✅「新建命名空间」挂它 |
+| `assertWriteAccepted` 四形状 + HTTP 200 `false` 拒绝 | `writes.ts:189-218` | ✅ 复用 |
+| DELETE 参数进 query 的军规 | `writes.ts:53-56` 注释（deleteConfigAt 先例 `:69-73`） | ✅ |
+| 能力名注册点 | `NacosCapabilityResolver.ts:42-44`（现有 `config-publish` / `config-delete` / `instance-health`） | ✅ 加三个新名 |
+| v1 console namespaces 写端点参数拼法（POST `customNamespaceId`/`namespaceName`/`namespaceDesc`；PUT `namespace`/`namespaceShowName`/`namespaceDesc`；DELETE `namespaceId`） | 官方 v1 OpenAPI（本仓库无一手验证——2.3.2 live 是本 Task 的验证义务） | ⚠ 文档依据，非真机 |
 
 ### C3.1 现状
 
@@ -373,6 +614,50 @@ interface NacosDriver {
 | `src/extension.ts` / `package.json` / nls / l10n | 三个命令 + 菜单 + 文案 |
 | `test/nacos/driver/namespaceWrites.test.ts`（新）、`test/write/namespaceCrud.test.ts`（新）、`test/extension/Manifest.test.ts` | 见 C3.5 |
 
+### C3.3.1 UI 接线细节（manifest 片段）
+
+```jsonc
+// contributes.commands
+{ "command": "atNacos.createNamespace", "title": "%atNacos.createNamespace.title%" },
+{ "command": "atNacos.editNamespace",   "title": "%atNacos.editNamespace.title%" },
+{ "command": "atNacos.deleteNamespace", "title": "%atNacos.deleteNamespace.title%" }
+// view/item/context（各恰好一条；等值匹配排除 readonly）
+{ "command": "atNacos.createNamespace", "when": "viewItem == atNacos.instance",  "group": "atNacos.modify@3" },
+{ "command": "atNacos.editNamespace",   "when": "viewItem == atNacos.namespace", "group": "atNacos.modify@1" },
+{ "command": "atNacos.deleteNamespace", "when": "viewItem == atNacos.namespace", "group": "atNacos.modify@2" }
+// commandPalette: 三条 when "false"
+```
+
+contextValue 不带树 scope（`NacosTreeItems.ts:14-22` 的刻意设计），所以这三条菜单在配置树与服务树的同类节点上**同时出现**——这是想要的行为，两棵树的命名空间是同一个东西；不要为「只挂一棵树」加 `view ==` 条件。public 命名空间节点与普通节点 contextValue 相同，**public 的拒绝在命令入口做**（弹信息框），不在菜单层做——菜单层多一种 contextValue 变体会把 readonly 矩阵翻倍。
+
+### C3.3.2 i18n 字符串清单
+
+nls：`atNacos.createNamespace.title` = Create Namespace / 新建命名空间；`atNacos.editNamespace.title` = Edit Namespace / 编辑命名空间；`atNacos.deleteNamespace.title` = Delete Namespace / 删除命名空间。
+
+bundle（英文源串即键）：
+
+| 英文源串（键） | zh-cn |
+|---|---|
+| `Namespace ID (leave empty to let Nacos generate a UUID)` | 命名空间 ID（留空由 Nacos 生成 UUID） |
+| `The namespace ID may only contain letters, digits, hyphens and underscores, up to 128 characters.` | 命名空间 ID 只能包含字母、数字、连字符与下划线，最长 128 个字符。 |
+| `A namespace with ID {namespaceId} already exists on {instance}.` | 实例 {instance} 上已存在 ID 为 {namespaceId} 的命名空间。 |
+| `Namespace name` | 命名空间名称 |
+| `Namespace description (optional)` | 命名空间描述（可选） |
+| `Create namespace {name} on {instance}?` | 在 {instance} 上创建命名空间 {name}？ |
+| `Create` | 创建 |
+| `Edit namespace {name} ({namespaceId})` | 编辑命名空间 {name}（{namespaceId}） |
+| `Save changes to namespace {name}?` | 保存对命名空间 {name} 的修改？ |
+| `Save` | 保存 |
+| `The public namespace cannot be edited or deleted.` | public 命名空间不可编辑或删除。 |
+| `Namespace {name} still holds {configCount} configurations and {serviceCount} services. Empty it first, or manage it from the Nacos console.` | 命名空间 {name} 还有 {configCount} 条配置 / {serviceCount} 个服务。请先清空，或到 Nacos 控制台操作。 |
+| `Delete namespace {name} ({namespaceId})?` | 删除命名空间 {name}（{namespaceId}）？ |
+| `Deleting removes only the namespace itself. Nacos does not cascade-delete anything. This extension verified the namespace was empty at the moment of the check.` | 删除仅移除命名空间本身，Nacos 不会级联删除任何数据。本插件已在检查时确认其为空。 |
+| `Namespace {name} was created.` | 命名空间 {name} 已创建。 |
+| `Namespace {name} was updated.` | 命名空间 {name} 已更新。 |
+| `Namespace {name} was deleted.` | 命名空间 {name} 已删除。 |
+
+（`Delete` 键已存在于 bundle，复用勿重复声明——A2 的重复键检测会红。）
+
 ### C3.4 实施清单
 
 - [ ] 接口三方法 + 请求类型；四驱动路径常量与转发；`missingCapability` 不适用（四 flavor 都有端点，v2 靠链降级兜底）
@@ -384,16 +669,46 @@ interface NacosDriver {
 - [ ] 全量 vitest 通过
 - [ ] live（2.3.2）：建 → 改描述 → 确认树上可见 → 在其中发一条配置 → 验证删除被空检查拒绝 → 删配置 → 删命名空间成功。结果记入架构文档 §14 追加节（v2 端点是否存在的答案顺带记录）
 
-### C3.5 测试
+### C3.5 测试（文件 + describe/it 标题）
 
-- 四驱动 × 三方法：URL、HTTP 方法、form vs query、参数拼法逐字段断言（v1 PUT 的三个特殊参数名是重点回归对象）
-- v3-console 每个方法都带 `baseUrlOverride`（漏一个就是全局约束 8 的事故）
-- 响应判定：裸 `true`、`{"code":0,"data":true}`、HTTP 200 + `false`（断言抛 api-error 且不 fall-through）、`{"code":10001}`
-- 空检查：configCount>0 拒绝；configCount=0 但实时探测到配置也拒绝；服务非空拒绝；双零才放行
-- public：`''` 与 `'public'` 都拒绝删除/编辑
-- id 预校验：非法字符、超长、与现有命名空间重复（重拉列表比对——服务端也会拒，客户端先给可读文案）
-- 只读实例：三命令全被 `assertWritable` 挡
-- 取消路径零请求
+`test/nacos/driver/namespaceWrites.test.ts`（新，unit）：
+
+```text
+describe('namespace writes across the four drivers')          // it.each 四驱动 × 三方法
+  it('POSTs the create form with customNamespaceId, namespaceName and namespaceDesc on v1')
+  it('PUTs the update form with namespace, namespaceShowName and namespaceDesc on v1')   // 三个特殊拼法是重点回归对象
+  it('sends namespaceId, namespaceName and namespaceDesc on v2 and both v3 flavors')
+  it('puts the delete parameters in the query string, never in a form')
+  it('sends the description present-but-empty on create and update')
+  it('adds the console base URL override to every v3-console method')                    // 漏一个就是全局约束 8 的事故
+  it('never spells the namespace parameter as tenant')                                   // C3.2 的「不走 namespaceParamName」断言
+describe('namespace write responses')
+  it('accepts a bare true and the {"code":0,"data":true} envelope')
+  it('throws api-error without fall-through for HTTP 200 carrying false')
+  it('throws api-error for a business code like 10001')
+```
+
+`test/write/namespaceCrud.test.ts`（新，unit）：
+
+```text
+describe('deleteNamespace safety checks')
+  it('refuses when configCount is above zero')
+  it('refuses when configCount is zero but a live listConfigs probe finds one')          // configCount 可能滞后
+  it('refuses when a live listServices probe finds a service')
+  it('proceeds to the confirmation only when both probes come back empty')
+  it('refuses the public namespace under both spellings, empty string and public')
+describe('createNamespace input validation')
+  it('rejects ids with illegal characters or beyond 128 characters')
+  it('rejects an id that already exists after re-listing the namespaces')
+describe('all three namespace commands')
+  it('refuses a read-only instance before any request is made')
+  it('sends nothing when any input box or the confirmation is cancelled')
+  it('refreshes both trees after a successful write')
+```
+
+`test/extension/Manifest.test.ts`：三个新命令的注册/菜单/palette/nls（计数表 §0-A.2）。
+
+**live（2.3.2，必做）**：建 → 改描述 → 树上可见 → 在其中发一条配置 → 验证删除被空检查拒绝 → 删配置 → 删命名空间成功。**顺带回答两个悬案并记入架构文档 §14 追加节**：① 2.3.2 是否真有 `/v2/console/namespace` 写端点（404 则链降级到 v1 是否顺畅）；② v1 PUT 的 `namespaceShowName` 拼法实测。
 
 ### C3.6 安全与坑
 
@@ -408,6 +723,21 @@ interface NacosDriver {
 ---
 
 ## Task C4: description / appName / tags 编辑与透传
+
+### C4.0 现状核对表（against `origin/cursor/nacos-opt-1-8-6a9b`，2026-08-27 核实）
+
+| 事实 | 坐标 | 核对结果 |
+|---|---|---|
+| `publishConfigAt` 已按 present-but-empty 发 `appName` / `desc`，注释写明整行 upsert 的清空风险 | `writes.ts:39-44` | ✅ tags 行照这段的样式加 |
+| `NacosConfigPublish` 无 `configTags` | `NacosDriver.ts:168-175` | ✅ 加可选字段 |
+| `configTagsParamName` 已存在：v1 族 `config_tags`、v2/v3 `configTags`，按端点族取值 | `normalize.ts:79-81`（注释 `:70-78` 点名 V2Driver 发 v1 端点要用 v1 拼法） | ✅ 发布 form 复用 |
+| 目前唯一消费者是列表过滤 | `NacosDriver.ts:389-391`（`configListParams`） | ✅ |
+| detail/summary 归一化无 `configTags` | `normalize.ts` 的 `normalizeConfigDetail` / `normalizeConfigSummary` | ✅ 补归一化 |
+| `DraftConfigMetadata` 无 `configTags` | `NacosDraftFileSystemProvider.ts:6-12` | ✅ 补字段 |
+| UI 发布携带 `draft.appName ?? latestDetail?.appName` | `publishConfig.ts:92-93` | ✅ tags 照抄该模式 |
+| 发布调用方全集 | `publishConfig.ts:86-94`、`rollbackConfig.ts:30` 起、createConfig 流程（opt-1-8 `openDraftDocument.ts` createNew + publish）、C2 的 `cloneConfig`（未来） | ✅ 逐个排查，漏一个 = 那条路径每次发布清一遍 tags |
+| V2Driver 配置写发到 v1 路径 | `V2Driver.ts:67`（`CONFIG_PATH = '/v1/cs/configs'`）、`:77`（`CONFIG_ENDPOINT_FLAVOR: 'v1'`） | ✅ 所以 v2 驱动的 form 键必须是 `config_tags` |
+| v3 两驱动的配置写路径 | `/v3/admin/cs/config`（`V3AdminDriver.ts:61`）、`/v3/console/cs/config`（`V3ConsoleDriver.ts:58`） | ✅ form 键 `configTags`（3.x 拼法未真机验证，容忍缺失） |
 
 ### C4.1 现状
 
@@ -466,6 +796,38 @@ configTags?: string;
 | `src/extension.ts` / `package.json` / nls / l10n | 命令 + 菜单 + 文案 |
 | 测试：`writeDrivers.test.ts`、`normalize.test.ts`、`publishConfig.test.ts`、`rollbackConfig.test.ts`、`editConfigMetadata.test.ts`（新） | 见 C4.5 |
 
+### C4.3.1 UI 接线细节
+
+```jsonc
+// contributes.commands
+{ "command": "atNacos.editConfigMetadata", "title": "%atNacos.editConfigMetadata.title%" }
+// view/item/context（恰好一条；等值匹配排除 readonly，与 editConfig/publishConfig/deleteConfig 同款）
+{ "command": "atNacos.editConfigMetadata", "when": "viewItem == atNacos.config", "group": "atNacos.modify@5" }
+// commandPalette: when "false"
+```
+
+`extension.ts` 注册照抄 `atNacos.publishConfig` 的模式：收 `ConfigTreeItem`，`connect` 建 `Pick<NacosClient, 'getConfig' | 'publishConfig'>`，成功后刷新文档 provider 与配置树。
+
+### C4.3.2 i18n 字符串清单
+
+nls：`atNacos.editConfigMetadata.title` = Edit Configuration Metadata / 编辑配置元信息。
+
+bundle（英文源串即键）：
+
+| 英文源串（键） | zh-cn |
+|---|---|
+| `Application name for {dataId} (leave empty to clear)` | {dataId} 的应用名（留空以清除） |
+| `Description for {dataId} (leave empty to clear)` | {dataId} 的描述（留空以清除） |
+| `Tags for {dataId}, comma-separated (leave empty to clear)` | {dataId} 的标签，逗号分隔（留空以清除） |
+| `A single tag cannot contain a comma. Nacos uses the comma to separate multiple tags.` | 单个标签不能包含逗号。逗号是 Nacos 的多标签分隔符。 |
+| `Nothing was changed.` | 没有修改。 |
+| `Update metadata of {dataId} on {instance}?` | 更新 {instance} 上 {dataId} 的元信息？ |
+| `This republishes the configuration as a whole row with its current server content. Nacos has no separate metadata endpoint.` | 本操作将以当前服务器内容整行重新发布该配置。Nacos 没有独立的元信息接口。 |
+| `(cleared)` | （清空） |
+| `Metadata of {dataId} was updated.` | {dataId} 的元信息已更新。 |
+
+detail 里的「旧 → 新」三行由代码拼装（`appName: a → b` 形式），字段名保留英文原文，理由同 C1.3.2。
+
 ### C4.4 实施清单
 
 - [ ] 归一化 + 类型 + form 行（present-but-empty）
@@ -476,14 +838,45 @@ configTags?: string;
 - [ ] 全量 vitest 通过
 - [ ] live（临时命名空间）：发一条带 tags 的配置 → 列表按 `config_tags` 过滤能命中 → 改 appName → 重读 detail 确认 tags 未被清掉（**这是本 Task 的灵魂断言**）
 
-### C4.5 测试
+### C4.5 测试（文件 + describe/it 标题）
 
-- publish form：设 tags 时按端点族拼法出现；未设时以 `''` 出现（present-but-empty，断言键存在值为空）
-- detail 归一化：有 `configTags` 字符串、缺失、非字符串（容忍为 undefined）
-- 「编辑 appName 不动 tags」：mock detail 带 tags，editConfigMetadata 只改 appName，断言发布 form 里 tags 原值仍在
-- rollback 携带 tags（历史 detail 有 → 用历史的；没有 → 用当前的）
-- 无变化短路：三项都没改则零写请求
-- 清空路径：confirm detail 含「（清空）」字样，form 里对应键为 `''`
+`test/nacos/driver/writeDrivers.test.ts`（扩展）：
+
+```text
+describe('publishConfigAt configTags')
+  it('spells the tags parameter config_tags on the v1 endpoint family and configTags on v3')  // V1Driver 与 V2Driver 都发 config_tags
+  it('sends the tags present-but-empty when the request carries none')                        // 断言键存在且值为 ''
+```
+
+`test/nacos/driver/normalize.test.ts`（扩展）：
+
+```text
+describe('configTags normalization')
+  it('carries a configTags string through detail and summary')
+  it('tolerates a missing or non-string configTags as undefined')
+```
+
+`test/write/editConfigMetadata.test.ts`（新，unit）：
+
+```text
+describe('editConfigMetadata')
+  it('re-fetches the detail instead of trusting the tree node')
+  it('keeps the stored tags when only appName is edited')                                     // 本 Task 的灵魂断言（unit 版）
+  it('publishes the server's current content and type untouched')
+  it('short-circuits with an information message when nothing changed')
+  it('marks a cleared field as (cleared) in the confirmation and sends an empty string')
+  it('rejects a tag containing a comma in the input validator')
+  it('refuses a read-only instance before any request')
+```
+
+`test/write/publishConfig.test.ts` / `rollbackConfig.test.ts`（扩展）：
+
+```text
+  it('carries the draft's or the latest detail's configTags into the publish')                // publishConfig
+  it('restores the history revision's tags, falling back to the current detail's')            // rollbackConfig
+```
+
+**live（2.3.2，临时命名空间）**：发一条带 tags 的配置 → 列表按 `config_tags` 过滤命中 → 改 appName → 重读 detail 确认 tags 未被清掉（**灵魂断言的真机版**）→ 记入架构文档 §14 追加节（顺带记录 2.3.2 detail 响应里 tags 字段的真实拼法）。
 
 ### C4.6 安全与坑
 
@@ -498,6 +891,17 @@ configTags?: string;
 ---
 
 ## Task C5: CAS 发布（casMd5）
+
+### C5.0 现状核对表（against `origin/cursor/nacos-opt-1-8-6a9b`，2026-08-27 核实）
+
+| 事实 | 坐标 | 核对结果 |
+|---|---|---|
+| TOCTOU 时序：重读（`getConfig`）→ 冲突判定 → confirm（modal 停留任意久）→ 发布 | `publishConfig.ts:49`（重读）、`:59`（`draft.baseContent !== serverContent`）、`:67-79`（confirm）、`:86-94`（发布） | ✅ 「确认 → 发布」窗口无保护 |
+| `DraftEntry.baseMd5` 被写入、无读取方 | 写入：`NacosDraftFileSystemProvider.ts:54`（`baseMd5: detail.md5`）；可选更新：`:101-111`（`markClean` 第三参）；全仓 `rg baseMd5` 无消费者 | ✅ 闲置属实 |
+| `markClean(key, content, newBaseMd5?)` 已支持 md5 参数 | `NacosDraftFileSystemProvider.ts:101-111` | ✅ 接口不用改 |
+| 列表 md5 恒为 null，detail 的 md5 是真值 | 架构文档 §14.2 ①''、§14.9 ② | ✅ CAS 锚点只能来自 detail |
+| casMd5 的服务端支持（2.x v1/v2 发布带可选 `casMd5`；3.x `ConfigForm` 有该字段） | 官方源码/文档依据，**无真机验证**；1.x 确定没有该参数且未知参数被静默丢弃（§14.2 ①' 同款） | ⚠ live 必验（形状与拒绝方式） |
+| `NacosApiError` kind 集合与降级判据 | `src/nacos/NacosApiError.ts`、架构文档 §5.4 | ✅ 不加新 kind 的理由成立 |
 
 ### C5.1 现状与问题（TOCTOU 的确切位置）
 
@@ -557,13 +961,43 @@ casMd5?: string;
 - [ ] 全量 vitest 通过
 - [ ] live（临时命名空间，2.3.2）：① v1 路径带过期 casMd5 发布，记录服务端是否拒绝与拒绝形状（**决定 V2 走 server 还是 reread 的实测依据**）；② 拒绝形状记入架构文档 §14 追加节
 
-### C5.5 测试
+### C5.4.1 i18n 字符串清单（C5 无新命令，只有新文案）
 
-- v2/v3 驱动：casMd5 设置时出现在 form；未设置时键不存在（不是空串）
-- v1 驱动：casMd5 **从不**出现在 form；设置时先发 GET 重读；md5 不一致抛错且**没有发布请求发出**；一致则发布照旧
-- publishConfig：casMd5 取 latestDetail.md5；createNew 路径不设；被拒后重读 md5 不同 → 冲突文案，相同 → 原错误传播
-- markClean 回填：发布成功后 baseMd5 更新为发布后重读值；重读失败不阻塞成功提示（这是锦上添花路径，失败降级为不更新）
-- rollback / editConfigMetadata 带 casMd5
+| 英文源串（键） | zh-cn |
+|---|---|
+| `The configuration was modified by someone else while you were confirming. The publish was refused. Reopen the diff and review the latest server content before publishing again.` | 配置在你确认期间被他人修改，本次发布已被拒绝。请重新打开对比、核对服务器最新内容后再发布。 |
+| `A re-read before publishing found the configuration changed on the server. The publish was not performed.` | 发布前重读发现配置已在服务器上被修改，本次发布未执行。 |
+
+（第二条是 V1 reread 模拟的错误消息——它从 helper 层抛出，helper 不 import vscode，所以这条走 `NacosApiError` 的 message 而非 `t()`；本地化留在 UI 层 catch 处按 kind+场景改写，或接受英文原文进错误提示——与 §16.1「错误文案没有本地化」的既有现状一致，二选一并在 PR 里说明。）
+
+### C5.5 测试（文件 + describe/it 标题）
+
+`test/nacos/driver/writeDrivers.test.ts`（扩展）：
+
+```text
+describe('publishConfigAt casMd5 on the server-side drivers')
+  it('puts casMd5 in the form when set on v2 and both v3 flavors')
+  it('leaves the casMd5 key out entirely when unset')                                     // 不是空串
+describe('publishConfigAt casMd5 on v1 (reread simulation)')
+  it('never puts casMd5 in the v1 form')
+  it('re-reads the detail first and publishes when the md5 still matches')
+  it('throws api-error and sends no publish when the md5 differs')
+  it('falls back to comparing content when the detail has no md5')
+```
+
+`test/write/publishConfig.test.ts`（扩展）：
+
+```text
+  it('anchors casMd5 to the md5 of the detail shown in the diff')
+  it('sets no casMd5 on the createNew path or when the detail has no md5')
+  it('reports a conflict when a refused publish finds a different server md5 afterwards')
+  it('propagates the original refusal when the server md5 still matches')                 // 那是权限等真拒绝
+  it('feeds the post-publish md5 into markClean and tolerates that re-read failing')
+```
+
+`test/write/rollbackConfig.test.ts` / `editConfigMetadata.test.ts`（扩展）：`it('carries the re-read detail's md5 as casMd5')`。
+
+**live（2.3.2，临时命名空间，必做）**：带过期 casMd5 走 v1 路径发布，记录服务器是否拒绝、HTTP 状态与 body 形状——**这是 V2 走 server 还是 reread 的实测依据**（C5.2）；结果记入架构文档 §14 追加节。
 
 ### C5.6 安全与坑
 
@@ -578,6 +1012,18 @@ casMd5?: string;
 ---
 
 ## Task C6: 删除空服务
+
+### C6.0 现状核对表（against `origin/cursor/nacos-opt-1-8-6a9b`，2026-08-27 核实）
+
+| 事实 | 坐标 | 核对结果 |
+|---|---|---|
+| 驱动层无 `deleteService` | `NacosDriver.ts:215-265` 接口全文 | ✅ 新增 |
+| `serviceIdentityParams` 可复用（v1 grouped、v2/v3 分离；写读同拼法的理由在注释里） | `naming.ts:264-269`（注释 `:244-263`） | ✅ |
+| 服务详情路径常量（DELETE 与 GET 同路径不同方法） | v1 `/v1/ns/service`（`V1Driver.ts:90`）、v2 `/v2/ns/service`（`V2Driver.ts:104`）、v3-admin `/v3/admin/ns/service`（`V3AdminDriver.ts:82`）、v3-console `/v3/console/ns/service`（`V3ConsoleDriver.ts:73`） | ✅ 复用常量，不新增 |
+| 服务节点 contextValue：`atNacos.service` | `NacosTreeItems.ts:284` | ✅ |
+| 既有 service 菜单先例用正则 `/^atNacos\.service\b/`（`\b` 在 `serviceInstance` 的 `e→I` 处不成立，不会误伤——§14.9 条目 36 的教训已由该正则本身规避） | opt-1-8 `package.json:306-308` | ✅ 但 C6 是写命令 → 用**等值** `viewItem == atNacos.service`，比正则更稳且自动排除 readonly |
+| v2 删除非空服务的错误形状（`service not found` 是 `{"code":21008}`） | 架构文档 §14.8 ④ | ✅ not-found 宽恕分支据此写 |
+| `missingCapability` 先例 | `V3ConsoleDriver.ts:175`（`getServerMetrics`） | ✅ v3-console 404 时的降级形态 |
 
 ### C6.1 架构决策
 
@@ -616,13 +1062,61 @@ deleteService(ref: NacosServiceRef): Promise<void>;
 - [ ] 全量 vitest 通过
 - [ ] live：临时命名空间注册一个临时服务（ephemeral 实例）→ 验证有实例时删除被预检查拒绝 → 注销实例 → 删除成功（或被 auto-clean 抢先，两种结果都记录）
 
-### C6.3 测试
+### C6.2.1 UI 接线与 i18n
 
-- 四驱动：URL/方法/query 拼法（v1 grouped name 是重点）；v3-console 带 override
-- 预检查：1 个 enabled 实例拒绝；1 个 disabled 实例也拒绝（文案含计数）；空放行
-- 服务端拒绝（HTTP 200+false / 400 code）不降级、文案传播
-- not-found 类错误（v1 500 文本 / v2 21008）走信息框分支
-- 只读、取消路径
+```jsonc
+// contributes.commands
+{ "command": "atNacos.deleteService", "title": "%atNacos.deleteService.title%" }
+// view/item/context（恰好一条；等值匹配——写命令惯例，且天然不会命中 serviceInstance 与 readonly）
+{ "command": "atNacos.deleteService", "when": "viewItem == atNacos.service", "group": "atNacos.modify@1" }
+// commandPalette: when "false"
+```
+
+nls：`atNacos.deleteService.title` = Delete Empty Service / 删除空服务。
+
+bundle：
+
+| 英文源串（键） | zh-cn |
+|---|---|
+| `Service {serviceName} still has {count} registered instances (including disabled ones). Deregister them first.` | 服务 {serviceName} 还有 {count} 个注册实例（含已下线的）。请先注销它们。 |
+| `Delete service {group}@@{serviceName} in namespace {namespace} on {instance}?` | 删除 {instance} 上命名空间 {namespace} 中的服务 {group}@@{serviceName}？ |
+| `Deleting removes only the service definition. This extension verified it had no registered instances at the moment of the check.` | 删除仅移除服务定义。本插件已在检查时确认其无任何注册实例。 |
+| `Service {serviceName} no longer exists. It may have been removed by Nacos's empty-service auto-clean.` | 服务 {serviceName} 已不存在（可能已被 Nacos 的空服务自动清理移除）。 |
+| `Service {serviceName} was deleted.` | 服务 {serviceName} 已删除。 |
+
+### C6.3 测试（文件 + describe/it 标题）
+
+`test/nacos/driver/writeDrivers.test.ts` 或新 `deleteService` 段（unit）：
+
+```text
+describe('deleteService across the four drivers')
+  it('DELETEs with the parameters in the query string, never a form')
+  it('folds the group into the serviceName on v1 and splits them on v2 and v3')     // grouped name 是重点
+  it('adds the console base URL override on v3-console')
+  it('throws api-error without fall-through when the server answers HTTP 200 with false')
+```
+
+`test/write/deleteService.test.ts`（新，unit）：
+
+```text
+describe('deleteService pre-check')
+  it('refuses when one enabled instance is registered')
+  it('refuses when the only instance is disabled, naming the count')                // 下线不等于注销
+  it('proceeds to the confirmation when the instance list is empty')
+describe('deleteService outcomes')
+  it('shows an information message instead of an error for a not-found style refusal')  // v1 500 文本 / v2 21008
+  it('propagates a non-empty-service refusal from the server as an error')
+  it('refuses a read-only instance and sends nothing on cancel')
+  it('refreshes the service tree after a successful delete')
+```
+
+**live（2.3.2）**：临时命名空间注册临时服务（ephemeral）→ 有实例时删除被预检查拒绝 → 注销实例 → 删除成功（或被 auto-clean 抢先——两种结果都记录进架构文档 §14 追加节）。
+
+### C6.3.1 坑与非目标
+
+- **非目标**：删除非空服务（连 force 选项都不给——注销实例是服务所有者的事）；批量删除；删除服务组（Nacos 没有组实体）；MCP 暴露（Phase D2 也不做删除类）。
+- 预检查必须数**全部**实例（enabled + disabled + unhealthy）——`listInstances` 已带 `healthyOnly: 'false'`（`naming.ts:241`），不要再加过滤。
+- v3-console 的 DELETE mapping 无一手证据（架构文档 §14.5 条目 18 只确认 console 有 naming controller）；照写，live 404 再改 `missingCapability`——降级终点文案必须可读（普通账号在 3.x 上是 admin-403 → console-404 的链条）。
 
 ### C6.4 完成判据
 
