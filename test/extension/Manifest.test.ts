@@ -6,6 +6,7 @@ import { activate, deactivate } from '../../src/extension';
 import {
   ConfigTreeItem,
   GroupTreeItem,
+  InstanceTreeItem,
   ServiceInstanceTreeItem,
   ServiceTreeItem
 } from '../../src/tree/NacosTreeItems';
@@ -135,10 +136,12 @@ describe('package.json contributions', () => {
   });
 
   /**
-   * All three are invoked by a tree node carrying arguments. Picked from the
-   * palette they arrive with none: `openConfig` would be asked to open
+   * All of these are invoked by a tree node carrying arguments. Picked from
+   * the palette they arrive with none: `openConfig` would be asked to open
    * `undefined` and either paging command to page a namespace that was not
    * named. `when: false` is the only way a contributed command stays out of it.
+   * `openClusterStatus` is deliberately not here: it can ask which instance
+   * it was meant for, so the palette keeps it.
    */
   it.each([
     ['atNacos.openConfig'],
@@ -153,7 +156,9 @@ describe('package.json contributions', () => {
     ['atNacos.publishConfig'],
     ['atNacos.deleteConfig'],
     ['atNacos.enableServiceInstance'],
-    ['atNacos.disableServiceInstance']
+    ['atNacos.disableServiceInstance'],
+    ['atNacos.editInstance'],
+    ['atNacos.deleteInstance']
   ])(
     'hides %s from the command palette, since only a tree node can supply its arguments',
     (command) => {
@@ -233,6 +238,10 @@ describe('package.json contributions', () => {
     );
   }
 
+  function instanceNodeValue(readOnly: boolean): string {
+    return String(new InstanceTreeItem('config', instance(readOnly)).contextValue);
+  }
+
   /**
    * Every one of these is a read, so it belongs on a read-only instance's
    * nodes too -- which carry a `.readonly` suffix that a `==` comparison
@@ -272,6 +281,37 @@ describe('package.json contributions', () => {
     expect(pattern.test(serviceNodeValue(true))).toBe(true);
     expect(pattern.test(serviceInstanceValue), serviceInstanceValue).toBe(false);
     expect(pattern.test(configNodeValue(false))).toBe(false);
+  });
+
+  /**
+   * All three belong on a read-only instance too, which a `==` comparison
+   * would miss: editing is the only way read-only gets turned *off*, a
+   * read-only server can still be removed, and cluster status is a read.
+   * The clause must still name the instance node alone -- nothing under it,
+   * and not the registered service instances whose context value also spells
+   * "Instance".
+   */
+  it.each([
+    ['atNacos.editInstance'],
+    ['atNacos.deleteInstance'],
+    ['atNacos.openClusterStatus']
+  ])('offers %s on a writable and on a read-only instance node, and on nothing under it', (command) => {
+    const pattern = contextValuePattern(nodeMenu(command).when);
+    const serviceInstanceValue = String(
+      new ServiceInstanceTreeItem(
+        'service',
+        instance(false),
+        { namespaceId: 'uat', group: 'cl-intimfy', serviceName: 'cl-auth' },
+        { ip: '10.0.0.1', port: 8080, healthy: true, enabled: true, weight: 1, clusterName: 'DEFAULT', ephemeral: true, metadata: {} }
+      ).contextValue
+    );
+
+    expect(pattern.test(instanceNodeValue(false)), instanceNodeValue(false)).toBe(true);
+    expect(pattern.test(instanceNodeValue(true)), instanceNodeValue(true)).toBe(true);
+    expect(pattern.test(configNodeValue(false))).toBe(false);
+    expect(pattern.test(configNodeValue(true))).toBe(false);
+    expect(pattern.test(serviceNodeValue(false))).toBe(false);
+    expect(pattern.test(serviceInstanceValue), serviceInstanceValue).toBe(false);
   });
 
   /** A node menu with no group is appended to whatever came before it, in registration order. */

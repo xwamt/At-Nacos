@@ -6,6 +6,8 @@
   "atNacos.view.services.name": "Services",
   "atNacos.command.addInstance.title": "AT Nacos: Add Instance",
   "atNacos.command.manageInstances.title": "AT Nacos: Manage Instances",
+  "atNacos.command.editInstance.title": "AT Nacos: Edit Instance",
+  "atNacos.command.deleteInstance.title": "AT Nacos: Delete Instance",
   "atNacos.command.refreshConfigs.title": "AT Nacos: Refresh Configurations",
   "atNacos.command.refreshServices.title": "AT Nacos: Refresh Services",
   "atNacos.command.filterConfigs.title": "AT Nacos: Filter Configurations",

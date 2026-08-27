@@ -39,9 +39,11 @@ describe('atNacos extension lifecycle', () => {
       'atNacos.clearServiceFilter',
       'atNacos.compareAcrossEnvironments',
       'atNacos.deleteConfig',
+      'atNacos.deleteInstance',
       'atNacos.diffWithPrevious',
       'atNacos.disableServiceInstance',
       'atNacos.editConfig',
+      'atNacos.editInstance',
       'atNacos.enableServiceInstance',
       'atNacos.filterConfigs',
       'atNacos.filterServices',
@@ -77,14 +79,14 @@ describe('atNacos extension lifecycle', () => {
   });
 
   it('hands every disposable it created to context.subscriptions', () => {
-    // The channel, the twenty-four commands, the two views, the document provider,
+    // The channel, the twenty-six commands, the two views, the document provider,
     // the draft file system provider and their registrations. Anything left out survives a window reload and
     // leaks a listener into the next activation.
     const context = extensionContext();
 
     activate(context);
 
-    expect(context.subscriptions).toHaveLength(33);
+    expect(context.subscriptions).toHaveLength(35);
     for (const subscription of context.subscriptions) {
       expect(typeof subscription.dispose).toBe('function');
     }

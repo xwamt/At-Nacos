@@ -1,15 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import type { NacosInstanceConfig } from '../../src/config/schema';
 import { activate, deactivate } from '../../src/extension';
+import { InstanceTreeItem } from '../../src/tree/NacosTreeItems';
 import { ClusterStatusPanel } from '../../src/webview/ClusterStatusPanel';
 import { commands as fixtureCommands, window as fixtureWindow } from '../../test-fixtures/vscode';
 import { startTestHttpServer, type TestHttpServer } from '../nacos/testHttpServer';
 import { extensionContext, INSTANCES_KEY, storedInstance } from './extensionContext';
 
-function run(command: string): Promise<unknown> {
+function run(command: string, ...args: unknown[]): Promise<unknown> {
   const handler = fixtureCommands.__getRegisteredCommands().get(command);
   expect(handler, command).toBeDefined();
-  return Promise.resolve(handler?.());
+  return Promise.resolve(handler?.(...(args as never[])));
+}
+
+/** The tree node the instance context menu hands over. */
+function instanceNode(overrides: Record<string, unknown> = {}): InstanceTreeItem {
+  return new InstanceTreeItem('config', storedInstance(overrides) as unknown as NacosInstanceConfig);
 }
 
 /** What `ClusterStatusPanel.open` was asked to show. */
@@ -68,6 +75,41 @@ describe('atNacos.openClusterStatus', () => {
       placeHolder: 'Select a Nacos instance to show the cluster status of'
     });
     expect(openedWith(open)).toMatchObject({ id: 'instance-2', label: 'uat' });
+  });
+
+  it('opens the panel for the node it was invoked on, without asking which', async () => {
+    const open = spyOnOpen();
+    const showQuickPick = vi.spyOn(vscode.window, 'showQuickPick');
+    activate(
+      extensionContext({
+        // Two instances, so a handler that fell back to the pick would show.
+        [INSTANCES_KEY]: [storedInstance(), storedInstance({ id: 'instance-2', label: 'uat' })]
+      })
+    );
+
+    await run('atNacos.openClusterStatus', instanceNode({ id: 'instance-2', label: 'uat' }));
+
+    expect(showQuickPick).not.toHaveBeenCalled();
+    expect(openedWith(open)).toMatchObject({ id: 'instance-2', label: 'uat' });
+  });
+
+  it('opens the panel on the stored record rather than the copy a stale node still holds', async () => {
+    const open = spyOnOpen();
+    activate(extensionContext({ [INSTANCES_KEY]: [storedInstance()] }));
+
+    await run('atNacos.openClusterStatus', instanceNode({ label: 'renamed since the tree drew' }));
+
+    expect(openedWith(open)).toMatchObject({ id: 'instance-1', label: 'prod' });
+  });
+
+  /** A node outlives the record behind it: deleted elsewhere, it still sits in the tree until a refresh. */
+  it('opens nothing for a node whose instance is no longer configured', async () => {
+    const open = spyOnOpen();
+    activate(extensionContext());
+
+    await run('atNacos.openClusterStatus', instanceNode());
+
+    expect(open).not.toHaveBeenCalled();
   });
 
   it('opens nothing when that pick is dismissed', async () => {
