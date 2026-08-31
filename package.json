@@ -2,7 +2,7 @@
   "name": "at-nacos",
   "displayName": "%atNacos.displayName%",
   "description": "%atNacos.description%",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "local",
   "icon": "media/at-nacos-icon.png",
   "license": "MIT",
@@ -401,7 +401,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@at-series/mcp-hub": "^0.3.2",
+    "@at-series/mcp-hub": "^0.3.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {
